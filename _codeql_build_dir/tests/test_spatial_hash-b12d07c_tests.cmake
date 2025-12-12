@@ -1,7 +1,0 @@
-add_test( [==[SpatialHashGrid basic operations]==] /home/runner/work/trajectory-spatialhash/trajectory-spatialhash/_codeql_build_dir/bin/test_spatial_hash [==[SpatialHashGrid basic operations]==]  )
-set_tests_properties( [==[SpatialHashGrid basic operations]==] PROPERTIES WORKING_DIRECTORY /home/runner/work/trajectory-spatialhash/trajectory-spatialhash/_codeql_build_dir/tests)
-add_test( [==[C wrapper API]==] /home/runner/work/trajectory-spatialhash/trajectory-spatialhash/_codeql_build_dir/bin/test_spatial_hash [==[C wrapper API]==]  )
-set_tests_properties( [==[C wrapper API]==] PROPERTIES WORKING_DIRECTORY /home/runner/work/trajectory-spatialhash/trajectory-spatialhash/_codeql_build_dir/tests)
-add_test( [==[Edge cases]==] /home/runner/work/trajectory-spatialhash/trajectory-spatialhash/_codeql_build_dir/bin/test_spatial_hash [==[Edge cases]==]  )
-set_tests_properties( [==[Edge cases]==] PROPERTIES WORKING_DIRECTORY /home/runner/work/trajectory-spatialhash/trajectory-spatialhash/_codeql_build_dir/tests)
-set( test_spatial_hash_TESTS [==[SpatialHashGrid basic operations]==] [==[C wrapper API]==] [==[Edge cases]==])

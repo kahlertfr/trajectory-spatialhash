@@ -1,5 +1,0 @@
-if(EXISTS "/home/runner/work/trajectory-spatialhash/trajectory-spatialhash/_codeql_build_dir/tests/test_spatial_hash-b12d07c_tests.cmake")
-  include("/home/runner/work/trajectory-spatialhash/trajectory-spatialhash/_codeql_build_dir/tests/test_spatial_hash-b12d07c_tests.cmake")
-else()
-  add_test(test_spatial_hash_NOT_BUILT-b12d07c test_spatial_hash_NOT_BUILT-b12d07c)
-endif()

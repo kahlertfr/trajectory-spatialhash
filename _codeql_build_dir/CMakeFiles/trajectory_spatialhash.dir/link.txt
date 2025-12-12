@@ -1,2 +1,0 @@
-/usr/bin/ar qc lib/libtrajectory_spatialhash.a CMakeFiles/trajectory_spatialhash.dir/src/spatial_hash.cpp.o CMakeFiles/trajectory_spatialhash.dir/src/ue_wrapper.cpp.o
-/usr/bin/ranlib lib/libtrajectory_spatialhash.a
