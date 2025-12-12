@@ -1,0 +1,110 @@
+name: Build and Test
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        build_type: [Release]
+        
+    runs-on: ${{ matrix.os }}
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup CMake
+      uses: jwlawson/actions-setup-cmake@v2
+      with:
+        cmake-version: '3.16.x'
+        
+    - name: Configure CMake
+      run: |
+        cmake -B build -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} -DBUILD_TESTING=ON -DBUILD_EXAMPLES=ON -DBUILD_SHARED_LIBS=OFF
+        
+    - name: Build
+      run: cmake --build build --config ${{ matrix.build_type }}
+      
+    - name: Run Tests
+      run: |
+        cd build
+        ctest -C ${{ matrix.build_type }} --output-on-failure
+        
+    - name: Package Artifacts
+      run: |
+        cmake --install build --prefix install --config ${{ matrix.build_type }}
+        
+    - name: Upload Library Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: trajectory_spatialhash-${{ matrix.os }}-${{ matrix.build_type }}
+        path: |
+          install/lib/*
+          install/include/*
+        retention-days: 30
+        
+    - name: Upload CLI Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: tsh-cli-${{ matrix.os }}-${{ matrix.build_type }}
+        path: install/bin/*
+        retention-days: 30
+
+  package-thirdparty:
+    needs: build
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Download Windows artifacts
+      uses: actions/download-artifact@v4
+      with:
+        name: trajectory_spatialhash-windows-latest-Release
+        path: artifacts/windows
+        
+    - name: Download macOS artifacts
+      uses: actions/download-artifact@v4
+      with:
+        name: trajectory_spatialhash-macos-latest-Release
+        path: artifacts/macos
+        
+    - name: Download Linux artifacts
+      uses: actions/download-artifact@v4
+      with:
+        name: trajectory_spatialhash-ubuntu-latest-Release
+        path: artifacts/linux
+        
+    - name: Create ThirdParty Layout
+      run: |
+        mkdir -p ThirdParty/trajectory_spatialhash/include
+        mkdir -p ThirdParty/trajectory_spatialhash/lib/win64
+        mkdir -p ThirdParty/trajectory_spatialhash/lib/mac
+        mkdir -p ThirdParty/trajectory_spatialhash/lib/linux
+        
+        # Copy headers (from any platform, they're the same)
+        cp -r artifacts/linux/include/trajectory_spatialhash ThirdParty/trajectory_spatialhash/include/
+        
+        # Copy Windows libs
+        find artifacts/windows/lib -name "*.lib" -exec cp {} ThirdParty/trajectory_spatialhash/lib/win64/ \; || true
+        find artifacts/windows/lib -name "*.a" -exec cp {} ThirdParty/trajectory_spatialhash/lib/win64/ \; || true
+        
+        # Copy macOS libs
+        find artifacts/macos/lib -name "*.a" -exec cp {} ThirdParty/trajectory_spatialhash/lib/mac/ \; || true
+        
+        # Copy Linux libs
+        find artifacts/linux/lib -name "*.a" -exec cp {} ThirdParty/trajectory_spatialhash/lib/linux/ \; || true
+        
+    - name: Upload ThirdParty Package
+      uses: actions/upload-artifact@v4
+      with:
+        name: trajectory_spatialhash-thirdparty-all-platforms
+        path: ThirdParty/
+        retention-days: 90

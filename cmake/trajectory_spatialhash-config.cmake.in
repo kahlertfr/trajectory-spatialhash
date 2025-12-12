@@ -1,0 +1,5 @@
+@PACKAGE_INIT@
+
+include("${CMAKE_CURRENT_LIST_DIR}/trajectory_spatialhash-targets.cmake")
+
+check_required_components(trajectory_spatialhash)

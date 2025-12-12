@@ -73,3 +73,24 @@ Plugins/**/Intermediate/*
 
 # Cache files for the editor to use
 DerivedDataCache/*
+
+# CMake build directories
+build/
+build-*/
+cmake-build-*/
+
+# Install directories
+install/
+ThirdParty/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Test artifacts
+*.grid
+*.bin
+test_shard*.csv
