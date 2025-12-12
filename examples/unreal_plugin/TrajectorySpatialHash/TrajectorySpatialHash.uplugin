@@ -1,0 +1,29 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "0.1.0",
+	"FriendlyName": "Trajectory Spatial Hash",
+	"Description": "Fast spatial hash grid for trajectory data with nearest neighbor and radius queries",
+	"Category": "Spatial",
+	"CreatedBy": "Franziska Kahlert",
+	"CreatedByURL": "https://github.com/kahlertfr/trajectory-spatialhash",
+	"DocsURL": "https://github.com/kahlertfr/trajectory-spatialhash",
+	"MarketplaceURL": "",
+	"SupportURL": "https://github.com/kahlertfr/trajectory-spatialhash/issues",
+	"CanContainContent": false,
+	"IsBetaVersion": true,
+	"IsExperimentalVersion": false,
+	"Installed": false,
+	"Modules": [
+		{
+			"Name": "TrajectorySpatialHash",
+			"Type": "Runtime",
+			"LoadingPhase": "Default",
+			"PlatformAllowList": [
+				"Win64",
+				"Mac",
+				"Linux"
+			]
+		}
+	]
+}

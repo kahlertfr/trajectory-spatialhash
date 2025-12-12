@@ -1,5 +1,5 @@
 #include <catch2/catch_test_macros.hpp>
-#include <catch2/matchers/catch_matchers_floating_point.hpp>
+#include <catch2/catch_approx.hpp>
 #include "trajectory_spatialhash/spatial_hash.h"
 #include "trajectory_spatialhash/ue_wrapper.h"
 #include <fstream>
@@ -7,6 +7,7 @@
 #include <cmath>
 
 using namespace trajectory_spatialhash;
+using Catch::Approx;
 
 // Helper to create a test CSV file
 void CreateTestShard(const char* path) {
@@ -40,8 +41,8 @@ TEST_CASE("SpatialHashGrid basic operations", "[spatial_hash]") {
         
         Point3D result;
         REQUIRE(grid.Nearest(1.0, 1.0, 0.0, result));
-        REQUIRE(result.x == Catch::Approx(0.0).epsilon(0.01));
-        REQUIRE(result.y == Catch::Approx(0.0).epsilon(0.01));
+        REQUIRE(result.x == Approx(0.0).epsilon(0.01));
+        REQUIRE(result.y == Approx(0.0).epsilon(0.01));
         REQUIRE(result.trajectory_id == 1);
     }
     
@@ -96,7 +97,7 @@ TEST_CASE("C wrapper API", "[ue_wrapper]") {
         
         TSH_Point point;
         REQUIRE(TSH_QueryNearest(handle, 1.0, 1.0, 0.0, &point) == 1);
-        REQUIRE(point.x == Catch::Approx(0.0).epsilon(0.01));
+        REQUIRE(point.x == Approx(0.0).epsilon(0.01));
         
         TSH_QueryResult result;
         REQUIRE(TSH_RadiusQuery(handle, 10.0, 5.0, 0.0, 7.0, &result) == 1);
