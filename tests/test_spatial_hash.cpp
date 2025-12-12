@@ -2,6 +2,7 @@
 #include <catch2/catch_approx.hpp>
 #include "trajectory_spatialhash/spatial_hash.h"
 #include "trajectory_spatialhash/ue_wrapper.h"
+#include "trajectory_spatialhash/shard_format.h"
 #include <fstream>
 #include <cstdio>
 #include <cmath>
@@ -146,5 +147,35 @@ TEST_CASE("Edge cases", "[spatial_hash]") {
         const char* invalid[] = {"/nonexistent/path.csv"};
         REQUIRE_FALSE(grid.BuildFromShards(invalid, 1));
         REQUIRE(grid.GetLastError() != nullptr);
+    }
+}
+
+TEST_CASE("Binary shard format structures", "[shard_format]") {
+    SECTION("Structure sizes") {
+        // Verify all structures have correct sizes per specification
+        REQUIRE(sizeof(ShardMeta) == 76);
+        REQUIRE(sizeof(TrajectoryMeta) == 40);
+        REQUIRE(sizeof(DataBlockHeader) == 32);
+        REQUIRE(sizeof(TrajectoryEntryHeader) == 16);
+    }
+    
+    SECTION("Magic constants") {
+        // Verify magic number constants
+        REQUIRE(std::string(ShardConstants::SHARD_META_MAGIC) == "TDSH");
+        REQUIRE(std::string(ShardConstants::DATA_BLOCK_MAGIC) == "TDDB");
+        REQUIRE(ShardConstants::FORMAT_VERSION == 1);
+    }
+    
+    SECTION("Structure alignment") {
+        // Verify structures are packed (no padding)
+        ShardMeta meta{};
+        REQUIRE(reinterpret_cast<char*>(&meta.format_version) - reinterpret_cast<char*>(&meta.magic[0]) == 4);
+        REQUIRE(reinterpret_cast<char*>(&meta.endianness_flag) - reinterpret_cast<char*>(&meta.magic[0]) == 5);
+        
+        TrajectoryMeta trajMeta{};
+        REQUIRE(reinterpret_cast<char*>(&trajMeta.start_time_step) - reinterpret_cast<char*>(&trajMeta.trajectory_id) == 8);
+        
+        DataBlockHeader header{};
+        REQUIRE(reinterpret_cast<char*>(&header.format_version) - reinterpret_cast<char*>(&header.magic[0]) == 4);
     }
 }

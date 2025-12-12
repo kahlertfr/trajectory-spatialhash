@@ -21,6 +21,7 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 add_library(trajectory_spatialhash
     src/spatial_hash.cpp
     src/ue_wrapper.cpp
+    src/shard_loader.cpp
 )
 
 # Set library properties

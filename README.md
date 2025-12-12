@@ -158,6 +158,10 @@ The library includes a complete Unreal Engine 5.6+ plugin example. See [`example
 
 ## Trajectory Data Format
 
+The library supports two input formats:
+
+### CSV Format (Simple)
+
 Input CSV shard files should have the following format:
 
 ```csv
@@ -171,6 +175,22 @@ x,y,z,trajectory_id,point_index
 - `x,y,z`: 3D coordinates of the point
 - `trajectory_id`: Identifier for the trajectory this point belongs to
 - `point_index`: Index of this point within its trajectory
+
+### Binary Shard Format (Advanced)
+
+The library also provides data structures to work with the binary Trajectory Data Shard format:
+
+- **`shard-manifest.json`**: JSON metadata with shard parameters
+- **`shard-meta.bin`**: Binary metadata (magic: "TDSH", 76 bytes)
+- **`shard-trajmeta.bin`**: Per-trajectory metadata (40 bytes per trajectory)
+- **`shard-data.bin`**: Time-series position data (magic: "TDDB")
+
+This format stores trajectories as time-series data with fixed-size entries, enabling:
+- Fast mmap-based access
+- Efficient time-stepped trajectory queries
+- Compact binary storage with NaN sentinels for invalid positions
+
+See `include/trajectory_spatialhash/shard_format.h` for complete binary structure definitions.
 
 ## Architecture
 
