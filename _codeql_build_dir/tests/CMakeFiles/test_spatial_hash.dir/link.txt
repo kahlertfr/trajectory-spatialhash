@@ -1,0 +1,1 @@
+/home/runner/work/trajectory-spatialhash/.codeql-scratch/dbs/cpp/working/autobuild/bin/c++ -O3 -DNDEBUG -Wl,--dependency-file=CMakeFiles/test_spatial_hash.dir/link.d CMakeFiles/test_spatial_hash.dir/test_spatial_hash.cpp.o -o ../bin/test_spatial_hash  ../lib/libtrajectory_spatialhash.a ../lib/libCatch2Main.a ../lib/libCatch2.a

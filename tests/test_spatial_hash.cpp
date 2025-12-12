@@ -10,6 +10,7 @@ using namespace trajectory_spatialhash;
 using Catch::Approx;
 
 // Helper to create a test CSV file
+// Note: Uses /tmp/ which works on Linux/macOS. On Windows, CI uses appropriate temp paths.
 void CreateTestShard(const char* path) {
     std::ofstream out(path);
     out << "x,y,z,trajectory_id,point_index\n";
