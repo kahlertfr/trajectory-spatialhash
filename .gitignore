@@ -83,6 +83,10 @@ cmake-build-*/
 install/
 ThirdParty/
 
+# Allow example plugin ThirdParty structure (just docs)
+!examples/unreal_plugin/TrajectorySpatialHash/ThirdParty/
+!examples/unreal_plugin/TrajectorySpatialHash/ThirdParty/**/*.md
+
 # IDE files
 .vscode/
 .idea/
