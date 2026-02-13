@@ -742,7 +742,7 @@ bool USpatialHashTableManager::LoadTrajectorySamplesFromFile(
 		int32 OutputTimeStep = static_cast<int32>(FileTimeStep);
 		
 		// Read number of samples for this time step
-		if (Offset + sizeof(uint32) > FileSize) break;
+		if (Offset + static_cast<int64>(sizeof(uint32)) > FileSize) break;
 		
 		uint32 NumSamples;
 		FMemory::Memcpy(&NumSamples, &Buffer[Offset], sizeof(uint32));
