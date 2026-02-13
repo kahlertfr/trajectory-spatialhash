@@ -557,8 +557,11 @@ bool USpatialHashTableManager::LoadTrajectorySamplesFromFile(
 	int32 EndTimeStep,
 	TArray<TArray<FSpatialHashTableBuilder::FTrajectorySample>>& InOutTimeStepSamples)
 {
-	// This is a generic binary file reader that attempts to parse trajectory data
-	// The actual format depends on the TrajectoryData plugin specification
+	// Binary file format constants
+	static const uint32 TRAJ_MAGIC_1 = 0x5452414A; // "TRAJ"
+	static const uint32 TRAJ_MAGIC_2 = 0x54524144; // "TRAD"
+	static const int32 HEADER_SIZE = 64;
+	static const int32 MIN_FILE_SIZE = 64;
 	
 	IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
 	IFileHandle* FileHandle = PlatformFile.OpenRead(*FilePath);
@@ -569,7 +572,7 @@ bool USpatialHashTableManager::LoadTrajectorySamplesFromFile(
 	}
 	
 	int64 FileSize = FileHandle->Size();
-	if (FileSize == 0)
+	if (FileSize < MIN_FILE_SIZE)
 	{
 		delete FileHandle;
 		return false;
@@ -587,28 +590,15 @@ bool USpatialHashTableManager::LoadTrajectorySamplesFromFile(
 	
 	delete FileHandle;
 	
-	// Try to parse the buffer as trajectory data
-	// This is a simplified parser that looks for common patterns
-	// Expected format (from specification-trajectory-data-shard.md):
-	// - Header with magic number and metadata
-	// - Trajectory data organized by time steps
-	
+	// Parse the buffer as trajectory data
 	int32 Offset = 0;
 	
-	// Read header (assuming first 4 bytes are magic number)
-	if (FileSize < 64) // Minimum header size
-	{
-		return false;
-	}
+	// Read header using safe memory copy
+	uint32 MagicNumber;
+	FMemory::Memcpy(&MagicNumber, &Buffer[Offset], sizeof(uint32));
+	Offset += sizeof(uint32);
 	
-	uint32 MagicNumber = *reinterpret_cast<const uint32*>(&Buffer[Offset]);
-	Offset += 4;
-	
-	// Check for common trajectory data magic numbers
-	// You would replace these with actual values from the specification
-	const uint32 TRAJ_MAGIC_1 = 0x5452414A; // "TRAJ"
-	const uint32 TRAJ_MAGIC_2 = 0x54524144; // "TRAD"
-	
+	// Check for trajectory data magic numbers
 	if (MagicNumber != TRAJ_MAGIC_1 && MagicNumber != TRAJ_MAGIC_2)
 	{
 		// Try as simple CSV/text format
@@ -616,55 +606,76 @@ bool USpatialHashTableManager::LoadTrajectorySamplesFromFile(
 	}
 	
 	// Read version
-	uint32 Version = *reinterpret_cast<const uint32*>(&Buffer[Offset]);
-	Offset += 4;
+	uint32 Version;
+	FMemory::Memcpy(&Version, &Buffer[Offset], sizeof(uint32));
+	Offset += sizeof(uint32);
 	
 	// Read number of trajectories
-	uint32 NumTrajectories = *reinterpret_cast<const uint32*>(&Buffer[Offset]);
-	Offset += 4;
+	uint32 NumTrajectories;
+	FMemory::Memcpy(&NumTrajectories, &Buffer[Offset], sizeof(uint32));
+	Offset += sizeof(uint32);
 	
 	// Read number of time steps in file
-	uint32 NumTimeStepsInFile = *reinterpret_cast<const uint32*>(&Buffer[Offset]);
-	Offset += 4;
+	uint32 NumTimeStepsInFile;
+	FMemory::Memcpy(&NumTimeStepsInFile, &Buffer[Offset], sizeof(uint32));
+	Offset += sizeof(uint32);
 	
-	// Skip remaining header (assuming 64 byte header)
-	Offset = 64;
+	// Skip remaining header
+	Offset = HEADER_SIZE;
 	
 	// Read trajectory data for each time step
 	for (uint32 FileTimeStep = 0; FileTimeStep < NumTimeStepsInFile && Offset < FileSize; ++FileTimeStep)
 	{
 		int32 OutputTimeStep = static_cast<int32>(FileTimeStep);
 		
+		// Read number of samples for this time step
+		if (Offset + sizeof(uint32) > FileSize) break;
+		
+		uint32 NumSamples;
+		FMemory::Memcpy(&NumSamples, &Buffer[Offset], sizeof(uint32));
+		Offset += sizeof(uint32);
+		
+		// Calculate bytes needed for this time step's data
+		int64 SamplesDataSize = static_cast<int64>(NumSamples) * (sizeof(uint32) + 3 * sizeof(float));
+		
 		// Check if this time step is in our requested range
-		if (OutputTimeStep < StartTimeStep || OutputTimeStep > EndTimeStep)
+		bool bInRange = (OutputTimeStep >= StartTimeStep && OutputTimeStep <= EndTimeStep);
+		
+		if (!bInRange)
 		{
-			// Skip this time step
+			// Skip this time step's data
+			Offset += SamplesDataSize;
 			continue;
+		}
+		
+		// Verify we have enough data for all samples
+		if (Offset + SamplesDataSize > FileSize)
+		{
+			break;
 		}
 		
 		int32 ArrayIndex = OutputTimeStep - StartTimeStep;
 		if (ArrayIndex < 0 || ArrayIndex >= InOutTimeStepSamples.Num())
 		{
+			// Skip data but advance offset
+			Offset += SamplesDataSize;
 			continue;
 		}
 		
-		// Read number of samples for this time step
-		if (Offset + 4 > FileSize) break;
-		uint32 NumSamples = *reinterpret_cast<const uint32*>(&Buffer[Offset]);
-		Offset += 4;
-		
 		// Read samples (trajectory ID + position)
-		for (uint32 i = 0; i < NumSamples && Offset + 16 <= FileSize; ++i)
+		for (uint32 i = 0; i < NumSamples; ++i)
 		{
-			uint32 TrajectoryId = *reinterpret_cast<const uint32*>(&Buffer[Offset]);
-			Offset += 4;
+			uint32 TrajectoryId;
+			FMemory::Memcpy(&TrajectoryId, &Buffer[Offset], sizeof(uint32));
+			Offset += sizeof(uint32);
 			
-			float X = *reinterpret_cast<const float*>(&Buffer[Offset]);
-			Offset += 4;
-			float Y = *reinterpret_cast<const float*>(&Buffer[Offset]);
-			Offset += 4;
-			float Z = *reinterpret_cast<const float*>(&Buffer[Offset]);
-			Offset += 4;
+			float X, Y, Z;
+			FMemory::Memcpy(&X, &Buffer[Offset], sizeof(float));
+			Offset += sizeof(float);
+			FMemory::Memcpy(&Y, &Buffer[Offset], sizeof(float));
+			Offset += sizeof(float);
+			FMemory::Memcpy(&Z, &Buffer[Offset], sizeof(float));
+			Offset += sizeof(float);
 			
 			FSpatialHashTableBuilder::FTrajectorySample Sample(TrajectoryId, FVector(X, Y, Z));
 			InOutTimeStepSamples[ArrayIndex].Add(Sample);
