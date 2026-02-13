@@ -62,33 +62,106 @@ This plugin requires the following dependencies:
 
 ## Usage
 
-### Basic Usage
+### Building Spatial Hash Tables
 
-The spatial hash table provides efficient spatial indexing for trajectory points:
+The plugin provides functionality to build spatial hash tables from trajectory data:
 
 ```cpp
-#include "SpatialHashedTrajectoryModule.h"
+#include "SpatialHashTableBuilder.h"
 
-// The plugin provides spatial hash functionality for trajectory data
-// More detailed usage examples will be added as the API is implemented
+// Configure the builder
+FSpatialHashTableBuilder::FBuildConfig Config;
+Config.CellSize = 10.0f;  // 10 unit cells
+Config.bComputeBoundingBox = true;  // Automatically compute bounding box
+Config.OutputDirectory = TEXT("/Path/To/Dataset");
+Config.NumTimeSteps = 1000;  // Number of time steps to process
+
+// Prepare trajectory samples for each time step
+TArray<TArray<FSpatialHashTableBuilder::FTrajectorySample>> TimeStepSamples;
+// ... populate TimeStepSamples with trajectory data ...
+
+// Build hash tables
+FSpatialHashTableBuilder Builder;
+if (Builder.BuildHashTables(Config, TimeStepSamples))
+{
+    UE_LOG(LogTemp, Log, TEXT("Successfully built spatial hash tables"));
+}
 ```
+
+### Loading and Querying Hash Tables
+
+Load a hash table from disk and query trajectory IDs at a specific position:
+
+```cpp
+#include "SpatialHashTable.h"
+
+// Load hash table for a specific time step
+FSpatialHashTable HashTable;
+FString Filename = TEXT("/Path/To/Dataset/spatial_hashing/cellsize_10.000/timestep_00000.bin");
+
+if (HashTable.LoadFromFile(Filename))
+{
+    // Query trajectories at a specific world position
+    TArray<uint32> TrajectoryIds;
+    FVector QueryPosition(100.0f, 200.0f, 50.0f);
+    
+    if (HashTable.QueryAtPosition(QueryPosition, TrajectoryIds))
+    {
+        UE_LOG(LogTemp, Log, TEXT("Found %d trajectories at position"), TrajectoryIds.Num());
+        for (uint32 Id : TrajectoryIds)
+        {
+            // Process trajectory ID...
+        }
+    }
+}
+```
+
+### File Organization
+
+The plugin creates the following directory structure for hash table files:
+
+```
+<dataset-directory>/
+└── spatial_hashing/
+    ├── cellsize_10.000/
+    │   ├── timestep_00000.bin
+    │   ├── timestep_00001.bin
+    │   └── ...
+    ├── cellsize_5.000/
+    │   ├── timestep_00000.bin
+    │   └── ...
+    └── ...
+```
+
+Each `.bin` file contains a complete hash table for one time step at a specific cell size, formatted for efficient memory-mapped loading.
 
 ### Key Concepts
 
-- **Spatial Hash**: A grid-based spatial partitioning structure that divides space into uniform cells
-- **Fixed Radius Search**: Queries that find all points within a specified distance from a query point
-- **Trajectory Data**: Time-series of spatial points representing object movements or paths
+- **Spatial Hash**: A grid-based spatial partitioning structure that divides space into uniform cells using Z-Order curves (Morton codes) for spatial indexing
+- **Cell Size**: The size of each spatial cell in world units. Smaller cells provide finer spatial resolution but require more memory
+- **Z-Order Curve**: A space-filling curve that maps 3D coordinates to a single dimension while preserving spatial locality
+- **Time Step**: Each hash table represents trajectory positions at a single point in time
+- **Binary Format**: Hash tables are stored in a binary format optimized for memory-mapped loading without parsing
 
 ## API Overview
 
-The plugin will provide the following core functionality:
+The plugin provides the following core functionality:
 
-- Spatial hash table creation and management
-- Insertion of trajectory points
-- Fixed radius nearest neighbor queries
-- Efficient spatial updates and queries
+### Spatial Hash Table (`FSpatialHashTable`)
+- Load hash tables from binary files with `LoadFromFile()`
+- Save hash tables to binary files with `SaveToFile()`
+- Query trajectories at world positions with `QueryAtPosition()`
+- Calculate Z-Order keys for spatial cells
+- Binary search for efficient cell lookups
 
-*Detailed API documentation will be added as the implementation progresses.*
+### Spatial Hash Table Builder (`FSpatialHashTableBuilder`)
+- Build hash tables from trajectory data with `BuildHashTables()`
+- Automatically compute bounding boxes from data
+- Support for custom bounding boxes
+- Configurable cell sizes
+- Automatic directory structure creation
+
+For detailed information about the binary file format, see [specification-spatial-hash-table.md](specification-spatial-hash-table.md).
 
 ## Development
 
@@ -103,17 +176,22 @@ The plugin will be automatically compiled when you build your Unreal Engine proj
 
 ```
 SpatialHashedTrajectory/
-├── SpatialHashedTrajectory.uplugin    # Plugin descriptor
-├── README.md                           # This file
+├── SpatialHashedTrajectory.uplugin           # Plugin descriptor
+├── README.md                                  # This file
+├── specification-spatial-hash-table.md       # Binary format specification
 ├── Resources/
-│   └── Icon128.png                    # Plugin icon
+│   └── Icon128.png                           # Plugin icon
 └── Source/
     └── SpatialHashedTrajectory/
-        ├── SpatialHashedTrajectory.Build.cs      # Build configuration
+        ├── SpatialHashedTrajectory.Build.cs           # Build configuration
         ├── Public/
-        │   └── SpatialHashedTrajectoryModule.h   # Module interface
+        │   ├── SpatialHashedTrajectoryModule.h        # Module interface
+        │   ├── SpatialHashTable.h                     # Hash table data structure
+        │   └── SpatialHashTableBuilder.h              # Hash table builder
         └── Private/
-            └── SpatialHashedTrajectoryModule.cpp # Module implementation
+            ├── SpatialHashedTrajectoryModule.cpp      # Module implementation
+            ├── SpatialHashTable.cpp                   # Hash table implementation
+            └── SpatialHashTableBuilder.cpp            # Builder implementation
 ```
 
 ## License
