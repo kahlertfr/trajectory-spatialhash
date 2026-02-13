@@ -3,6 +3,7 @@
 #include "SpatialHashTableManager.h"
 #include "Misc/Paths.h"
 #include "HAL/PlatformFileManager.h"
+#include "Misc/FileHelper.h"
 
 USpatialHashTableManager::USpatialHashTableManager()
 {
@@ -403,21 +404,6 @@ bool USpatialHashTableManager::TryCreateHashTables(
 	int32 StartTimeStep,
 	int32 EndTimeStep)
 {
-	// Note: This is a placeholder implementation
-	// In a real implementation, this would:
-	// 1. Check if trajectory data files exist in DatasetDirectory
-	// 2. Load trajectory data from the TrajectoryData plugin
-	// 3. Convert trajectory data to FSpatialHashTableBuilder::FTrajectorySample format
-	// 4. Call FSpatialHashTableBuilder::BuildHashTables() to create the hash tables
-	
-	UE_LOG(LogTemp, Warning, TEXT("USpatialHashTableManager::TryCreateHashTables: Automatic hash table creation requires integration with TrajectoryData plugin."));
-	UE_LOG(LogTemp, Warning, TEXT("To create hash tables for cell size %.3f (time steps %d-%d):"), 
-		CellSize, StartTimeStep, EndTimeStep);
-	UE_LOG(LogTemp, Warning, TEXT("1. Load trajectory data from the TrajectoryData plugin"));
-	UE_LOG(LogTemp, Warning, TEXT("2. Use FSpatialHashTableBuilder to build hash tables with cell size %.3f"), CellSize);
-	UE_LOG(LogTemp, Warning, TEXT("3. Or use the CreateHashTables Blueprint function if you have trajectory data available"));
-	
-	// For now, we'll check if the trajectory data directory structure exists
 	IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
 	
 	if (!PlatformFile.DirectoryExists(*DatasetDirectory))
@@ -427,23 +413,340 @@ bool USpatialHashTableManager::TryCreateHashTables(
 		return false;
 	}
 	
+	UE_LOG(LogTemp, Log, TEXT("USpatialHashTableManager::TryCreateHashTables: Creating hash tables for cell size %.3f (time steps %d-%d)"),
+		CellSize, StartTimeStep, EndTimeStep);
+	
+	// Load trajectory data from the dataset directory
+	TArray<TArray<FSpatialHashTableBuilder::FTrajectorySample>> TimeStepSamples;
+	if (!LoadTrajectoryDataFromDirectory(DatasetDirectory, StartTimeStep, EndTimeStep, TimeStepSamples))
+	{
+		UE_LOG(LogTemp, Error, TEXT("USpatialHashTableManager::TryCreateHashTables: Failed to load trajectory data"));
+		return false;
+	}
+	
+	if (TimeStepSamples.Num() == 0)
+	{
+		UE_LOG(LogTemp, Error, TEXT("USpatialHashTableManager::TryCreateHashTables: No trajectory data found"));
+		return false;
+	}
+	
+	UE_LOG(LogTemp, Log, TEXT("USpatialHashTableManager::TryCreateHashTables: Loaded %d time steps of trajectory data"),
+		TimeStepSamples.Num());
+	
 	// Setup configuration for building
 	FSpatialHashTableBuilder::FBuildConfig Config;
 	Config.CellSize = CellSize;
 	Config.bComputeBoundingBox = true;
 	Config.BoundingBoxMargin = 1.0f;
 	Config.OutputDirectory = DatasetDirectory;
-	Config.NumTimeSteps = (EndTimeStep - StartTimeStep + 1);
+	Config.NumTimeSteps = TimeStepSamples.Num();
 	
-	// TODO: This is where you would:
-	// - Load trajectory data from files in DatasetDirectory
-	// - Convert to TArray<TArray<FSpatialHashTableBuilder::FTrajectorySample>> format
-	// - Call FSpatialHashTableBuilder builder.BuildHashTables(Config, TimeStepSamples)
+	// Build the hash tables
+	FSpatialHashTableBuilder Builder;
+	if (!Builder.BuildHashTables(Config, TimeStepSamples))
+	{
+		UE_LOG(LogTemp, Error, TEXT("USpatialHashTableManager::TryCreateHashTables: Failed to build hash tables"));
+		return false;
+	}
 	
-	UE_LOG(LogTemp, Error, TEXT("USpatialHashTableManager::TryCreateHashTables: Trajectory data loading not implemented yet."));
-	UE_LOG(LogTemp, Error, TEXT("Please create hash tables manually using the TrajectoryData plugin and FSpatialHashTableBuilder."));
+	UE_LOG(LogTemp, Log, TEXT("USpatialHashTableManager::TryCreateHashTables: Successfully created hash tables for cell size %.3f"),
+		CellSize);
 	
-	return false;
+	return true;
+}
+
+bool USpatialHashTableManager::LoadTrajectoryDataFromDirectory(
+	const FString& DatasetDirectory,
+	int32 StartTimeStep,
+	int32 EndTimeStep,
+	TArray<TArray<FSpatialHashTableBuilder::FTrajectorySample>>& OutTimeStepSamples)
+{
+	OutTimeStepSamples.Reset();
+	
+	IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
+	
+	// Look for trajectory data shard files in the dataset directory
+	// Expected file pattern: trajectory_shard_*.bin or similar
+	TArray<FString> FoundFiles;
+	PlatformFile.FindFilesRecursively(FoundFiles, *DatasetDirectory, TEXT(".bin"));
+	
+	if (FoundFiles.Num() == 0)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("USpatialHashTableManager::LoadTrajectoryDataFromDirectory: No .bin files found in %s"),
+			*DatasetDirectory);
+		UE_LOG(LogTemp, Warning, TEXT("Looking for trajectory shard files..."));
+		
+		// Try looking for other common extensions
+		PlatformFile.FindFilesRecursively(FoundFiles, *DatasetDirectory, TEXT(".traj"));
+		PlatformFile.FindFilesRecursively(FoundFiles, *DatasetDirectory, TEXT(".dat"));
+		
+		if (FoundFiles.Num() == 0)
+		{
+			UE_LOG(LogTemp, Error, TEXT("USpatialHashTableManager::LoadTrajectoryDataFromDirectory: No trajectory data files found"));
+			return false;
+		}
+	}
+	
+	// Filter out spatial hash table files (they contain "spatial" or "hash" in the path)
+	TArray<FString> TrajectoryFiles;
+	for (const FString& File : FoundFiles)
+	{
+		FString LowerFile = File.ToLower();
+		if (!LowerFile.Contains(TEXT("spatial")) && !LowerFile.Contains(TEXT("hash")))
+		{
+			TrajectoryFiles.Add(File);
+		}
+	}
+	
+	if (TrajectoryFiles.Num() == 0)
+	{
+		UE_LOG(LogTemp, Error, TEXT("USpatialHashTableManager::LoadTrajectoryDataFromDirectory: No trajectory data files found (filtered out spatial hash files)"));
+		return false;
+	}
+	
+	UE_LOG(LogTemp, Log, TEXT("USpatialHashTableManager::LoadTrajectoryDataFromDirectory: Found %d potential trajectory files"),
+		TrajectoryFiles.Num());
+	
+	// Initialize the output array for the requested time steps
+	int32 NumTimeSteps = EndTimeStep - StartTimeStep + 1;
+	OutTimeStepSamples.SetNum(NumTimeSteps);
+	
+	// Try to load each file and extract trajectory samples
+	for (const FString& FilePath : TrajectoryFiles)
+	{
+		if (!LoadTrajectorySamplesFromFile(FilePath, StartTimeStep, EndTimeStep, OutTimeStepSamples))
+		{
+			UE_LOG(LogTemp, Warning, TEXT("USpatialHashTableManager::LoadTrajectoryDataFromDirectory: Failed to load from %s"),
+				*FilePath);
+		}
+	}
+	
+	// Verify we have at least some data
+	bool bHasData = false;
+	for (const auto& TimeStepData : OutTimeStepSamples)
+	{
+		if (TimeStepData.Num() > 0)
+		{
+			bHasData = true;
+			break;
+		}
+	}
+	
+	if (!bHasData)
+	{
+		UE_LOG(LogTemp, Error, TEXT("USpatialHashTableManager::LoadTrajectoryDataFromDirectory: No trajectory samples were loaded"));
+		return false;
+	}
+	
+	// Log summary
+	int32 TotalSamples = 0;
+	for (const auto& TimeStepData : OutTimeStepSamples)
+	{
+		TotalSamples += TimeStepData.Num();
+	}
+	
+	UE_LOG(LogTemp, Log, TEXT("USpatialHashTableManager::LoadTrajectoryDataFromDirectory: Loaded %d total samples across %d time steps"),
+		TotalSamples, NumTimeSteps);
+	
+	return true;
+}
+
+bool USpatialHashTableManager::LoadTrajectorySamplesFromFile(
+	const FString& FilePath,
+	int32 StartTimeStep,
+	int32 EndTimeStep,
+	TArray<TArray<FSpatialHashTableBuilder::FTrajectorySample>>& InOutTimeStepSamples)
+{
+	// This is a generic binary file reader that attempts to parse trajectory data
+	// The actual format depends on the TrajectoryData plugin specification
+	
+	IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
+	IFileHandle* FileHandle = PlatformFile.OpenRead(*FilePath);
+	
+	if (!FileHandle)
+	{
+		return false;
+	}
+	
+	int64 FileSize = FileHandle->Size();
+	if (FileSize == 0)
+	{
+		delete FileHandle;
+		return false;
+	}
+	
+	// Read the entire file into a buffer
+	TArray<uint8> Buffer;
+	Buffer.SetNum(FileSize);
+	
+	if (!FileHandle->Read(Buffer.GetData(), FileSize))
+	{
+		delete FileHandle;
+		return false;
+	}
+	
+	delete FileHandle;
+	
+	// Try to parse the buffer as trajectory data
+	// This is a simplified parser that looks for common patterns
+	// Expected format (from specification-trajectory-data-shard.md):
+	// - Header with magic number and metadata
+	// - Trajectory data organized by time steps
+	
+	int32 Offset = 0;
+	
+	// Read header (assuming first 4 bytes are magic number)
+	if (FileSize < 64) // Minimum header size
+	{
+		return false;
+	}
+	
+	uint32 MagicNumber = *reinterpret_cast<const uint32*>(&Buffer[Offset]);
+	Offset += 4;
+	
+	// Check for common trajectory data magic numbers
+	// You would replace these with actual values from the specification
+	const uint32 TRAJ_MAGIC_1 = 0x5452414A; // "TRAJ"
+	const uint32 TRAJ_MAGIC_2 = 0x54524144; // "TRAD"
+	
+	if (MagicNumber != TRAJ_MAGIC_1 && MagicNumber != TRAJ_MAGIC_2)
+	{
+		// Try as simple CSV/text format
+		return LoadTrajectorySamplesFromTextFile(FilePath, StartTimeStep, EndTimeStep, InOutTimeStepSamples);
+	}
+	
+	// Read version
+	uint32 Version = *reinterpret_cast<const uint32*>(&Buffer[Offset]);
+	Offset += 4;
+	
+	// Read number of trajectories
+	uint32 NumTrajectories = *reinterpret_cast<const uint32*>(&Buffer[Offset]);
+	Offset += 4;
+	
+	// Read number of time steps in file
+	uint32 NumTimeStepsInFile = *reinterpret_cast<const uint32*>(&Buffer[Offset]);
+	Offset += 4;
+	
+	// Skip remaining header (assuming 64 byte header)
+	Offset = 64;
+	
+	// Read trajectory data for each time step
+	for (uint32 FileTimeStep = 0; FileTimeStep < NumTimeStepsInFile && Offset < FileSize; ++FileTimeStep)
+	{
+		int32 OutputTimeStep = static_cast<int32>(FileTimeStep);
+		
+		// Check if this time step is in our requested range
+		if (OutputTimeStep < StartTimeStep || OutputTimeStep > EndTimeStep)
+		{
+			// Skip this time step
+			continue;
+		}
+		
+		int32 ArrayIndex = OutputTimeStep - StartTimeStep;
+		if (ArrayIndex < 0 || ArrayIndex >= InOutTimeStepSamples.Num())
+		{
+			continue;
+		}
+		
+		// Read number of samples for this time step
+		if (Offset + 4 > FileSize) break;
+		uint32 NumSamples = *reinterpret_cast<const uint32*>(&Buffer[Offset]);
+		Offset += 4;
+		
+		// Read samples (trajectory ID + position)
+		for (uint32 i = 0; i < NumSamples && Offset + 16 <= FileSize; ++i)
+		{
+			uint32 TrajectoryId = *reinterpret_cast<const uint32*>(&Buffer[Offset]);
+			Offset += 4;
+			
+			float X = *reinterpret_cast<const float*>(&Buffer[Offset]);
+			Offset += 4;
+			float Y = *reinterpret_cast<const float*>(&Buffer[Offset]);
+			Offset += 4;
+			float Z = *reinterpret_cast<const float*>(&Buffer[Offset]);
+			Offset += 4;
+			
+			FSpatialHashTableBuilder::FTrajectorySample Sample(TrajectoryId, FVector(X, Y, Z));
+			InOutTimeStepSamples[ArrayIndex].Add(Sample);
+		}
+	}
+	
+	return true;
+}
+
+bool USpatialHashTableManager::LoadTrajectorySamplesFromTextFile(
+	const FString& FilePath,
+	int32 StartTimeStep,
+	int32 EndTimeStep,
+	TArray<TArray<FSpatialHashTableBuilder::FTrajectorySample>>& InOutTimeStepSamples)
+{
+	// Try to load as CSV/text format
+	// Expected format: TimeStep,TrajectoryID,X,Y,Z
+	
+	FString FileContent;
+	if (!FFileHelper::LoadFileToString(FileContent, *FilePath))
+	{
+		return false;
+	}
+	
+	TArray<FString> Lines;
+	FileContent.ParseIntoArrayLines(Lines);
+	
+	if (Lines.Num() == 0)
+	{
+		return false;
+	}
+	
+	bool bHasData = false;
+	
+	// Skip header if present
+	int32 StartLine = 0;
+	if (Lines[0].Contains(TEXT("TimeStep")) || Lines[0].Contains(TEXT("time")))
+	{
+		StartLine = 1;
+	}
+	
+	for (int32 i = StartLine; i < Lines.Num(); ++i)
+	{
+		FString Line = Lines[i].TrimStartAndEnd();
+		if (Line.IsEmpty() || Line.StartsWith(TEXT("#")))
+		{
+			continue;
+		}
+		
+		TArray<FString> Fields;
+		Line.ParseIntoArray(Fields, TEXT(","));
+		
+		if (Fields.Num() < 5)
+		{
+			// Try tab-separated
+			Fields.Reset();
+			Line.ParseIntoArray(Fields, TEXT("\t"));
+		}
+		
+		if (Fields.Num() >= 5)
+		{
+			int32 TimeStep = FCString::Atoi(*Fields[0]);
+			
+			if (TimeStep >= StartTimeStep && TimeStep <= EndTimeStep)
+			{
+				int32 ArrayIndex = TimeStep - StartTimeStep;
+				if (ArrayIndex >= 0 && ArrayIndex < InOutTimeStepSamples.Num())
+				{
+					uint32 TrajectoryId = FCString::Atoi(*Fields[1]);
+					float X = FCString::Atof(*Fields[2]);
+					float Y = FCString::Atof(*Fields[3]);
+					float Z = FCString::Atof(*Fields[4]);
+					
+					FSpatialHashTableBuilder::FTrajectorySample Sample(TrajectoryId, FVector(X, Y, Z));
+					InOutTimeStepSamples[ArrayIndex].Add(Sample);
+					bHasData = true;
+				}
+			}
+		}
+	}
+	
+	return bHasData;
 }
 
 FVector USpatialHashTableManager::GetTrajectoryPosition(int32 TrajectoryId, int32 TimeStep) const

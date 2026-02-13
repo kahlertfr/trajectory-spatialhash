@@ -245,6 +245,52 @@ protected:
 	bool TryCreateHashTables(const FString& DatasetDirectory, float CellSize, int32 StartTimeStep, int32 EndTimeStep);
 
 	/**
+	 * Load trajectory data from dataset directory
+	 * This method looks for trajectory data files and loads them into the format needed by the builder
+	 * 
+	 * @param DatasetDirectory Base directory containing trajectory data
+	 * @param StartTimeStep First time step to load
+	 * @param EndTimeStep Last time step to load
+	 * @param OutTimeStepSamples Output array of trajectory samples for each time step
+	 * @return True if trajectory data was loaded successfully
+	 */
+	bool LoadTrajectoryDataFromDirectory(
+		const FString& DatasetDirectory,
+		int32 StartTimeStep,
+		int32 EndTimeStep,
+		TArray<TArray<FSpatialHashTableBuilder::FTrajectorySample>>& OutTimeStepSamples);
+
+	/**
+	 * Load trajectory samples from a binary file
+	 * 
+	 * @param FilePath Path to the binary file
+	 * @param StartTimeStep First time step to load
+	 * @param EndTimeStep Last time step to load
+	 * @param InOutTimeStepSamples Array to add samples to
+	 * @return True if samples were loaded successfully
+	 */
+	bool LoadTrajectorySamplesFromFile(
+		const FString& FilePath,
+		int32 StartTimeStep,
+		int32 EndTimeStep,
+		TArray<TArray<FSpatialHashTableBuilder::FTrajectorySample>>& InOutTimeStepSamples);
+
+	/**
+	 * Load trajectory samples from a text/CSV file
+	 * 
+	 * @param FilePath Path to the text file
+	 * @param StartTimeStep First time step to load
+	 * @param EndTimeStep Last time step to load
+	 * @param InOutTimeStepSamples Array to add samples to
+	 * @return True if samples were loaded successfully
+	 */
+	bool LoadTrajectorySamplesFromTextFile(
+		const FString& FilePath,
+		int32 StartTimeStep,
+		int32 EndTimeStep,
+		TArray<TArray<FSpatialHashTableBuilder::FTrajectorySample>>& InOutTimeStepSamples);
+
+	/**
 	 * Find trajectory positions for distance calculations
 	 * This is a placeholder - in a real implementation, this would query the TrajectoryData plugin
 	 * 
