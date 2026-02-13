@@ -6,12 +6,12 @@
 #include "Modules/ModuleManager.h"
 
 /**
- * Trajectory Hash Plugin Module
+ * Spatial Hashed Trajectory Module
  * 
  * This module provides spatial hash table functionality for efficient
  * fixed radius nearest neighbor searches on trajectory data.
  */
-class FTrajectoryHashPluginModule : public IModuleInterface
+class FSpatialHashedTrajectoryModule : public IModuleInterface
 {
 public:
 

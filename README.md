@@ -1,4 +1,4 @@
-# Trajectory Hash Plugin
+# Spatial Hashed Trajectory
 
 A spatial hash table implementation for Unreal Engine 5 that provides efficient fixed radius nearest neighbor searches on trajectory data.
 
@@ -19,7 +19,7 @@ This plugin requires the following dependencies:
 
 ### Required Plugins
 
-- **TrajectoryDataPlugin** - Provides trajectory data structures and utilities
+- **TrajectoryData** - Provides trajectory data structures and utilities
   - Repository: [kahlertfr/ue-plugin-trajectory-data](https://github.com/kahlertfr/ue-plugin-trajectory-data)
   - This plugin must be installed and enabled in your Unreal Engine project
 
@@ -29,25 +29,25 @@ This plugin requires the following dependencies:
 
 ## Installation
 
-1. **Install TrajectoryDataPlugin dependency:**
+1. **Install TrajectoryData dependency:**
    ```bash
-   # Clone the TrajectoryDataPlugin into your project's Plugins folder
+   # Clone the TrajectoryData plugin into your project's Plugins folder
    cd YourProject/Plugins
-   git clone https://github.com/kahlertfr/ue-plugin-trajectory-data.git TrajectoryDataPlugin
+   git clone https://github.com/kahlertfr/ue-plugin-trajectory-data.git TrajectoryData
    ```
 
-2. **Install TrajectoryHashPlugin:**
+2. **Install SpatialHashedTrajectory:**
    ```bash
    # Clone this plugin into your project's Plugins folder
    cd YourProject/Plugins
-   git clone https://github.com/kahlertfr/trajectory-spatialhash.git TrajectoryHashPlugin
+   git clone https://github.com/kahlertfr/trajectory-spatialhash.git SpatialHashedTrajectory
    ```
 
 3. **Enable the plugins:**
    - Open your Unreal Engine project
    - Go to Edit → Plugins
-   - Search for "Trajectory Hash Plugin" and enable it
-   - The TrajectoryDataPlugin should be automatically enabled as a dependency
+   - Search for "Spatial Hashed Trajectory" and enable it
+   - The TrajectoryData plugin should be automatically enabled as a dependency
    - Restart the editor when prompted
 
 4. **Add to your module's Build.cs** (if using in C++ code):
@@ -56,7 +56,7 @@ This plugin requires the following dependencies:
        "Core", 
        "CoreUObject", 
        "Engine",
-       "TrajectoryHashPlugin"
+       "SpatialHashedTrajectory"
    });
    ```
 
@@ -67,7 +67,7 @@ This plugin requires the following dependencies:
 The spatial hash table provides efficient spatial indexing for trajectory points:
 
 ```cpp
-#include "TrajectoryHashPluginModule.h"
+#include "SpatialHashedTrajectoryModule.h"
 
 // The plugin provides spatial hash functionality for trajectory data
 // More detailed usage examples will be added as the API is implemented
@@ -102,18 +102,18 @@ The plugin will be automatically compiled when you build your Unreal Engine proj
 ### Project Structure
 
 ```
-TrajectoryHashPlugin/
-├── TrajectoryHashPlugin.uplugin    # Plugin descriptor
-├── README.md                        # This file
+SpatialHashedTrajectory/
+├── SpatialHashedTrajectory.uplugin    # Plugin descriptor
+├── README.md                           # This file
 ├── Resources/
-│   └── Icon128.png                 # Plugin icon
+│   └── Icon128.png                    # Plugin icon
 └── Source/
-    └── TrajectoryHashPlugin/
-        ├── TrajectoryHashPlugin.Build.cs      # Build configuration
+    └── SpatialHashedTrajectory/
+        ├── SpatialHashedTrajectory.Build.cs      # Build configuration
         ├── Public/
-        │   └── TrajectoryHashPluginModule.h   # Module interface
+        │   └── SpatialHashedTrajectoryModule.h   # Module interface
         └── Private/
-            └── TrajectoryHashPluginModule.cpp # Module implementation
+            └── SpatialHashedTrajectoryModule.cpp # Module implementation
 ```
 
 ## License

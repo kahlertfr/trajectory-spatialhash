@@ -2,9 +2,9 @@
 
 using UnrealBuildTool;
 
-public class TrajectoryHashPlugin : ModuleRules
+public class SpatialHashedTrajectory : ModuleRules
 {
-	public TrajectoryHashPlugin(ReadOnlyTargetRules Target) : base(Target)
+	public SpatialHashedTrajectory(ReadOnlyTargetRules Target) : base(Target)
 	{
 		PCHUsage = ModuleRules.PCHUsageMode.UseExplicitOrSharedPCHs;
 		
@@ -28,7 +28,7 @@ public class TrajectoryHashPlugin : ModuleRules
 				"Core",
 				"CoreUObject",
 				"Engine",
-				"TrajectoryDataPlugin"
+				"TrajectoryData"
 			}
 			);
 			
