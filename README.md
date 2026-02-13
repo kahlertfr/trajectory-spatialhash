@@ -89,6 +89,8 @@ Event BeginPlay
 
 **Auto-Creation Behavior:**
 - If `Auto Create` is `true` (default) and hash tables don't exist for the requested cell size, the manager will automatically create them from trajectory data
+- **Note:** Auto-creation in `LoadHashTables` runs synchronously and will block until complete
+- For non-blocking creation, use `CreateHashTablesAsync` (see below)
 - Supports multiple trajectory data file formats:
   - **Binary files** (.bin): Trajectory shard files with header (magic number, version, etc.)
   - **Text files** (.csv, .dat): CSV format with columns: TimeStep,TrajectoryID,X,Y,Z
@@ -96,6 +98,27 @@ Event BeginPlay
 - Filters out existing spatial hash table files to avoid conflicts
 - If hash tables already exist, they are simply loaded from disk
 - Set `Auto Create` to `false` to only load existing hash tables without attempting creation
+
+#### Creating Hash Tables Asynchronously (Non-Blocking)
+
+For large datasets, use async creation to avoid blocking the game thread:
+
+```
+On Button Click or Custom Event
+├─ Call "Create Hash Tables Async" on Manager
+│  ├─ Dataset Directory: Path to trajectory data
+│  ├─ Cell Size: 10.0
+│  ├─ Start Time Step: 0
+│  └─ End Time Step: 1000
+└─ Optional: Poll "Is Creating Hash Tables" to check progress
+   └─ Branch: If False, creation is complete
+```
+
+**Async Creation Benefits:**
+- **Non-blocking:** Returns immediately, game thread stays responsive
+- **Parallelized:** Time steps are processed in parallel across multiple CPU cores
+- **Performance:** Significant speedup for datasets with many time steps
+- Can monitor progress with `Is Creating Hash Tables` node
 
 **Trajectory Data Format:**
 
