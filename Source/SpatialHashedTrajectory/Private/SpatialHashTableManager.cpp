@@ -2,6 +2,7 @@
 
 #include "SpatialHashTableManager.h"
 #include "Misc/Paths.h"
+#include "HAL/PlatformFileManager.h"
 
 USpatialHashTableManager::USpatialHashTableManager()
 {
@@ -11,7 +12,8 @@ int32 USpatialHashTableManager::LoadHashTables(
 	const FString& DatasetDirectory,
 	float CellSize,
 	int32 StartTimeStep,
-	int32 EndTimeStep)
+	int32 EndTimeStep,
+	bool bAutoCreate)
 {
 	if (StartTimeStep > EndTimeStep)
 	{
@@ -20,6 +22,31 @@ int32 USpatialHashTableManager::LoadHashTables(
 		return 0;
 	}
 
+	// Check if hash tables exist
+	bool bHashTablesExist = CheckHashTablesExist(DatasetDirectory, CellSize, StartTimeStep, EndTimeStep);
+	
+	// If they don't exist and auto-create is enabled, try to create them
+	if (!bHashTablesExist && bAutoCreate)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("USpatialHashTableManager::LoadHashTables: Hash tables not found for cell size %.3f. Attempting to create them..."),
+			CellSize);
+		
+		if (!TryCreateHashTables(DatasetDirectory, CellSize, StartTimeStep, EndTimeStep))
+		{
+			UE_LOG(LogTemp, Error, TEXT("USpatialHashTableManager::LoadHashTables: Failed to create hash tables"));
+			return 0;
+		}
+		
+		UE_LOG(LogTemp, Log, TEXT("USpatialHashTableManager::LoadHashTables: Successfully created hash tables for cell size %.3f"),
+			CellSize);
+	}
+	else if (!bHashTablesExist)
+	{
+		UE_LOG(LogTemp, Error, TEXT("USpatialHashTableManager::LoadHashTables: Hash tables not found and auto-create is disabled"));
+		return 0;
+	}
+
+	// Now load the hash tables
 	int32 LoadedCount = 0;
 
 	for (int32 TimeStep = StartTimeStep; TimeStep <= EndTimeStep; ++TimeStep)
@@ -343,6 +370,79 @@ TSharedPtr<FSpatialHashTable> USpatialHashTableManager::GetHashTable(
 	}
 
 	return nullptr;
+}
+
+bool USpatialHashTableManager::CheckHashTablesExist(
+	const FString& DatasetDirectory,
+	float CellSize,
+	int32 StartTimeStep,
+	int32 EndTimeStep) const
+{
+	IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
+	
+	// Check if at least some hash tables exist for this cell size
+	int32 ExistingCount = 0;
+	for (int32 TimeStep = StartTimeStep; TimeStep <= EndTimeStep; ++TimeStep)
+	{
+		FString FilePath = FSpatialHashTableBuilder::GetOutputFilename(DatasetDirectory, CellSize, TimeStep);
+		if (PlatformFile.FileExists(*FilePath))
+		{
+			ExistingCount++;
+		}
+	}
+	
+	// Consider hash tables as existing if we found at least some of them
+	// This allows for partial loading scenarios
+	return ExistingCount > 0;
+}
+
+bool USpatialHashTableManager::TryCreateHashTables(
+	const FString& DatasetDirectory,
+	float CellSize,
+	int32 StartTimeStep,
+	int32 EndTimeStep)
+{
+	// Note: This is a placeholder implementation
+	// In a real implementation, this would:
+	// 1. Check if trajectory data files exist in DatasetDirectory
+	// 2. Load trajectory data from the TrajectoryData plugin
+	// 3. Convert trajectory data to FSpatialHashTableBuilder::FTrajectorySample format
+	// 4. Call FSpatialHashTableBuilder::BuildHashTables() to create the hash tables
+	
+	UE_LOG(LogTemp, Warning, TEXT("USpatialHashTableManager::TryCreateHashTables: Automatic hash table creation requires integration with TrajectoryData plugin."));
+	UE_LOG(LogTemp, Warning, TEXT("To create hash tables for cell size %.3f (time steps %d-%d):"), 
+		CellSize, StartTimeStep, EndTimeStep);
+	UE_LOG(LogTemp, Warning, TEXT("1. Load trajectory data from the TrajectoryData plugin"));
+	UE_LOG(LogTemp, Warning, TEXT("2. Use FSpatialHashTableBuilder to build hash tables with cell size %.3f"), CellSize);
+	UE_LOG(LogTemp, Warning, TEXT("3. Or use the CreateHashTables Blueprint function if you have trajectory data available"));
+	
+	// For now, we'll check if the trajectory data directory structure exists
+	IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
+	
+	if (!PlatformFile.DirectoryExists(*DatasetDirectory))
+	{
+		UE_LOG(LogTemp, Error, TEXT("USpatialHashTableManager::TryCreateHashTables: Dataset directory does not exist: %s"), 
+			*DatasetDirectory);
+		return false;
+	}
+	
+	// Setup configuration for building
+	FSpatialHashTableBuilder::FBuildConfig Config;
+	Config.CellSize = CellSize;
+	Config.bComputeBoundingBox = true;
+	Config.BoundingBoxMargin = 1.0f;
+	Config.OutputDirectory = DatasetDirectory;
+	Config.NumTimeSteps = (EndTimeStep - StartTimeStep + 1);
+	
+	// TODO: This is where you would:
+	// - Load trajectory data from files in DatasetDirectory
+	// - Convert to TArray<TArray<FSpatialHashTableBuilder::FTrajectorySample>> format
+	// - Call FSpatialHashTableBuilder builder.BuildHashTables(Config, TimeStepSamples)
+	
+	UE_LOG(LogTemp, Error, TEXT("USpatialHashTableManager::TryCreateHashTables: Trajectory data loading not implemented yet."));
+	UE_LOG(LogTemp, Error, TEXT("Please create hash tables manually using the TrajectoryData plugin and FSpatialHashTableBuilder."));
+	
+	return false;
 }
 
 FVector USpatialHashTableManager::GetTrajectoryPosition(int32 TrajectoryId, int32 TimeStep) const

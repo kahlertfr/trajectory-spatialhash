@@ -71,7 +71,9 @@ The plugin provides a Blueprint-accessible manager class for loading and queryin
 1. In your Blueprint, create a variable of type `Spatial Hash Table Manager`
 2. Initialize it in your BeginPlay event or similar initialization point
 
-#### Loading Hash Tables
+#### Loading Hash Tables (with Auto-Creation)
+
+The manager can automatically create hash tables if they don't exist:
 
 ```
 Event BeginPlay
@@ -81,8 +83,15 @@ Event BeginPlay
    ├─ Dataset Directory: Use FPaths::ProjectContentDir() + "Data/Trajectories" or absolute path
    ├─ Cell Size: 10.0
    ├─ Start Time Step: 0
-   └─ End Time Step: 100
+   ├─ End Time Step: 100
+   └─ Auto Create: true (default - creates hash tables if they don't exist)
 ```
+
+**Auto-Creation Behavior:**
+- If `Auto Create` is `true` (default) and hash tables don't exist for the requested cell size, the manager will attempt to create them
+- Currently requires trajectory data to be available (integration with TrajectoryData plugin needed)
+- If hash tables already exist, they are simply loaded from disk
+- Set `Auto Create` to `false` to only load existing hash tables without attempting creation
 
 **Note:** The Dataset Directory should be an absolute filesystem path, not a Content Browser path. Use Unreal's path functions like `FPaths::ProjectContentDir()` to construct the correct path.
 

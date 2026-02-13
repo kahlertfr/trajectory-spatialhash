@@ -54,15 +54,17 @@ public:
 
 	/**
 	 * Load hash tables from disk for a specific cell size
+	 * If hash tables don't exist, attempts to create them from trajectory data
 	 * 
 	 * @param DatasetDirectory Base directory containing the dataset
 	 * @param CellSize Cell size to load hash tables for
 	 * @param StartTimeStep First time step to load (inclusive)
 	 * @param EndTimeStep Last time step to load (inclusive)
+	 * @param bAutoCreate If true, automatically creates hash tables if they don't exist (default: true)
 	 * @return Number of hash tables successfully loaded
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Spatial Hash")
-	int32 LoadHashTables(const FString& DatasetDirectory, float CellSize, int32 StartTimeStep, int32 EndTimeStep);
+	int32 LoadHashTables(const FString& DatasetDirectory, float CellSize, int32 StartTimeStep, int32 EndTimeStep, bool bAutoCreate = true);
 
 	/**
 	 * Load a single hash table from disk
@@ -219,6 +221,28 @@ protected:
 	 * @return Pointer to hash table, or nullptr if not loaded
 	 */
 	TSharedPtr<FSpatialHashTable> GetHashTable(float CellSize, int32 TimeStep) const;
+
+	/**
+	 * Check if hash tables exist on disk for the given range
+	 * 
+	 * @param DatasetDirectory Base directory containing the dataset
+	 * @param CellSize Cell size to check for
+	 * @param StartTimeStep First time step to check
+	 * @param EndTimeStep Last time step to check
+	 * @return True if all hash tables exist
+	 */
+	bool CheckHashTablesExist(const FString& DatasetDirectory, float CellSize, int32 StartTimeStep, int32 EndTimeStep) const;
+
+	/**
+	 * Attempt to create hash tables from trajectory data
+	 * 
+	 * @param DatasetDirectory Base directory containing the dataset
+	 * @param CellSize Cell size for the hash tables
+	 * @param StartTimeStep First time step to create
+	 * @param EndTimeStep Last time step to create
+	 * @return True if hash tables were created successfully
+	 */
+	bool TryCreateHashTables(const FString& DatasetDirectory, float CellSize, int32 StartTimeStep, int32 EndTimeStep);
 
 	/**
 	 * Find trajectory positions for distance calculations
