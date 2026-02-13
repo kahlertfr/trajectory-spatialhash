@@ -7,6 +7,7 @@
 /**
  * File header for spatial hash table binary files
  * Total size: 64 bytes
+ * Note: Using individual float components instead of FVector to avoid alignment padding
  */
 struct FSpatialHashHeader
 {
@@ -22,11 +23,23 @@ struct FSpatialHashHeader
 	/** Cell size in world units (uniform in all dimensions) */
 	float CellSize;
 	
-	/** Bounding box minimum coordinates */
-	FVector BBoxMin;
+	/** Bounding box minimum X coordinate */
+	float BBoxMinX;
 	
-	/** Bounding box maximum coordinates */
-	FVector BBoxMax;
+	/** Bounding box minimum Y coordinate */
+	float BBoxMinY;
+	
+	/** Bounding box minimum Z coordinate */
+	float BBoxMinZ;
+	
+	/** Bounding box maximum X coordinate */
+	float BBoxMaxX;
+	
+	/** Bounding box maximum Y coordinate */
+	float BBoxMaxY;
+	
+	/** Bounding box maximum Z coordinate */
+	float BBoxMaxZ;
 	
 	/** Number of entries in the hash table */
 	uint32 NumEntries;
@@ -42,13 +55,29 @@ struct FSpatialHashHeader
 		, Version(1)
 		, TimeStep(0)
 		, CellSize(1.0f)
-		, BBoxMin(FVector::ZeroVector)
-		, BBoxMax(FVector::ZeroVector)
+		, BBoxMinX(0.0f)
+		, BBoxMinY(0.0f)
+		, BBoxMinZ(0.0f)
+		, BBoxMaxX(0.0f)
+		, BBoxMaxY(0.0f)
+		, BBoxMaxZ(0.0f)
 		, NumEntries(0)
 		, NumTrajectoryIds(0)
 	{
 		FMemory::Memzero(Reserved, sizeof(Reserved));
 	}
+	
+	/** Helper to get bounding box minimum as FVector */
+	FVector GetBBoxMin() const { return FVector(BBoxMinX, BBoxMinY, BBoxMinZ); }
+	
+	/** Helper to set bounding box minimum from FVector */
+	void SetBBoxMin(const FVector& Min) { BBoxMinX = Min.X; BBoxMinY = Min.Y; BBoxMinZ = Min.Z; }
+	
+	/** Helper to get bounding box maximum as FVector */
+	FVector GetBBoxMax() const { return FVector(BBoxMaxX, BBoxMaxY, BBoxMaxZ); }
+	
+	/** Helper to set bounding box maximum from FVector */
+	void SetBBoxMax(const FVector& Max) { BBoxMaxX = Max.X; BBoxMaxY = Max.Y; BBoxMaxZ = Max.Z; }
 };
 
 // Ensure the header is exactly 64 bytes

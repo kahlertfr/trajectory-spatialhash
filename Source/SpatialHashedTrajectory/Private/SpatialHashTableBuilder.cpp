@@ -87,8 +87,8 @@ bool FSpatialHashTableBuilder::BuildHashTableForTimeStep(
 	// Initialize header
 	OutHashTable.Header.TimeStep = TimeStep;
 	OutHashTable.Header.CellSize = Config.CellSize;
-	OutHashTable.Header.BBoxMin = Config.BBoxMin;
-	OutHashTable.Header.BBoxMax = Config.BBoxMax;
+	OutHashTable.Header.SetBBoxMin(Config.BBoxMin);
+	OutHashTable.Header.SetBBoxMax(Config.BBoxMax);
 
 	if (Samples.Num() == 0)
 	{

@@ -119,7 +119,7 @@ bool FSpatialHashTable::QueryAtPosition(const FVector& WorldPos, TArray<uint32>&
 	
 	// Convert world position to cell coordinates
 	int32 CellX, CellY, CellZ;
-	WorldToCellCoordinates(WorldPos, Header.BBoxMin, Header.CellSize, CellX, CellY, CellZ);
+	WorldToCellCoordinates(WorldPos, Header.GetBBoxMin(), Header.CellSize, CellX, CellY, CellZ);
 	
 	// Calculate Z-Order key
 	uint64 Key = CalculateZOrderKey(CellX, CellY, CellZ);

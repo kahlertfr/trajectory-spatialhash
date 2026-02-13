@@ -154,7 +154,7 @@ int32 USpatialHashTableManager::QueryFixedRadiusNeighbors(
 	int32 CenterX, CenterY, CenterZ;
 	FSpatialHashTable::WorldToCellCoordinates(
 		QueryPosition,
-		HashTable->Header.BBoxMin,
+		HashTable->Header.GetBBoxMin(),
 		HashTable->Header.CellSize,
 		CenterX, CenterY, CenterZ);
 
