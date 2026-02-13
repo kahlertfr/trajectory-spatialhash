@@ -81,14 +81,20 @@ int32 FSpatialHashTable::FindEntry(uint64 Key) const
 	return -1; // Not found
 }
 
-void FSpatialHashTable::GetTrajectoryIdsForCell(int32 EntryIndex, TArray<uint32>& OutTrajectoryIds) const
+bool FSpatialHashTable::GetTrajectoryIdsForCell(int32 EntryIndex, TArray<uint32>& OutTrajectoryIds) const
 {
 	OutTrajectoryIds.Reset();
 	
-	if (EntryIndex >= 0 && EntryIndex < Entries.Num())
+	if (EntryIndex < 0 || EntryIndex >= Entries.Num())
 	{
-		const FSpatialHashEntry& Entry = Entries[EntryIndex];
-		
+		return false;
+	}
+
+	const FSpatialHashEntry& Entry = Entries[EntryIndex];
+	
+	// If TrajectoryIds array is populated (e.g., for building/saving), use it
+	if (TrajectoryIds.Num() > 0)
+	{
 		// Validate indices
 		if (Entry.StartIndex < (uint32)TrajectoryIds.Num() &&
 			Entry.StartIndex + Entry.TrajectoryCount <= (uint32)TrajectoryIds.Num())
@@ -98,8 +104,13 @@ void FSpatialHashTable::GetTrajectoryIdsForCell(int32 EntryIndex, TArray<uint32>
 			{
 				OutTrajectoryIds.Add(TrajectoryIds[Entry.StartIndex + i]);
 			}
+			return true;
 		}
+		return false;
 	}
+	
+	// Otherwise, read from disk on-demand
+	return ReadTrajectoryIdsFromDisk(Entry.StartIndex, Entry.TrajectoryCount, OutTrajectoryIds);
 }
 
 bool FSpatialHashTable::QueryAtPosition(const FVector& WorldPos, TArray<uint32>& OutTrajectoryIds) const
@@ -117,8 +128,7 @@ bool FSpatialHashTable::QueryAtPosition(const FVector& WorldPos, TArray<uint32>&
 	int32 EntryIndex = FindEntry(Key);
 	if (EntryIndex >= 0)
 	{
-		GetTrajectoryIdsForCell(EntryIndex, OutTrajectoryIds);
-		return true;
+		return GetTrajectoryIdsForCell(EntryIndex, OutTrajectoryIds);
 	}
 	
 	return false;
@@ -202,6 +212,9 @@ bool FSpatialHashTable::LoadFromFile(const FString& Filename)
 		return false;
 	}
 
+	// Store the file path for on-demand loading
+	SourceFilePath = Filename;
+
 	// Open file for reading
 	IFileHandle* FileHandle = PlatformFile.OpenRead(*Filename);
 	if (!FileHandle)
@@ -246,30 +259,30 @@ bool FSpatialHashTable::LoadFromFile(const FString& Filename)
 		}
 	}
 
-	// Read trajectory IDs
-	if (bSuccess && Header.NumTrajectoryIds > 0)
-	{
-		TrajectoryIds.SetNum(Header.NumTrajectoryIds);
-		if (!FileHandle->Read(reinterpret_cast<uint8*>(TrajectoryIds.GetData()), 
-			Header.NumTrajectoryIds * sizeof(uint32)))
-		{
-			UE_LOG(LogTemp, Error, TEXT("FSpatialHashTable::LoadFromFile: Failed to read trajectory IDs"));
-			bSuccess = false;
-		}
-	}
+	// Skip loading trajectory IDs to save memory - they will be read on-demand
+	// The trajectory IDs array remains empty
+	TrajectoryIds.Empty();
 
 	delete FileHandle;
 
-	// Validate loaded data
-	if (bSuccess && !Validate())
+	// Validate loaded data (with empty trajectory IDs array)
+	if (bSuccess)
 	{
-		UE_LOG(LogTemp, Error, TEXT("FSpatialHashTable::LoadFromFile: Validation failed after loading"));
-		bSuccess = false;
+		// Basic validation - check entries are sorted
+		for (int32 i = 1; i < Entries.Num(); ++i)
+		{
+			if (Entries[i].ZOrderKey <= Entries[i - 1].ZOrderKey)
+			{
+				UE_LOG(LogTemp, Error, TEXT("FSpatialHashTable::LoadFromFile: Entries not sorted at index %d"), i);
+				bSuccess = false;
+				break;
+			}
+		}
 	}
 
 	if (bSuccess)
 	{
-		UE_LOG(LogTemp, Log, TEXT("FSpatialHashTable::LoadFromFile: Successfully loaded from %s"), *Filename);
+		UE_LOG(LogTemp, Log, TEXT("FSpatialHashTable::LoadFromFile: Successfully loaded from %s (trajectory IDs not loaded for memory optimization)"), *Filename);
 	}
 
 	return bSuccess;
@@ -302,7 +315,8 @@ bool FSpatialHashTable::Validate() const
 		return false;
 	}
 
-	if (Header.NumTrajectoryIds != (uint32)TrajectoryIds.Num())
+	// Only validate trajectory IDs array if it's populated (e.g., when building/saving)
+	if (TrajectoryIds.Num() > 0 && Header.NumTrajectoryIds != (uint32)TrajectoryIds.Num())
 	{
 		UE_LOG(LogTemp, Warning, TEXT("FSpatialHashTable::Validate: Trajectory ID count mismatch"));
 		return false;
@@ -318,21 +332,105 @@ bool FSpatialHashTable::Validate() const
 		}
 	}
 
-	// Check that all entry indices are valid
-	for (const FSpatialHashEntry& Entry : Entries)
+	// Check that all entry indices are valid (only if TrajectoryIds array is populated)
+	if (TrajectoryIds.Num() > 0)
 	{
-		if (Entry.StartIndex >= (uint32)TrajectoryIds.Num())
+		for (const FSpatialHashEntry& Entry : Entries)
 		{
-			UE_LOG(LogTemp, Warning, TEXT("FSpatialHashTable::Validate: Invalid start index"));
-			return false;
-		}
+			if (Entry.StartIndex >= (uint32)TrajectoryIds.Num())
+			{
+				UE_LOG(LogTemp, Warning, TEXT("FSpatialHashTable::Validate: Invalid start index"));
+				return false;
+			}
 
-		if (Entry.StartIndex + Entry.TrajectoryCount > (uint32)TrajectoryIds.Num())
+			if (Entry.StartIndex + Entry.TrajectoryCount > (uint32)TrajectoryIds.Num())
+			{
+				UE_LOG(LogTemp, Warning, TEXT("FSpatialHashTable::Validate: Entry exceeds trajectory IDs array"));
+				return false;
+			}
+		}
+	}
+	else
+	{
+		// When TrajectoryIds array is empty (on-demand loading mode), validate against header
+		for (const FSpatialHashEntry& Entry : Entries)
 		{
-			UE_LOG(LogTemp, Warning, TEXT("FSpatialHashTable::Validate: Entry exceeds trajectory IDs array"));
-			return false;
+			if (Entry.StartIndex >= Header.NumTrajectoryIds)
+			{
+				UE_LOG(LogTemp, Warning, TEXT("FSpatialHashTable::Validate: Invalid start index"));
+				return false;
+			}
+
+			if (Entry.StartIndex + Entry.TrajectoryCount > Header.NumTrajectoryIds)
+			{
+				UE_LOG(LogTemp, Warning, TEXT("FSpatialHashTable::Validate: Entry exceeds trajectory IDs array"));
+				return false;
+			}
 		}
 	}
 
 	return true;
+}
+
+bool FSpatialHashTable::ReadTrajectoryIdsFromDisk(uint32 StartIndex, uint32 Count, TArray<uint32>& OutTrajectoryIds) const
+{
+	OutTrajectoryIds.Reset();
+
+	if (SourceFilePath.IsEmpty())
+	{
+		UE_LOG(LogTemp, Error, TEXT("FSpatialHashTable::ReadTrajectoryIdsFromDisk: No source file path set"));
+		return false;
+	}
+
+	if (Count == 0)
+	{
+		return true; // Nothing to read
+	}
+
+	// Validate indices
+	if (StartIndex >= Header.NumTrajectoryIds || StartIndex + Count > Header.NumTrajectoryIds)
+	{
+		UE_LOG(LogTemp, Error, TEXT("FSpatialHashTable::ReadTrajectoryIdsFromDisk: Invalid range [%u, %u) for array size %u"),
+			StartIndex, StartIndex + Count, Header.NumTrajectoryIds);
+		return false;
+	}
+
+	IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
+	
+	// Open file for reading
+	IFileHandle* FileHandle = PlatformFile.OpenRead(*SourceFilePath);
+	if (!FileHandle)
+	{
+		UE_LOG(LogTemp, Error, TEXT("FSpatialHashTable::ReadTrajectoryIdsFromDisk: Failed to open file: %s"), *SourceFilePath);
+		return false;
+	}
+
+	bool bSuccess = true;
+
+	// Calculate offset to trajectory IDs array
+	// File layout: Header (64 bytes) + Entries (NumEntries * 16 bytes) + TrajectoryIds
+	int64 TrajectoryIdsOffset = sizeof(FSpatialHashHeader) + (Header.NumEntries * sizeof(FSpatialHashEntry));
+	int64 ReadOffset = TrajectoryIdsOffset + (StartIndex * sizeof(uint32));
+
+	// Seek to the correct position
+	if (!FileHandle->Seek(ReadOffset))
+	{
+		UE_LOG(LogTemp, Error, TEXT("FSpatialHashTable::ReadTrajectoryIdsFromDisk: Failed to seek to offset %lld"), ReadOffset);
+		bSuccess = false;
+	}
+
+	// Read the trajectory IDs
+	if (bSuccess)
+	{
+		OutTrajectoryIds.SetNum(Count);
+		if (!FileHandle->Read(reinterpret_cast<uint8*>(OutTrajectoryIds.GetData()), Count * sizeof(uint32)))
+		{
+			UE_LOG(LogTemp, Error, TEXT("FSpatialHashTable::ReadTrajectoryIdsFromDisk: Failed to read %u trajectory IDs"), Count);
+			bSuccess = false;
+		}
+	}
+
+	delete FileHandle;
+
+	return bSuccess;
 }

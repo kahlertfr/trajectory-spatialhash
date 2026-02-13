@@ -95,6 +95,9 @@ static_assert(sizeof(FSpatialHashEntry) == 16, "FSpatialHashEntry must be exactl
 
 /**
  * In-memory representation of a spatial hash table for one time step
+ * 
+ * Note: To optimize memory usage, trajectory IDs are not loaded into memory.
+ * Instead, they are read on-demand from disk when queried.
  */
 class SPATIALHASHEDTRAJECTORY_API FSpatialHashTable
 {
@@ -105,8 +108,11 @@ public:
 	/** Sorted array of hash table entries */
 	TArray<FSpatialHashEntry> Entries;
 	
-	/** Array of trajectory IDs, grouped by cell */
+	/** Array of trajectory IDs, grouped by cell (used for building/saving only) */
 	TArray<uint32> TrajectoryIds;
+	
+	/** Path to the source file for on-demand trajectory ID loading */
+	FString SourceFilePath;
 
 	FSpatialHashTable() = default;
 
@@ -144,14 +150,15 @@ public:
 	int32 FindEntry(uint64 Key) const;
 
 	/**
-	 * Get trajectory IDs for a specific cell
+	 * Get trajectory IDs for a specific cell (reads from disk on-demand)
 	 * @param EntryIndex Index of the hash table entry
 	 * @param OutTrajectoryIds Output array of trajectory IDs
+	 * @return true if successful, false otherwise
 	 */
-	void GetTrajectoryIdsForCell(int32 EntryIndex, TArray<uint32>& OutTrajectoryIds) const;
+	bool GetTrajectoryIdsForCell(int32 EntryIndex, TArray<uint32>& OutTrajectoryIds) const;
 
 	/**
-	 * Query trajectory IDs at a specific world position
+	 * Query trajectory IDs at a specific world position (reads from disk on-demand)
 	 * @param WorldPos World space position
 	 * @param OutTrajectoryIds Output array of trajectory IDs
 	 * @return true if cell was found, false otherwise
@@ -166,7 +173,7 @@ public:
 	bool SaveToFile(const FString& Filename) const;
 
 	/**
-	 * Load hash table from binary file
+	 * Load hash table from binary file (trajectory IDs not loaded into memory)
 	 * @param Filename Path to input file
 	 * @return true if successful, false otherwise
 	 */
@@ -177,4 +184,14 @@ public:
 	 * @return true if valid, false otherwise
 	 */
 	bool Validate() const;
+
+private:
+	/**
+	 * Read trajectory IDs from disk for a specific range
+	 * @param StartIndex Starting index in the trajectory IDs array
+	 * @param Count Number of IDs to read
+	 * @param OutTrajectoryIds Output array of trajectory IDs
+	 * @return true if successful, false otherwise
+	 */
+	bool ReadTrajectoryIdsFromDisk(uint32 StartIndex, uint32 Count, TArray<uint32>& OutTrajectoryIds) const;
 };
