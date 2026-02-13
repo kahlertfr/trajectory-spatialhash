@@ -135,8 +135,9 @@ assert(header.version == 1);
 HashEntry* entries = new HashEntry[header.num_entries];
 fread(entries, sizeof(HashEntry), header.num_entries, file);
 
-// 4. DO NOT read trajectory IDs into memory (for memory optimization)
-// Keep file handle open or reopen when needed for on-demand queries
+// 4. Trajectory IDs are NOT loaded into memory
+// Close file - will reopen for on-demand queries
+fclose(file);
 
 // Store file offset to trajectory IDs for later use
 int64_t trajectory_ids_offset = sizeof(SpatialHashHeader) + 
@@ -158,11 +159,11 @@ uint64_t key = CalculateZOrderKey(cx, cy, cz);
 int entry_index = BinarySearch(entries, header.num_entries, key);
 
 if (entry_index >= 0) {
-    // 4. Read trajectory IDs from disk on-demand (NOT from memory)
+    // 4. Read trajectory IDs from disk on-demand
     uint32_t start_idx = entries[entry_index].start_index;
     uint32_t count = entries[entry_index].trajectory_count;
     
-    // Reopen file if needed
+    // Open file for reading
     FILE* file = fopen("timestep_00000.bin", "rb");
     
     // Seek to trajectory IDs location
@@ -173,10 +174,17 @@ if (entry_index >= 0) {
     uint32_t* trajectory_ids = new uint32_t[count];
     fread(trajectory_ids, sizeof(uint32_t), count, file);
     
+    // Close file immediately after reading
+    fclose(file);
+    
+    // Process trajectory IDs
     for (uint32_t i = 0; i < count; i++) {
         uint32_t trajectory_id = trajectory_ids[i];
         // Process trajectory_id...
     }
+    
+    // Clean up
+    delete[] trajectory_ids;
 }
 ```
 

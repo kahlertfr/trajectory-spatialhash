@@ -260,24 +260,15 @@ bool FSpatialHashTable::LoadFromFile(const FString& Filename)
 	}
 
 	// Skip loading trajectory IDs to save memory - they will be read on-demand
-	// The trajectory IDs array remains empty
-	TrajectoryIds.Empty();
+	// Note: TrajectoryIds array is already empty from initialization
 
 	delete FileHandle;
 
-	// Validate loaded data (with empty trajectory IDs array)
-	if (bSuccess)
+	// Validate loaded data
+	if (bSuccess && !Validate())
 	{
-		// Basic validation - check entries are sorted
-		for (int32 i = 1; i < Entries.Num(); ++i)
-		{
-			if (Entries[i].ZOrderKey <= Entries[i - 1].ZOrderKey)
-			{
-				UE_LOG(LogTemp, Error, TEXT("FSpatialHashTable::LoadFromFile: Entries not sorted at index %d"), i);
-				bSuccess = false;
-				break;
-			}
-		}
+		UE_LOG(LogTemp, Error, TEXT("FSpatialHashTable::LoadFromFile: Validation failed after loading"));
+		bSuccess = false;
 	}
 
 	if (bSuccess)
