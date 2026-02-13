@@ -582,7 +582,7 @@ bool USpatialHashTableManager::LoadTrajectoryDataFromDirectory(
 	UTrajectoryDataLoader* Loader = UTrajectoryDataLoader::Get();
 	if (!Loader)
 	{
-		UE_LOG(LogTemp, Error, TEXT("USpatialHashTableManager::LoadTrajectoryDataFromDirectory: Failed to get TrajectoryDataLoader"));
+		UE_LOG(LogTemp, Error, TEXT("USpatialHashTableManager::LoadTrajectoryDataFromDirectory: Failed to get TrajectoryDataLoader. Please ensure the TrajectoryData plugin is properly installed and enabled."));
 		return false;
 	}
 	
@@ -633,6 +633,8 @@ bool USpatialHashTableManager::LoadTrajectoryDataFromDirectory(
 			}
 			
 			// Get position for this trajectory at this time step
+			// Note: Positions array uses row-major storage: [traj0_t0, traj0_t1, ..., traj1_t0, traj1_t1, ...]
+			// So index = TrajIdx * TimeStepCount + TimeStepIdx
 			int32 DataIndex = TrajIdx * LoadedDataset.TimeStepCount + TimeStepIdx;
 			if (DataIndex >= LoadedDataset.Positions.Num())
 			{
