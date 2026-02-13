@@ -91,13 +91,16 @@ Event BeginPlay
 - If `Auto Create` is `true` (default) and hash tables don't exist for the requested cell size, the manager will automatically create them from trajectory data
 - **Note:** Auto-creation in `LoadHashTables` runs synchronously and will block until complete
 - For non-blocking creation, use `CreateHashTablesAsync` (see below)
-- Supports multiple trajectory data file formats:
-  - **Binary files** (.bin): Trajectory shard files with header (magic number, version, etc.)
-  - **Text files** (.csv, .dat): CSV format with columns: TimeStep,TrajectoryID,X,Y,Z
-- The system automatically searches the dataset directory for trajectory data files
-- Filters out existing spatial hash table files to avoid conflicts
+- Trajectory data is loaded using the **TrajectoryData plugin** (https://github.com/kahlertfr/ue-plugin-trajectory-data)
+- Supports the full trajectory data format specification:
+  - `dataset-manifest.json` - Dataset metadata (scenario name, physical times, units)
+  - `dataset-meta.bin` - Binary metadata
+  - `dataset-trajmeta.bin` - Per-trajectory metadata
+  - `shard-*.bin` - Time-interval data files
+- The system automatically loads all trajectories and time steps from the dataset
 - If hash tables already exist, they are simply loaded from disk
 - Set `Auto Create` to `false` to only load existing hash tables without attempting creation
+- See [trajectory data specification](https://github.com/kahlertfr/ue-plugin-trajectory-data/blob/main/specification-trajectory-data-shard.md) for data format details
 
 #### Creating Hash Tables Asynchronously (Non-Blocking)
 
@@ -122,19 +125,13 @@ On Button Click or Custom Event
 
 **Trajectory Data Format:**
 
-Binary format:
-```
-Header (64 bytes): Magic (4) + Version (4) + NumTrajectories (4) + NumTimeSteps (4) + Reserved (48)
-Per TimeStep: NumSamples (4) + [TrajectoryID (4) + X (4) + Y (4) + Z (4)] × NumSamples
-```
+This plugin uses the **TrajectoryData plugin** for loading trajectory data. The dataset directory should contain:
+- `dataset-manifest.json` - Human-readable metadata (scenario name, physical times, coordinate units)
+- `dataset-meta.bin` - Binary dataset metadata (time step ranges, bounding box, etc.)
+- `dataset-trajmeta.bin` - Per-trajectory metadata
+- `shard-*.bin` - Time-interval data files with trajectory positions
 
-Text/CSV format:
-```csv
-TimeStep,TrajectoryID,X,Y,Z
-0,1,10.5,20.3,5.0
-0,2,15.2,22.1,5.5
-...
-```
+See the [trajectory data specification](https://github.com/kahlertfr/ue-plugin-trajectory-data/blob/main/specification-trajectory-data-shard.md) for detailed format information.
 
 **Note:** The Dataset Directory should be an absolute filesystem path, not a Content Browser path. Use Unreal's path functions like `FPaths::ProjectContentDir()` to construct the correct path.
 

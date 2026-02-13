@@ -292,35 +292,6 @@ protected:
 		int32 EndTimeStep,
 		TArray<TArray<FSpatialHashTableBuilder::FTrajectorySample>>& OutTimeStepSamples);
 
-	/**
-	 * Load trajectory samples from a binary file
-	 * 
-	 * @param FilePath Path to the binary file
-	 * @param StartTimeStep First time step to load
-	 * @param EndTimeStep Last time step to load
-	 * @param InOutTimeStepSamples Array to add samples to
-	 * @return True if samples were loaded successfully
-	 */
-	bool LoadTrajectorySamplesFromFile(
-		const FString& FilePath,
-		int32 StartTimeStep,
-		int32 EndTimeStep,
-		TArray<TArray<FSpatialHashTableBuilder::FTrajectorySample>>& InOutTimeStepSamples);
-
-	/**
-	 * Load trajectory samples from a text/CSV file
-	 * 
-	 * @param FilePath Path to the text file
-	 * @param StartTimeStep First time step to load
-	 * @param EndTimeStep Last time step to load
-	 * @param InOutTimeStepSamples Array to add samples to
-	 * @return True if samples were loaded successfully
-	 */
-	bool LoadTrajectorySamplesFromTextFile(
-		const FString& FilePath,
-		int32 StartTimeStep,
-		int32 EndTimeStep,
-		TArray<TArray<FSpatialHashTableBuilder::FTrajectorySample>>& InOutTimeStepSamples);
 
 	/**
 	 * Find trajectory positions for distance calculations
