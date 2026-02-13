@@ -380,8 +380,10 @@ bool USpatialHashTableManager::CheckHashTablesExist(
 {
 	IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
 	
-	// Check if at least some hash tables exist for this cell size
+	// Check if ALL hash tables exist for this cell size
+	int32 TotalExpected = EndTimeStep - StartTimeStep + 1;
 	int32 ExistingCount = 0;
+	
 	for (int32 TimeStep = StartTimeStep; TimeStep <= EndTimeStep; ++TimeStep)
 	{
 		FString FilePath = FSpatialHashTableBuilder::GetOutputFilename(DatasetDirectory, CellSize, TimeStep);
@@ -391,9 +393,8 @@ bool USpatialHashTableManager::CheckHashTablesExist(
 		}
 	}
 	
-	// Consider hash tables as existing if we found at least some of them
-	// This allows for partial loading scenarios
-	return ExistingCount > 0;
+	// Return true only if ALL requested hash tables exist
+	return ExistingCount == TotalExpected;
 }
 
 bool USpatialHashTableManager::TryCreateHashTables(
