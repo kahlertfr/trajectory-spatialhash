@@ -62,7 +62,86 @@ This plugin requires the following dependencies:
 
 ## Usage
 
-### Building Spatial Hash Tables
+### Using from Blueprints
+
+The plugin provides a Blueprint-accessible manager class for loading and querying spatial hash tables:
+
+#### Creating a Hash Table Manager
+
+1. In your Blueprint, create a variable of type `Spatial Hash Table Manager`
+2. Initialize it in your BeginPlay event or similar initialization point
+
+#### Loading Hash Tables
+
+```
+Event BeginPlay
+├─ Create Object of Class (Spatial Hash Table Manager)
+│  └─ Assign to Manager variable
+└─ Call "Load Hash Tables" on Manager
+   ├─ Dataset Directory: "/Game/Data/Trajectories"
+   ├─ Cell Size: 10.0
+   ├─ Start Time Step: 0
+   └─ End Time Step: 100
+```
+
+#### Querying Nearest Neighbors
+
+To find all trajectories within a specific radius:
+
+```
+On Some Event
+└─ Call "Query Fixed Radius Neighbors" on Manager
+   ├─ Query Position: (X, Y, Z) - Your query location
+   ├─ Radius: 50.0 - Search radius in world units
+   ├─ Cell Size: 10.0 - Must match loaded hash tables
+   ├─ Time Step: Current time step
+   └─ Out Results: Array of trajectory IDs and distances
+      └─ ForEach Loop
+         └─ Do something with each result
+            ├─ Trajectory ID
+            └─ Distance
+```
+
+#### Querying a Single Cell
+
+To get all trajectories in the same cell as a position:
+
+```
+On Some Event
+└─ Call "Query Cell" on Manager
+   ├─ Query Position: (X, Y, Z)
+   ├─ Cell Size: 10.0
+   ├─ Time Step: Current time step
+   └─ Out Trajectory IDs: Array of trajectory IDs
+      └─ ForEach Loop
+         └─ Process each trajectory ID
+```
+
+#### Managing Memory
+
+Check what's loaded and manage memory:
+
+```
+// Get loaded cell sizes
+Call "Get Loaded Cell Sizes" → Returns array of cell sizes
+
+// Get loaded time steps for a cell size
+Call "Get Loaded Time Steps" → Returns array of time steps
+
+// Check if specific hash table is loaded
+Call "Is Hash Table Loaded" → Returns true/false
+
+// Get memory statistics
+Call "Get Memory Stats" → Returns total hash tables and memory usage
+
+// Unload specific cell size
+Call "Unload Hash Tables" with Cell Size: 10.0
+
+// Unload everything
+Call "Unload All Hash Tables"
+```
+
+### Building Spatial Hash Tables (C++)
 
 The plugin provides functionality to build spatial hash tables from trajectory data:
 
@@ -147,14 +226,21 @@ Each `.bin` file contains a complete hash table for one time step at a specific 
 
 The plugin provides the following core functionality:
 
-### Spatial Hash Table (`FSpatialHashTable`)
+### Spatial Hash Table Manager (`USpatialHashTableManager`) - Blueprint Accessible
+- **Load Hash Tables**: Load hash tables from disk for a specific cell size and time range
+- **Query Fixed Radius Neighbors**: Find all trajectories within a radius at a specific time step
+- **Query Cell**: Get all trajectories in the same cell as a query position
+- **Memory Management**: Check loaded hash tables, get memory stats, and unload hash tables
+- **Multiple Cell Sizes**: Manage and query hash tables with different cell sizes simultaneously
+
+### Spatial Hash Table (`FSpatialHashTable`) - C++ API
 - Load hash tables from binary files with `LoadFromFile()`
 - Save hash tables to binary files with `SaveToFile()`
 - Query trajectories at world positions with `QueryAtPosition()`
 - Calculate Z-Order keys for spatial cells
 - Binary search for efficient cell lookups
 
-### Spatial Hash Table Builder (`FSpatialHashTableBuilder`)
+### Spatial Hash Table Builder (`FSpatialHashTableBuilder`) - C++ API
 - Build hash tables from trajectory data with `BuildHashTables()`
 - Automatically compute bounding boxes from data
 - Support for custom bounding boxes
@@ -187,11 +273,14 @@ SpatialHashedTrajectory/
         ├── Public/
         │   ├── SpatialHashedTrajectoryModule.h        # Module interface
         │   ├── SpatialHashTable.h                     # Hash table data structure
-        │   └── SpatialHashTableBuilder.h              # Hash table builder
+        │   ├── SpatialHashTableBuilder.h              # Hash table builder
+        │   ├── SpatialHashTableManager.h              # Blueprint-accessible manager
+        │   └── SpatialHashTableExample.h              # Example usage and validation
         └── Private/
             ├── SpatialHashedTrajectoryModule.cpp      # Module implementation
             ├── SpatialHashTable.cpp                   # Hash table implementation
-            └── SpatialHashTableBuilder.cpp            # Builder implementation
+            ├── SpatialHashTableBuilder.cpp            # Builder implementation
+            └── SpatialHashTableManager.cpp            # Manager implementation
 ```
 
 ## License
