@@ -24,13 +24,16 @@ class SPATIALHASHEDTRAJECTORY_API USpatialHashTableBuilderAsyncTask : public UBl
 
 public:
 	/**
-	 * Build spatial hash tables asynchronously
+	 * Build spatial hash tables asynchronously (C++ API only)
+	 * 
+	 * Note: This is a C++ only API because Unreal's reflection system cannot handle
+	 * nested structs in UFUNCTION parameters. Blueprint users should use
+	 * USpatialHashTableManager::CreateHashTablesAsync instead.
 	 * 
 	 * @param Config Build configuration
 	 * @param TimeStepSamples Trajectory samples for each time step
 	 * @return Async task object
 	 */
-	UFUNCTION(BlueprintCallable, Category = "Spatial Hash", meta = (BlueprintInternalUseOnly = "true", WorldContext = "WorldContextObject"))
 	static USpatialHashTableBuilderAsyncTask* BuildHashTablesAsync(
 		UObject* WorldContextObject,
 		const FSpatialHashTableBuilder::FBuildConfig& Config,
