@@ -2,6 +2,7 @@
 
 #include "SpatialHashTableBuilder.h"
 #include "HAL/PlatformFileManager.h"
+#include "HAL/ThreadSafeBool.h"
 #include "Misc/Paths.h"
 #include "Async/ParallelFor.h"
 
@@ -45,15 +46,15 @@ bool FSpatialHashTableBuilder::BuildHashTables(
 	
 	UE_LOG(LogTemp, Log, TEXT("FSpatialHashTableBuilder::BuildHashTables: Building hash tables for %u time steps in parallel"), NumTimeSteps);
 
-	// Use atomic counter for thread-safe error tracking
-	std::atomic<bool> bHasError(false);
+	// Use thread-safe bool for error tracking
+	FThreadSafeBool bHasError(false);
 	FCriticalSection ErrorLogMutex;
 	
 	// Process time steps in parallel
 	ParallelFor(NumTimeSteps, [&](int32 TimeStep)
 	{
 		// Early exit if we've already encountered an error
-		if (bHasError.load())
+		if (bHasError)
 		{
 			return;
 		}
@@ -70,7 +71,7 @@ bool FSpatialHashTableBuilder::BuildHashTables(
 		{
 			FScopeLock Lock(&ErrorLogMutex);
 			UE_LOG(LogTemp, Error, TEXT("FSpatialHashTableBuilder::BuildHashTables: Failed to build hash table for time step %u"), TimeStep);
-			bHasError.store(true);
+			bHasError = true;
 			return;
 		}
 
@@ -80,7 +81,7 @@ bool FSpatialHashTableBuilder::BuildHashTables(
 		{
 			FScopeLock Lock(&ErrorLogMutex);
 			UE_LOG(LogTemp, Error, TEXT("FSpatialHashTableBuilder::BuildHashTables: Failed to save hash table for time step %u"), TimeStep);
-			bHasError.store(true);
+			bHasError = true;
 			return;
 		}
 
@@ -93,7 +94,7 @@ bool FSpatialHashTableBuilder::BuildHashTables(
 	});
 
 	// Check if any errors occurred
-	if (bHasError.load())
+	if (bHasError)
 	{
 		UE_LOG(LogTemp, Error, TEXT("FSpatialHashTableBuilder::BuildHashTables: One or more time steps failed to build"));
 		return false;

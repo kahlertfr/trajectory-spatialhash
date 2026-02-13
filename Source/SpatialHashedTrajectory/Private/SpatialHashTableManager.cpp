@@ -462,6 +462,9 @@ void USpatialHashTableManager::CreateHashTablesAsync(
 	int32 StartTimeStep,
 	int32 EndTimeStep)
 {
+	// Use critical section to prevent race condition
+	FScopeLock Lock(&CreationMutex);
+	
 	if (bIsCreatingHashTables)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("USpatialHashTableManager::CreateHashTablesAsync: Hash table creation already in progress"));
@@ -470,18 +473,24 @@ void USpatialHashTableManager::CreateHashTablesAsync(
 
 	bIsCreatingHashTables = true;
 
+	// Use weak pointer to avoid use-after-free
+	TWeakObjectPtr<USpatialHashTableManager> WeakThis(this);
+
 	// Capture parameters by value for the async task
-	AsyncTask(ENamedThreads::AnyBackgroundThreadNormalTask, [this, DatasetDirectory, CellSize, StartTimeStep, EndTimeStep]()
+	AsyncTask(ENamedThreads::AnyBackgroundThreadNormalTask, [WeakThis, DatasetDirectory, CellSize, StartTimeStep, EndTimeStep]()
 	{
 		IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
 		
 		if (!PlatformFile.DirectoryExists(*DatasetDirectory))
 		{
-			AsyncTask(ENamedThreads::GameThread, [this, DatasetDirectory]()
+			AsyncTask(ENamedThreads::GameThread, [WeakThis, DatasetDirectory]()
 			{
-				UE_LOG(LogTemp, Error, TEXT("USpatialHashTableManager::CreateHashTablesAsync: Dataset directory does not exist: %s"), 
-					*DatasetDirectory);
-				bIsCreatingHashTables = false;
+				if (USpatialHashTableManager* Manager = WeakThis.Get())
+				{
+					UE_LOG(LogTemp, Error, TEXT("USpatialHashTableManager::CreateHashTablesAsync: Dataset directory does not exist: %s"), 
+						*DatasetDirectory);
+					Manager->bIsCreatingHashTables = false;
+				}
 			});
 			return;
 		}
@@ -489,24 +498,36 @@ void USpatialHashTableManager::CreateHashTablesAsync(
 		UE_LOG(LogTemp, Log, TEXT("USpatialHashTableManager::CreateHashTablesAsync: Creating hash tables for cell size %.3f (time steps %d-%d)"),
 			CellSize, StartTimeStep, EndTimeStep);
 		
-		// Load trajectory data from the dataset directory
-		TArray<TArray<FSpatialHashTableBuilder::FTrajectorySample>> TimeStepSamples;
-		if (!LoadTrajectoryDataFromDirectory(DatasetDirectory, StartTimeStep, EndTimeStep, TimeStepSamples))
+		// Load trajectory data - check if manager still exists
+		USpatialHashTableManager* Manager = WeakThis.Get();
+		if (!Manager)
 		{
-			AsyncTask(ENamedThreads::GameThread, [this]()
+			return;
+		}
+		
+		TArray<TArray<FSpatialHashTableBuilder::FTrajectorySample>> TimeStepSamples;
+		if (!Manager->LoadTrajectoryDataFromDirectory(DatasetDirectory, StartTimeStep, EndTimeStep, TimeStepSamples))
+		{
+			AsyncTask(ENamedThreads::GameThread, [WeakThis]()
 			{
-				UE_LOG(LogTemp, Error, TEXT("USpatialHashTableManager::CreateHashTablesAsync: Failed to load trajectory data"));
-				bIsCreatingHashTables = false;
+				if (USpatialHashTableManager* Mgr = WeakThis.Get())
+				{
+					UE_LOG(LogTemp, Error, TEXT("USpatialHashTableManager::CreateHashTablesAsync: Failed to load trajectory data"));
+					Mgr->bIsCreatingHashTables = false;
+				}
 			});
 			return;
 		}
 		
 		if (TimeStepSamples.Num() == 0)
 		{
-			AsyncTask(ENamedThreads::GameThread, [this]()
+			AsyncTask(ENamedThreads::GameThread, [WeakThis]()
 			{
-				UE_LOG(LogTemp, Error, TEXT("USpatialHashTableManager::CreateHashTablesAsync: No trajectory data found"));
-				bIsCreatingHashTables = false;
+				if (USpatialHashTableManager* Mgr = WeakThis.Get())
+				{
+					UE_LOG(LogTemp, Error, TEXT("USpatialHashTableManager::CreateHashTablesAsync: No trajectory data found"));
+					Mgr->bIsCreatingHashTables = false;
+				}
 			});
 			return;
 		}
@@ -527,19 +548,22 @@ void USpatialHashTableManager::CreateHashTablesAsync(
 		bool bSuccess = Builder.BuildHashTables(Config, TimeStepSamples);
 		
 		// Return to game thread for final logging and cleanup
-		AsyncTask(ENamedThreads::GameThread, [this, bSuccess, CellSize]()
+		AsyncTask(ENamedThreads::GameThread, [WeakThis, bSuccess, CellSize]()
 		{
-			if (bSuccess)
+			if (USpatialHashTableManager* Mgr = WeakThis.Get())
 			{
-				UE_LOG(LogTemp, Log, TEXT("USpatialHashTableManager::CreateHashTablesAsync: Successfully created hash tables for cell size %.3f"),
-					CellSize);
+				if (bSuccess)
+				{
+					UE_LOG(LogTemp, Log, TEXT("USpatialHashTableManager::CreateHashTablesAsync: Successfully created hash tables for cell size %.3f"),
+						CellSize);
+				}
+				else
+				{
+					UE_LOG(LogTemp, Error, TEXT("USpatialHashTableManager::CreateHashTablesAsync: Failed to build hash tables"));
+				}
+				
+				Mgr->bIsCreatingHashTables = false;
 			}
-			else
-			{
-				UE_LOG(LogTemp, Error, TEXT("USpatialHashTableManager::CreateHashTablesAsync: Failed to build hash tables"));
-			}
-			
-			bIsCreatingHashTables = false;
 		});
 	});
 }

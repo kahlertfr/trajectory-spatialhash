@@ -12,15 +12,25 @@ USpatialHashTableBuilderAsyncTask* USpatialHashTableBuilderAsyncTask::BuildHashT
 	Task->BuildConfig = Config;
 	Task->SamplesData = TimeStepSamples;
 	Task->WorldContext = WorldContextObject;
+	
+	// Keep task alive during execution
+	Task->RegisterWithGameInstance(WorldContextObject);
+	
 	return Task;
 }
 
 void USpatialHashTableBuilderAsyncTask::Activate()
 {
+	// Use weak pointer to avoid use-after-free
+	TWeakObjectPtr<USpatialHashTableBuilderAsyncTask> WeakThis(this);
+	
 	// Execute build on a background thread
-	Async(EAsyncExecution::ThreadPool, [this]()
+	Async(EAsyncExecution::ThreadPool, [WeakThis]()
 	{
-		ExecuteBuild();
+		if (USpatialHashTableBuilderAsyncTask* Task = WeakThis.Get())
+		{
+			Task->ExecuteBuild();
+		}
 	});
 }
 
@@ -31,16 +41,22 @@ void USpatialHashTableBuilderAsyncTask::ExecuteBuild()
 	// Build hash tables (this will use parallel processing internally)
 	bool bSuccess = Builder.BuildHashTables(BuildConfig, SamplesData);
 	
+	// Use weak pointer for game thread callback
+	TWeakObjectPtr<USpatialHashTableBuilderAsyncTask> WeakThis(this);
+	
 	// Return to game thread for callback
-	AsyncTask(ENamedThreads::GameThread, [this, bSuccess]()
+	AsyncTask(ENamedThreads::GameThread, [WeakThis, bSuccess]()
 	{
-		if (bSuccess)
+		if (USpatialHashTableBuilderAsyncTask* Task = WeakThis.Get())
 		{
-			OnBuildComplete(true, TEXT(""));
-		}
-		else
-		{
-			OnBuildComplete(false, TEXT("Failed to build hash tables"));
+			if (bSuccess)
+			{
+				Task->OnBuildComplete(true, TEXT(""));
+			}
+			else
+			{
+				Task->OnBuildComplete(false, TEXT("Failed to build hash tables"));
+			}
 		}
 	});
 }

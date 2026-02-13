@@ -239,8 +239,11 @@ protected:
 	/** Map of loaded hash tables */
 	TMap<FHashTableKey, TSharedPtr<FSpatialHashTable>> LoadedHashTables;
 
-	/** Flag indicating if hash table creation is in progress */
-	bool bIsCreatingHashTables = false;
+	/** Thread-safe flag indicating if hash table creation is in progress */
+	FThreadSafeBool bIsCreatingHashTables;
+
+	/** Critical section for protecting creation flag */
+	FCriticalSection CreationMutex;
 
 	/**
 	 * Get a loaded hash table for a specific cell size and time step
