@@ -180,6 +180,9 @@ public:
 	void GetMemoryStats(int32& OutTotalHashTables, int64& OutTotalMemoryBytes) const;
 
 protected:
+	/** Tolerance for floating-point comparison of cell sizes */
+	static constexpr float CellSizeEpsilon = 0.001f;
+
 	/**
 	 * Key for hash table map: combines cell size and time step
 	 */
@@ -196,7 +199,7 @@ protected:
 
 		bool operator==(const FHashTableKey& Other) const
 		{
-			return FMath::IsNearlyEqual(CellSize, Other.CellSize, 0.001f) && TimeStep == Other.TimeStep;
+			return FMath::IsNearlyEqual(CellSize, Other.CellSize, USpatialHashTableManager::CellSizeEpsilon) && TimeStep == Other.TimeStep;
 		}
 
 		friend uint32 GetTypeHash(const FHashTableKey& Key)
@@ -209,14 +212,13 @@ protected:
 	TMap<FHashTableKey, TSharedPtr<FSpatialHashTable>> LoadedHashTables;
 
 	/**
-	 * Get or load a hash table for a specific cell size and time step
+	 * Get a loaded hash table for a specific cell size and time step
 	 * 
 	 * @param CellSize Cell size
 	 * @param TimeStep Time step
-	 * @param DatasetDirectory Base directory (only needed if loading)
-	 * @return Pointer to hash table, or nullptr if not found/loadable
+	 * @return Pointer to hash table, or nullptr if not loaded
 	 */
-	TSharedPtr<FSpatialHashTable> GetHashTable(float CellSize, int32 TimeStep, const FString& DatasetDirectory = TEXT(""));
+	TSharedPtr<FSpatialHashTable> GetHashTable(float CellSize, int32 TimeStep) const;
 
 	/**
 	 * Find trajectory positions for distance calculations

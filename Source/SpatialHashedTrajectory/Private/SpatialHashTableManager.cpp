@@ -62,7 +62,7 @@ bool USpatialHashTableManager::LoadHashTable(const FString& FilePath, float Cell
 	}
 
 	// Validate cell size matches
-	if (!FMath::IsNearlyEqual(HashTable->Header.CellSize, CellSize, 0.001f))
+	if (!FMath::IsNearlyEqual(HashTable->Header.CellSize, CellSize, CellSizeEpsilon))
 	{
 		UE_LOG(LogTemp, Error, TEXT("USpatialHashTableManager::LoadHashTable: Cell size mismatch. Expected %.3f, got %.3f"),
 			CellSize, HashTable->Header.CellSize);
@@ -126,6 +126,17 @@ int32 USpatialHashTableManager::QueryFixedRadiusNeighbors(
 	TArray<FSpatialQueryResult>& OutResults)
 {
 	OutResults.Reset();
+
+	// Warning: This method requires GetTrajectoryPosition to be implemented
+	// Currently it's a placeholder that returns ZeroVector, so distance calculations will be incorrect
+	static bool bWarningShown = false;
+	if (!bWarningShown)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("USpatialHashTableManager::QueryFixedRadiusNeighbors: "
+			"GetTrajectoryPosition is a placeholder. Distance calculations will be incorrect until "
+			"you integrate with the TrajectoryData plugin to get actual trajectory positions."));
+		bWarningShown = true;
+	}
 
 	TSharedPtr<FSpatialHashTable> HashTable = GetHashTable(CellSize, TimeStep);
 	if (!HashTable.IsValid())
@@ -242,7 +253,7 @@ void USpatialHashTableManager::UnloadHashTables(float CellSize)
 
 	for (const auto& Pair : LoadedHashTables)
 	{
-		if (FMath::IsNearlyEqual(Pair.Key.CellSize, CellSize, 0.001f))
+		if (FMath::IsNearlyEqual(Pair.Key.CellSize, CellSize, CellSizeEpsilon))
 		{
 			KeysToRemove.Add(Pair.Key);
 		}
@@ -284,7 +295,7 @@ void USpatialHashTableManager::GetLoadedTimeSteps(float CellSize, TArray<int32>&
 
 	for (const auto& Pair : LoadedHashTables)
 	{
-		if (FMath::IsNearlyEqual(Pair.Key.CellSize, CellSize, 0.001f))
+		if (FMath::IsNearlyEqual(Pair.Key.CellSize, CellSize, CellSizeEpsilon))
 		{
 			OutTimeSteps.Add(Pair.Key.TimeStep);
 		}
@@ -321,25 +332,14 @@ void USpatialHashTableManager::GetMemoryStats(int32& OutTotalHashTables, int64& 
 
 TSharedPtr<FSpatialHashTable> USpatialHashTableManager::GetHashTable(
 	float CellSize,
-	int32 TimeStep,
-	const FString& DatasetDirectory)
+	int32 TimeStep) const
 {
 	FHashTableKey Key(CellSize, TimeStep);
 
-	// Check if already loaded
+	// Return the hash table if loaded, otherwise nullptr
 	if (LoadedHashTables.Contains(Key))
 	{
 		return LoadedHashTables[Key];
-	}
-
-	// Try to load if directory is provided
-	if (!DatasetDirectory.IsEmpty())
-	{
-		FString FilePath = FSpatialHashTableBuilder::GetOutputFilename(DatasetDirectory, CellSize, TimeStep);
-		if (LoadHashTable(FilePath, CellSize, TimeStep))
-		{
-			return LoadedHashTables[Key];
-		}
 	}
 
 	return nullptr;
@@ -351,8 +351,7 @@ FVector USpatialHashTableManager::GetTrajectoryPosition(int32 TrajectoryId, int3
 	// In a real implementation, this would query the TrajectoryData plugin
 	// to get the actual position of the trajectory at the given time step
 
-	UE_LOG(LogTemp, Warning, TEXT("USpatialHashTableManager::GetTrajectoryPosition: Placeholder implementation. "
-		"You need to implement integration with TrajectoryData plugin to get actual trajectory positions."));
+	// Note: Warning is shown in QueryFixedRadiusNeighbors to avoid spam
 
 	return FVector::ZeroVector;
 }

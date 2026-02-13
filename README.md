@@ -78,11 +78,13 @@ Event BeginPlay
 ├─ Create Object of Class (Spatial Hash Table Manager)
 │  └─ Assign to Manager variable
 └─ Call "Load Hash Tables" on Manager
-   ├─ Dataset Directory: "/Game/Data/Trajectories"
+   ├─ Dataset Directory: Use FPaths::ProjectContentDir() + "Data/Trajectories" or absolute path
    ├─ Cell Size: 10.0
    ├─ Start Time Step: 0
    └─ End Time Step: 100
 ```
+
+**Note:** The Dataset Directory should be an absolute filesystem path, not a Content Browser path. Use Unreal's path functions like `FPaths::ProjectContentDir()` to construct the correct path.
 
 #### Querying Nearest Neighbors
 
