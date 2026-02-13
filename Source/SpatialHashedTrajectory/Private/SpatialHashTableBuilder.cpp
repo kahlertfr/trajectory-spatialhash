@@ -3,6 +3,7 @@
 #include "SpatialHashTableBuilder.h"
 #include "HAL/PlatformFileManager.h"
 #include "Misc/Paths.h"
+#include "Async/ParallelFor.h"
 
 bool FSpatialHashTableBuilder::BuildHashTables(
 	const FBuildConfig& Config,
@@ -42,10 +43,21 @@ bool FSpatialHashTableBuilder::BuildHashTables(
 	// Build hash table for each time step
 	uint32 NumTimeSteps = FMath::Min((uint32)TimeStepSamples.Num(), Config.NumTimeSteps > 0 ? Config.NumTimeSteps : (uint32)TimeStepSamples.Num());
 	
-	UE_LOG(LogTemp, Log, TEXT("FSpatialHashTableBuilder::BuildHashTables: Building hash tables for %u time steps"), NumTimeSteps);
+	UE_LOG(LogTemp, Log, TEXT("FSpatialHashTableBuilder::BuildHashTables: Building hash tables for %u time steps in parallel"), NumTimeSteps);
 
-	for (uint32 TimeStep = 0; TimeStep < NumTimeSteps; ++TimeStep)
+	// Use atomic counter for thread-safe error tracking
+	std::atomic<bool> bHasError(false);
+	FCriticalSection ErrorLogMutex;
+	
+	// Process time steps in parallel
+	ParallelFor(NumTimeSteps, [&](int32 TimeStep)
 	{
+		// Early exit if we've already encountered an error
+		if (bHasError.load())
+		{
+			return;
+		}
+		
 		FSpatialHashTable HashTable;
 		
 		// Create modified config with computed bounding box
@@ -56,22 +68,35 @@ bool FSpatialHashTableBuilder::BuildHashTables(
 
 		if (!BuildHashTableForTimeStep(TimeStep, TimeStepSamples[TimeStep], ModifiedConfig, HashTable))
 		{
+			FScopeLock Lock(&ErrorLogMutex);
 			UE_LOG(LogTemp, Error, TEXT("FSpatialHashTableBuilder::BuildHashTables: Failed to build hash table for time step %u"), TimeStep);
-			return false;
+			bHasError.store(true);
+			return;
 		}
 
 		// Save hash table to file
 		FString Filename = GetOutputFilename(Config.OutputDirectory, Config.CellSize, TimeStep);
 		if (!HashTable.SaveToFile(Filename))
 		{
+			FScopeLock Lock(&ErrorLogMutex);
 			UE_LOG(LogTemp, Error, TEXT("FSpatialHashTableBuilder::BuildHashTables: Failed to save hash table for time step %u"), TimeStep);
-			return false;
+			bHasError.store(true);
+			return;
 		}
 
-		if ((TimeStep + 1) % 100 == 0 || TimeStep == NumTimeSteps - 1)
+		// Log progress at intervals (thread-safe logging)
+		if ((TimeStep + 1) % 100 == 0 || TimeStep == (int32)NumTimeSteps - 1)
 		{
+			FScopeLock Lock(&ErrorLogMutex);
 			UE_LOG(LogTemp, Log, TEXT("FSpatialHashTableBuilder::BuildHashTables: Processed %u / %u time steps"), TimeStep + 1, NumTimeSteps);
 		}
+	});
+
+	// Check if any errors occurred
+	if (bHasError.load())
+	{
+		UE_LOG(LogTemp, Error, TEXT("FSpatialHashTableBuilder::BuildHashTables: One or more time steps failed to build"));
+		return false;
 	}
 
 	UE_LOG(LogTemp, Log, TEXT("FSpatialHashTableBuilder::BuildHashTables: Successfully built and saved all hash tables"));

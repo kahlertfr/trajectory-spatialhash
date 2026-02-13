@@ -98,6 +98,32 @@ public:
 		float BoundingBoxMargin);
 
 	/**
+	 * Create hash tables from trajectory data asynchronously (non-blocking)
+	 * This method returns immediately and performs the work on background threads.
+	 * Progress can be monitored through the completion delegate or by checking IsCreatingHashTables().
+	 * 
+	 * @param DatasetDirectory Output directory for hash tables
+	 * @param CellSize Cell size for the hash tables
+	 * @param StartTimeStep First time step to create
+	 * @param EndTimeStep Last time step to create
+	 * @param OnComplete Delegate called when creation completes (success or failure)
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Spatial Hash")
+	void CreateHashTablesAsync(
+		const FString& DatasetDirectory,
+		float CellSize,
+		int32 StartTimeStep,
+		int32 EndTimeStep);
+
+	/**
+	 * Check if hash table creation is currently in progress
+	 * 
+	 * @return True if hash tables are being created
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Spatial Hash")
+	bool IsCreatingHashTables() const { return bIsCreatingHashTables; }
+
+	/**
 	 * Query trajectories within a fixed radius from a position at a specific time step
 	 * 
 	 * @param QueryPosition World position to query
@@ -212,6 +238,9 @@ protected:
 
 	/** Map of loaded hash tables */
 	TMap<FHashTableKey, TSharedPtr<FSpatialHashTable>> LoadedHashTables;
+
+	/** Flag indicating if hash table creation is in progress */
+	bool bIsCreatingHashTables = false;
 
 	/**
 	 * Get a loaded hash table for a specific cell size and time step

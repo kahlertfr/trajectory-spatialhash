@@ -4,6 +4,7 @@
 #include "Misc/Paths.h"
 #include "HAL/PlatformFileManager.h"
 #include "Misc/FileHelper.h"
+#include "Async/Async.h"
 
 USpatialHashTableManager::USpatialHashTableManager()
 {
@@ -453,6 +454,94 @@ bool USpatialHashTableManager::TryCreateHashTables(
 		CellSize);
 	
 	return true;
+}
+
+void USpatialHashTableManager::CreateHashTablesAsync(
+	const FString& DatasetDirectory,
+	float CellSize,
+	int32 StartTimeStep,
+	int32 EndTimeStep)
+{
+	if (bIsCreatingHashTables)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("USpatialHashTableManager::CreateHashTablesAsync: Hash table creation already in progress"));
+		return;
+	}
+
+	bIsCreatingHashTables = true;
+
+	// Capture parameters by value for the async task
+	AsyncTask(ENamedThreads::AnyBackgroundThreadNormalTask, [this, DatasetDirectory, CellSize, StartTimeStep, EndTimeStep]()
+	{
+		IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
+		
+		if (!PlatformFile.DirectoryExists(*DatasetDirectory))
+		{
+			AsyncTask(ENamedThreads::GameThread, [this, DatasetDirectory]()
+			{
+				UE_LOG(LogTemp, Error, TEXT("USpatialHashTableManager::CreateHashTablesAsync: Dataset directory does not exist: %s"), 
+					*DatasetDirectory);
+				bIsCreatingHashTables = false;
+			});
+			return;
+		}
+		
+		UE_LOG(LogTemp, Log, TEXT("USpatialHashTableManager::CreateHashTablesAsync: Creating hash tables for cell size %.3f (time steps %d-%d)"),
+			CellSize, StartTimeStep, EndTimeStep);
+		
+		// Load trajectory data from the dataset directory
+		TArray<TArray<FSpatialHashTableBuilder::FTrajectorySample>> TimeStepSamples;
+		if (!LoadTrajectoryDataFromDirectory(DatasetDirectory, StartTimeStep, EndTimeStep, TimeStepSamples))
+		{
+			AsyncTask(ENamedThreads::GameThread, [this]()
+			{
+				UE_LOG(LogTemp, Error, TEXT("USpatialHashTableManager::CreateHashTablesAsync: Failed to load trajectory data"));
+				bIsCreatingHashTables = false;
+			});
+			return;
+		}
+		
+		if (TimeStepSamples.Num() == 0)
+		{
+			AsyncTask(ENamedThreads::GameThread, [this]()
+			{
+				UE_LOG(LogTemp, Error, TEXT("USpatialHashTableManager::CreateHashTablesAsync: No trajectory data found"));
+				bIsCreatingHashTables = false;
+			});
+			return;
+		}
+		
+		UE_LOG(LogTemp, Log, TEXT("USpatialHashTableManager::CreateHashTablesAsync: Loaded %d time steps of trajectory data"),
+			TimeStepSamples.Num());
+		
+		// Setup configuration for building
+		FSpatialHashTableBuilder::FBuildConfig Config;
+		Config.CellSize = CellSize;
+		Config.bComputeBoundingBox = true;
+		Config.BoundingBoxMargin = 1.0f;
+		Config.OutputDirectory = DatasetDirectory;
+		Config.NumTimeSteps = TimeStepSamples.Num();
+		
+		// Build the hash tables (this will use parallel processing internally)
+		FSpatialHashTableBuilder Builder;
+		bool bSuccess = Builder.BuildHashTables(Config, TimeStepSamples);
+		
+		// Return to game thread for final logging and cleanup
+		AsyncTask(ENamedThreads::GameThread, [this, bSuccess, CellSize]()
+		{
+			if (bSuccess)
+			{
+				UE_LOG(LogTemp, Log, TEXT("USpatialHashTableManager::CreateHashTablesAsync: Successfully created hash tables for cell size %.3f"),
+					CellSize);
+			}
+			else
+			{
+				UE_LOG(LogTemp, Error, TEXT("USpatialHashTableManager::CreateHashTablesAsync: Failed to build hash tables"));
+			}
+			
+			bIsCreatingHashTables = false;
+		});
+	});
 }
 
 bool USpatialHashTableManager::LoadTrajectoryDataFromDirectory(
