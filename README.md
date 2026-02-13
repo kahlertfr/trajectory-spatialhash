@@ -88,10 +88,30 @@ Event BeginPlay
 ```
 
 **Auto-Creation Behavior:**
-- If `Auto Create` is `true` (default) and hash tables don't exist for the requested cell size, the manager will attempt to create them
-- Currently requires trajectory data to be available (integration with TrajectoryData plugin needed)
+- If `Auto Create` is `true` (default) and hash tables don't exist for the requested cell size, the manager will automatically create them from trajectory data
+- Supports multiple trajectory data file formats:
+  - **Binary files** (.bin): Trajectory shard files with header (magic number, version, etc.)
+  - **Text files** (.csv, .dat): CSV format with columns: TimeStep,TrajectoryID,X,Y,Z
+- The system automatically searches the dataset directory for trajectory data files
+- Filters out existing spatial hash table files to avoid conflicts
 - If hash tables already exist, they are simply loaded from disk
 - Set `Auto Create` to `false` to only load existing hash tables without attempting creation
+
+**Trajectory Data Format:**
+
+Binary format:
+```
+Header (64 bytes): Magic (4) + Version (4) + NumTrajectories (4) + NumTimeSteps (4) + Reserved (48)
+Per TimeStep: NumSamples (4) + [TrajectoryID (4) + X (4) + Y (4) + Z (4)] × NumSamples
+```
+
+Text/CSV format:
+```csv
+TimeStep,TrajectoryID,X,Y,Z
+0,1,10.5,20.3,5.0
+0,2,15.2,22.1,5.5
+...
+```
 
 **Note:** The Dataset Directory should be an absolute filesystem path, not a Content Browser path. Use Unreal's path functions like `FPaths::ProjectContentDir()` to construct the correct path.
 
