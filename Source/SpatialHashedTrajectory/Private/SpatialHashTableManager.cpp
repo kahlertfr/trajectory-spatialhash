@@ -591,7 +591,7 @@ bool USpatialHashTableManager::LoadTrajectorySamplesFromFile(
 	delete FileHandle;
 	
 	// Parse the buffer as trajectory data
-	int32 Offset = 0;
+	int64 Offset = 0;
 	
 	// Read header using safe memory copy
 	uint32 MagicNumber;
