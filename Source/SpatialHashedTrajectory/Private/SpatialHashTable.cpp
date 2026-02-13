@@ -28,7 +28,7 @@ uint64 FSpatialHashTable::CalculateZOrderKey(int32 CellX, int32 CellY, int32 Cel
 	uint32 Y = FMath::Clamp(CellY, 0, 0x1fffff);
 	uint32 Z = FMath::Clamp(CellZ, 0, 0x1fffff);
 	
-	// Interleave bits: z, y, x, z, y, x, ...
+	// Interleave bits: x, y, z, x, y, z, ... (X at bit 0, Y at bit 1, Z at bit 2)
 	return SplitBy3(X) | (SplitBy3(Y) << 1) | (SplitBy3(Z) << 2);
 }
 

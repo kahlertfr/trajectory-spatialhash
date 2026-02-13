@@ -97,7 +97,14 @@ The Z-Order curve maps 3D spatial coordinates to a single 64-bit integer key. Th
 Given a 3D cell coordinate (cx, cy, cz) where each component is a non-negative integer:
 
 1. Take the lower 21 bits of each coordinate (supports coordinates up to 2,097,151)
-2. Interleave the bits: x-bit, y-bit, z-bit, x-bit, y-bit, z-bit, ...
+2. Interleave the bits to produce the pattern: x₀, y₀, z₀, x₁, y₁, z₁, ..., where x₀ is the least significant bit of cx
+   - Bit 0 (LSB): x₀
+   - Bit 1: y₀
+   - Bit 2: z₀
+   - Bit 3: x₁
+   - Bit 4: y₁
+   - Bit 5: z₁
+   - ... and so on
 3. The resulting 63-bit value is the Z-Order key
 
 ### Cell Coordinate Calculation
