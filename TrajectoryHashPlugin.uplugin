@@ -1,0 +1,30 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "1.0",
+	"FriendlyName": "Trajectory Hash Plugin",
+	"Description": "Spatial hash table implementation for fixed radius nearest neighbor searches on trajectory data. Provides efficient spatial indexing and querying of trajectory points.",
+	"Category": "Data Structures",
+	"CreatedBy": "kahlertfr",
+	"CreatedByURL": "",
+	"DocsURL": "",
+	"MarketplaceURL": "",
+	"SupportURL": "",
+	"CanContainContent": false,
+	"IsBetaVersion": false,
+	"IsExperimentalVersion": false,
+	"Installed": false,
+	"Modules": [
+		{
+			"Name": "TrajectoryHashPlugin",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
+		}
+	],
+	"Plugins": [
+		{
+			"Name": "TrajectoryDataPlugin",
+			"Enabled": true
+		}
+	]
+}
