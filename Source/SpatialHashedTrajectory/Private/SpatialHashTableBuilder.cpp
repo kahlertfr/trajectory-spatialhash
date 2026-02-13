@@ -27,7 +27,7 @@ bool FSpatialHashTableBuilder::BuildHashTables(
 	if (Config.bComputeBoundingBox)
 	{
 		UE_LOG(LogTemp, Log, TEXT("FSpatialHashTableBuilder::BuildHashTables: Computing bounding box from data"));
-		ComputeBoundingBox(TimeStepSamples, BBoxMin, BBoxMax);
+		ComputeBoundingBox(TimeStepSamples, Config.BoundingBoxMargin, BBoxMin, BBoxMax);
 		UE_LOG(LogTemp, Log, TEXT("FSpatialHashTableBuilder::BuildHashTables: BBox Min: (%f, %f, %f), Max: (%f, %f, %f)"),
 			BBoxMin.X, BBoxMin.Y, BBoxMin.Z, BBoxMax.X, BBoxMax.Y, BBoxMax.Z);
 	}
@@ -157,6 +157,7 @@ bool FSpatialHashTableBuilder::BuildHashTableForTimeStep(
 
 void FSpatialHashTableBuilder::ComputeBoundingBox(
 	const TArray<TArray<FTrajectorySample>>& TimeStepSamples,
+	float Margin,
 	FVector& OutBBoxMin,
 	FVector& OutBBoxMax)
 {
@@ -186,8 +187,7 @@ void FSpatialHashTableBuilder::ComputeBoundingBox(
 		}
 	}
 
-	// Add small margin to bounding box to ensure all points are inside
-	const float Margin = 1.0f;
+	// Add margin to bounding box to ensure all points are inside
 	OutBBoxMin -= FVector(Margin, Margin, Margin);
 	OutBBoxMax += FVector(Margin, Margin, Margin);
 }

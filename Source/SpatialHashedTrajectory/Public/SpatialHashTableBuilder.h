@@ -31,6 +31,9 @@ public:
 		/** Whether to compute bounding box from data (if false, uses provided BBoxMin/BBoxMax) */
 		bool bComputeBoundingBox;
 
+		/** Margin to add to computed bounding box (in world units) */
+		float BoundingBoxMargin;
+
 		/** Output directory for hash table files */
 		FString OutputDirectory;
 
@@ -42,6 +45,7 @@ public:
 			, BBoxMin(FVector::ZeroVector)
 			, BBoxMax(FVector::ZeroVector)
 			, bComputeBoundingBox(true)
+			, BoundingBoxMargin(1.0f)
 			, OutputDirectory(TEXT(""))
 			, NumTimeSteps(0)
 		{
@@ -105,11 +109,13 @@ public:
 	 * Compute bounding box from trajectory samples
 	 * 
 	 * @param TimeStepSamples All trajectory samples across all time steps
+	 * @param Margin Margin to add to bounding box (in world units)
 	 * @param OutBBoxMin Output bounding box minimum
 	 * @param OutBBoxMax Output bounding box maximum
 	 */
 	static void ComputeBoundingBox(
 		const TArray<TArray<FTrajectorySample>>& TimeStepSamples,
+		float Margin,
 		FVector& OutBBoxMin,
 		FVector& OutBBoxMax);
 
