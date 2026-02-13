@@ -223,6 +223,18 @@ Each `.bin` file contains a complete hash table for one time step at a specific 
 - **Z-Order Curve**: A space-filling curve that maps 3D coordinates to a single dimension while preserving spatial locality
 - **Time Step**: Each hash table represents trajectory positions at a single point in time
 - **Binary Format**: Hash tables are stored in a binary format optimized for memory-mapped loading without parsing
+- **On-Demand Loading**: Trajectory IDs are read from disk only when queried, not loaded into memory, significantly reducing memory usage when managing multiple hash tables
+
+### Memory Optimization
+
+The plugin uses an on-demand loading strategy to minimize memory usage:
+
+- **Header and Entries**: Loaded into memory (typically small - header is 64 bytes, entries are 16 bytes each)
+- **Trajectory IDs**: NOT loaded into memory. Read from disk on each query
+- **Memory Savings**: For a hash table with 1 million trajectory IDs, this saves ~4MB per loaded table
+- **Scalability**: Load hundreds of time steps without memory concerns
+
+This design allows you to manage large datasets with many time steps and cell sizes without consuming excessive memory. The trade-off is a small I/O cost per query, which is typically negligible compared to the memory savings.
 
 ## API Overview
 
@@ -236,11 +248,12 @@ The plugin provides the following core functionality:
 - **Multiple Cell Sizes**: Manage and query hash tables with different cell sizes simultaneously
 
 ### Spatial Hash Table (`FSpatialHashTable`) - C++ API
-- Load hash tables from binary files with `LoadFromFile()`
+- Load hash tables from binary files with `LoadFromFile()` (trajectory IDs not loaded for memory optimization)
 - Save hash tables to binary files with `SaveToFile()`
-- Query trajectories at world positions with `QueryAtPosition()`
+- Query trajectories at world positions with `QueryAtPosition()` (reads trajectory IDs from disk on-demand)
 - Calculate Z-Order keys for spatial cells
 - Binary search for efficient cell lookups
+- Memory-efficient: only header and entries loaded; trajectory IDs read on-demand
 
 ### Spatial Hash Table Builder (`FSpatialHashTableBuilder`) - C++ API
 - Build hash tables from trajectory data with `BuildHashTables()`

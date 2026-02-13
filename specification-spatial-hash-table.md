@@ -119,10 +119,10 @@ cz = floor((z - bbox_min_z) / cell_size)
 
 ## Usage Example
 
-### Loading a Hash Table
+### Loading a Hash Table (Memory-Optimized)
 
 ```cpp
-// 1. Memory map or read the file
+// 1. Open the file
 FILE* file = fopen("timestep_00000.bin", "rb");
 
 // 2. Read and validate header
@@ -135,14 +135,15 @@ assert(header.version == 1);
 HashEntry* entries = new HashEntry[header.num_entries];
 fread(entries, sizeof(HashEntry), header.num_entries, file);
 
-// 4. Read trajectory IDs
-uint32_t* trajectory_ids = new uint32_t[header.num_trajectory_ids];
-fread(trajectory_ids, sizeof(uint32_t), header.num_trajectory_ids, file);
+// 4. DO NOT read trajectory IDs into memory (for memory optimization)
+// Keep file handle open or reopen when needed for on-demand queries
 
-fclose(file);
+// Store file offset to trajectory IDs for later use
+int64_t trajectory_ids_offset = sizeof(SpatialHashHeader) + 
+                                (header.num_entries * sizeof(HashEntry));
 ```
 
-### Querying Trajectories in a Cell
+### Querying Trajectories in a Cell (On-Demand Loading)
 
 ```cpp
 // 1. Calculate cell coordinates from world position
@@ -157,18 +158,50 @@ uint64_t key = CalculateZOrderKey(cx, cy, cz);
 int entry_index = BinarySearch(entries, header.num_entries, key);
 
 if (entry_index >= 0) {
-    // 4. Retrieve trajectory IDs for this cell
+    // 4. Read trajectory IDs from disk on-demand (NOT from memory)
     uint32_t start_idx = entries[entry_index].start_index;
     uint32_t count = entries[entry_index].trajectory_count;
     
+    // Reopen file if needed
+    FILE* file = fopen("timestep_00000.bin", "rb");
+    
+    // Seek to trajectory IDs location
+    int64_t offset = trajectory_ids_offset + (start_idx * sizeof(uint32_t));
+    fseek(file, offset, SEEK_SET);
+    
+    // Read only the IDs we need
+    uint32_t* trajectory_ids = new uint32_t[count];
+    fread(trajectory_ids, sizeof(uint32_t), count, file);
+    
     for (uint32_t i = 0; i < count; i++) {
-        uint32_t trajectory_id = trajectory_ids[start_idx + i];
+        uint32_t trajectory_id = trajectory_ids[i];
         // Process trajectory_id...
     }
 }
 ```
 
 ## Design Rationale
+
+### Memory Optimization Strategy
+
+The plugin implements an on-demand loading strategy to minimize memory usage:
+
+**What's Loaded into Memory:**
+- **Header** (64 bytes): Always loaded - contains metadata needed for queries
+- **Hash Table Entries** (16 bytes each): Always loaded - needed for binary search to locate cells
+
+**What's NOT Loaded into Memory:**
+- **Trajectory IDs Array**: Read from disk on-demand when a cell is queried
+- **No Caching**: IDs are re-read from disk for each query to maintain minimal memory footprint
+
+**Memory Savings Example:**
+- Hash table with 100,000 entries and 1,000,000 trajectory IDs
+- In-memory: 64 bytes + (100,000 × 16 bytes) = ~1.6 MB
+- Without optimization: 64 bytes + (100,000 × 16 bytes) + (1,000,000 × 4 bytes) = ~5.6 MB
+- **Savings: 4 MB per hash table** (71% reduction)
+
+**Scalability:**
+With 100 time steps loaded, this design saves ~400 MB of memory while maintaining fast query performance through binary search and efficient file I/O.
 
 ### Memory-Mappable Format
 
