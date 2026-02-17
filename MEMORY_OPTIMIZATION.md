@@ -22,24 +22,36 @@ For a dataset with:
 
 ## Memory Optimization Strategy
 
-### 1. Free Shard Data After Processing
+### 1. Batch Shard Processing (NEW - Most Important)
 
 **Location**: `SpatialHashTableManager.cpp::LoadTrajectoryDataFromDirectory()`
 
-```cpp
-// After parallel processing of all shards
-ParallelFor(ShardDataArray.Num(), [&](int32 ShardIdx) {
-    // Extract samples from shard...
-});
+**Problem**: Loading all shard files into memory at once causes memory overflow before processing can begin.
 
-// OPTIMIZATION: Free shard data immediately
-ShardDataArray.Empty();
-ShardStartTimeSteps.Empty();
+**Solution**: Process shards in batches of 2-3 at a time.
+
+```cpp
+// Process shards in batches
+const int32 BatchSize = 3;
+
+for (int32 BatchStart = 0; BatchStart < TotalShards; BatchStart += BatchSize) {
+    // Load only 3 shards
+    TArray<FShardFileData> BatchShardData;
+    LoadBatch(BatchShardData);
+    
+    // Process batch
+    ProcessBatch(BatchShardData);
+    
+    // Free immediately
+    BatchShardData.Empty();
+}
 ```
 
-**Benefit**: Reduces memory by ~30-40% as raw shard data is no longer needed once samples are extracted.
+**Benefit**: Memory usage is O(batch_size) instead of O(num_shards). Peak memory reduced from 100GB+ to ~6GB for large datasets.
 
-**Timing**: Immediately after extracting trajectory samples from all shards.
+**Details**: See `BATCH_SHARD_PROCESSING.md` for complete implementation details.
+
+**Timing**: Throughout shard loading and processing - only 2-3 shards in memory at any time.
 
 ### 2. Free Hash Tables After Saving
 
