@@ -298,6 +298,18 @@ protected:
 		TArray<TArray<FSpatialHashTableBuilder::FTrajectorySample>>& OutTimeStepSamples,
 		int32& OutGlobalMinTimeStep);
 
+	/**
+	 * Build hash tables incrementally from shards
+	 * This method processes shards in batches and builds hash tables after each batch,
+	 * freeing memory immediately to prevent overflow.
+	 * 
+	 * @param DatasetDirectory Base directory containing trajectory data
+	 * @param BaseConfig Base configuration for hash table building
+	 * @return True if hash tables were built successfully
+	 */
+	bool BuildHashTablesIncrementallyFromShards(
+		const FString& DatasetDirectory,
+		const FSpatialHashTableBuilder::FBuildConfig& BaseConfig);
 
 	/**
 	 * Find trajectory positions for distance calculations

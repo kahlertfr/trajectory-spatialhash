@@ -419,27 +419,9 @@ bool USpatialHashTableManager::TryCreateHashTables(
 	UE_LOG(LogTemp, Log, TEXT("USpatialHashTableManager::TryCreateHashTables: Creating hash tables for cell size %.3f from complete dataset (processing all shards)"),
 		CellSize);
 	
-	// Note: StartTimeStep and EndTimeStep parameters are now ignored
-	// The new implementation processes ALL trajectory data from all shards in the dataset
-	// This ensures hash tables are built from complete data
-	
-	// Load trajectory data from the dataset directory (processes all shards)
-	TArray<TArray<FSpatialHashTableBuilder::FTrajectorySample>> TimeStepSamples;
-	int32 GlobalMinTimeStep = 0;
-	if (!LoadTrajectoryDataFromDirectory(DatasetDirectory, StartTimeStep, EndTimeStep, TimeStepSamples, GlobalMinTimeStep))
-	{
-		UE_LOG(LogTemp, Error, TEXT("USpatialHashTableManager::TryCreateHashTables: Failed to load trajectory data"));
-		return false;
-	}
-	
-	if (TimeStepSamples.Num() == 0)
-	{
-		UE_LOG(LogTemp, Error, TEXT("USpatialHashTableManager::TryCreateHashTables: No trajectory data found"));
-		return false;
-	}
-	
-	UE_LOG(LogTemp, Log, TEXT("USpatialHashTableManager::TryCreateHashTables: Loaded %d time steps of trajectory data from complete dataset (starting from timestep %d)"),
-		TimeStepSamples.Num(), GlobalMinTimeStep);
+	// MEMORY OPTIMIZATION: Build hash tables incrementally per batch
+	// Instead of loading all samples then building, we build after each batch
+	// This dramatically reduces peak memory usage
 	
 	// Setup configuration for building
 	FSpatialHashTableBuilder::FBuildConfig Config;
@@ -447,18 +429,9 @@ bool USpatialHashTableManager::TryCreateHashTables(
 	Config.bComputeBoundingBox = true;
 	Config.BoundingBoxMargin = 1.0f;
 	Config.OutputDirectory = DatasetDirectory;
-	Config.NumTimeSteps = TimeStepSamples.Num();
-	Config.StartTimeStep = GlobalMinTimeStep; // Use actual timestep numbers from shard data
 	
-	// Build the hash tables (this uses parallel processing internally)
-	FSpatialHashTableBuilder Builder;
-	bool bSuccess = Builder.BuildHashTables(Config, TimeStepSamples);
-	
-	// MEMORY OPTIMIZATION: Free trajectory samples immediately after building hash tables
-	// This is crucial for large datasets with millions of trajectories
-	TimeStepSamples.Empty();
-	
-	if (!bSuccess)
+	// Build hash tables incrementally during shard batch processing
+	if (!BuildHashTablesIncrementallyFromShards(DatasetDirectory, Config))
 	{
 		UE_LOG(LogTemp, Error, TEXT("USpatialHashTableManager::TryCreateHashTables: Failed to build hash tables"));
 		return false;
@@ -589,6 +562,259 @@ void USpatialHashTableManager::CreateHashTablesAsync(
 			}
 		});
 	});
+}
+
+bool USpatialHashTableManager::BuildHashTablesIncrementallyFromShards(
+	const FString& DatasetDirectory,
+	const FSpatialHashTableBuilder::FBuildConfig& BaseConfig)
+{
+	// INCREMENTAL HASH TABLE BUILDING
+	// This method processes shards in batches and builds/updates hash tables after each batch.
+	// Key strategy: Build hash tables after each batch (they get overwritten/updated)
+	// This keeps only one batch of samples in memory at a time.
+	
+	UTrajectoryDataLoader* Loader = UTrajectoryDataLoader::Get();
+	if (!Loader)
+	{
+		UE_LOG(LogTemp, Error, TEXT("USpatialHashTableManager::BuildHashTablesIncrementallyFromShards: Failed to get TrajectoryDataLoader"));
+		return false;
+	}
+	
+	IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
+	if (!PlatformFile.DirectoryExists(*DatasetDirectory))
+	{
+		UE_LOG(LogTemp, Error, TEXT("USpatialHashTableManager::BuildHashTablesIncrementallyFromShards: Dataset directory does not exist: %s"), 
+			*DatasetDirectory);
+		return false;
+	}
+	
+	// Find all shard files
+	TArray<FString> ShardFiles;
+	TArray<FString> AllFiles;
+	PlatformFile.IterateDirectory(*DatasetDirectory, [&AllFiles](const TCHAR* FilenameOrDirectory, bool bIsDirectory) -> bool
+	{
+		if (!bIsDirectory)
+		{
+			AllFiles.Add(FilenameOrDirectory);
+		}
+		return true;
+	});
+	
+	for (const FString& File : AllFiles)
+	{
+		FString Filename = FPaths::GetCleanFilename(File);
+		if (Filename.StartsWith(TEXT("shard-")) && Filename.EndsWith(TEXT(".bin")))
+		{
+			ShardFiles.Add(File);
+		}
+	}
+	
+	if (ShardFiles.Num() == 0)
+	{
+		UE_LOG(LogTemp, Error, TEXT("USpatialHashTableManager::BuildHashTablesIncrementallyFromShards: No shard files found in %s"),
+			*DatasetDirectory);
+		return false;
+	}
+	
+	ShardFiles.Sort();
+	
+	// Helper to parse timestep from filename
+	auto ParseTimestepFromFilename = [](const FString& FilePath) -> int32
+	{
+		FString Filename = FPaths::GetCleanFilename(FilePath);
+		if (Filename.StartsWith(TEXT("shard-")) && Filename.EndsWith(TEXT(".bin")))
+		{
+			FString NumberStr = Filename.Mid(6, Filename.Len() - 10);
+			return FCString::Atoi(*NumberStr);
+		}
+		return 0;
+	};
+	
+	// PASS 1: Determine time range and bounding box
+	UE_LOG(LogTemp, Log, TEXT("USpatialHashTableManager::BuildHashTablesIncrementallyFromShards: Pass 1 - Scanning %d shards for time range and bounding box"),
+		ShardFiles.Num());
+	
+	int32 GlobalMinTimeStep = INT32_MAX;
+	int32 GlobalMaxTimeStep = INT32_MIN;
+	FVector BBoxMin(FLT_MAX, FLT_MAX, FLT_MAX);
+	FVector BBoxMax(-FLT_MAX, -FLT_MAX, -FLT_MAX);
+	TArray<int32> ShardStartTimeSteps;
+	ShardStartTimeSteps.Reserve(ShardFiles.Num());
+	
+	for (const FString& ShardFile : ShardFiles)
+	{
+		FShardFileData ShardData = Loader->LoadShardFile(ShardFile);
+		if (!ShardData.bSuccess)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("BuildHashTablesIncrementallyFromShards: Failed to load shard %s: %s"),
+				*ShardFile, *ShardData.ErrorMessage);
+			continue;
+		}
+		
+		int32 ShardStartTimeStep = ParseTimestepFromFilename(ShardFile);
+		int32 ShardEndTimeStep = ShardStartTimeStep + ShardData.Header.TimeStepIntervalSize - 1;
+		
+		GlobalMinTimeStep = FMath::Min(GlobalMinTimeStep, ShardStartTimeStep);
+		GlobalMaxTimeStep = FMath::Max(GlobalMaxTimeStep, ShardEndTimeStep);
+		ShardStartTimeSteps.Add(ShardStartTimeStep);
+		
+		// Compute bounding box if needed
+		if (BaseConfig.bComputeBoundingBox)
+		{
+			for (const FShardTrajectoryEntry& Entry : ShardData.Entries)
+			{
+				for (const FVector3f& Pos : Entry.Positions)
+				{
+					if (!FMath::IsNaN(Pos.X) && !FMath::IsNaN(Pos.Y) && !FMath::IsNaN(Pos.Z))
+					{
+						BBoxMin.X = FMath::Min(BBoxMin.X, (float)Pos.X);
+						BBoxMin.Y = FMath::Min(BBoxMin.Y, (float)Pos.Y);
+						BBoxMin.Z = FMath::Min(BBoxMin.Z, (float)Pos.Z);
+						BBoxMax.X = FMath::Max(BBoxMax.X, (float)Pos.X);
+						BBoxMax.Y = FMath::Max(BBoxMax.Y, (float)Pos.Y);
+						BBoxMax.Z = FMath::Max(BBoxMax.Z, (float)Pos.Z);
+					}
+				}
+			}
+		}
+	}
+	
+	if (ShardStartTimeSteps.Num() == 0)
+	{
+		UE_LOG(LogTemp, Error, TEXT("BuildHashTablesIncrementallyFromShards: Failed to load any shard files"));
+		return false;
+	}
+	
+	// Apply bounding box margin
+	if (BaseConfig.bComputeBoundingBox)
+	{
+		FVector Margin(BaseConfig.BoundingBoxMargin, BaseConfig.BoundingBoxMargin, BaseConfig.BoundingBoxMargin);
+		BBoxMin -= Margin;
+		BBoxMax += Margin;
+		
+		UE_LOG(LogTemp, Log, TEXT("BuildHashTablesIncrementallyFromShards: Computed BBox: Min(%.2f,%.2f,%.2f) Max(%.2f,%.2f,%.2f)"),
+			BBoxMin.X, BBoxMin.Y, BBoxMin.Z, BBoxMax.X, BBoxMax.Y, BBoxMax.Z);
+	}
+	else
+	{
+		BBoxMin = BaseConfig.BBoxMin;
+		BBoxMax = BaseConfig.BBoxMax;
+	}
+	
+	int32 TotalTimeSteps = GlobalMaxTimeStep - GlobalMinTimeStep + 1;
+	
+	UE_LOG(LogTemp, Log, TEXT("BuildHashTablesIncrementallyFromShards: Time range: %d to %d (%d steps)"),
+		GlobalMinTimeStep, GlobalMaxTimeStep, TotalTimeSteps);
+	
+	// Create directory structure
+	if (!FSpatialHashTableBuilder::CreateDirectoryStructure(BaseConfig.OutputDirectory, BaseConfig.CellSize))
+	{
+		UE_LOG(LogTemp, Error, TEXT("BuildHashTablesIncrementallyFromShards: Failed to create directory structure"));
+		return false;
+	}
+	
+	// Initialize time step samples array (accumulates across ALL batches)
+	TArray<TArray<FSpatialHashTableBuilder::FTrajectorySample>> TimeStepSamples;
+	TimeStepSamples.SetNum(TotalTimeSteps);
+	
+	// PASS 2: Process shards in batches, building hash tables after EACH batch
+	const int32 BatchSize = 3;
+	int32 TotalShards = ShardFiles.Num();
+	
+	UE_LOG(LogTemp, Log, TEXT("BuildHashTablesIncrementallyFromShards: Pass 2 - Processing %d shards in batches of %d, building after each batch"),
+		TotalShards, BatchSize);
+	
+	FCriticalSection SamplesMutex;
+	
+	for (int32 BatchStart = 0; BatchStart < TotalShards; BatchStart += BatchSize)
+	{
+		int32 BatchEnd = FMath::Min(BatchStart + BatchSize, TotalShards);
+		int32 CurrentBatchSize = BatchEnd - BatchStart;
+		
+		UE_LOG(LogTemp, Log, TEXT("BuildHashTablesIncrementallyFromShards: Loading and processing batch %d-%d (%d shards)"),
+			BatchStart, BatchEnd - 1, CurrentBatchSize);
+		
+		// Load and process current batch
+		TArray<FShardFileData> BatchShardData;
+		BatchShardData.Reserve(CurrentBatchSize);
+		
+		for (int32 ShardIdx = BatchStart; ShardIdx < BatchEnd; ++ShardIdx)
+		{
+			FShardFileData ShardData = Loader->LoadShardFile(ShardFiles[ShardIdx]);
+			if (ShardData.bSuccess)
+			{
+				BatchShardData.Add(MoveTemp(ShardData));
+			}
+		}
+		
+		// Extract samples from batch in parallel
+		FThreadSafeCounter BatchSamplesProcessed;
+		ParallelFor(BatchShardData.Num(), [&](int32 BatchIdx)
+		{
+			const FShardFileData& ShardData = BatchShardData[BatchIdx];
+			int32 ShardStartTimeStep = ShardStartTimeSteps[BatchStart + BatchIdx];
+			
+			for (const FShardTrajectoryEntry& Entry : ShardData.Entries)
+			{
+				if (Entry.ValidSampleCount == 0) continue;
+				
+				for (int32 LocalTimeStep = 0; LocalTimeStep < Entry.Positions.Num(); ++LocalTimeStep)
+				{
+					const FVector3f& Pos = Entry.Positions[LocalTimeStep];
+					if (FMath::IsNaN(Pos.X) || FMath::IsNaN(Pos.Y) || FMath::IsNaN(Pos.Z))
+						continue;
+					
+					int32 GlobalTimeStep = ShardStartTimeStep + LocalTimeStep;
+					int32 ArrayIndex = GlobalTimeStep - GlobalMinTimeStep;
+					
+					if (ArrayIndex >= 0 && ArrayIndex < TimeStepSamples.Num())
+					{
+						FVector Position(Pos.X, Pos.Y, Pos.Z);
+						FSpatialHashTableBuilder::FTrajectorySample Sample(static_cast<uint32>(Entry.TrajectoryId), Position);
+						
+						FScopeLock Lock(&SamplesMutex);
+						TimeStepSamples[ArrayIndex].Add(Sample);
+						BatchSamplesProcessed.Increment();
+					}
+				}
+			}
+		});
+		
+		UE_LOG(LogTemp, Log, TEXT("BuildHashTablesIncrementallyFromShards: Batch %d-%d extracted %d samples"),
+			BatchStart, BatchEnd - 1, BatchSamplesProcessed.GetValue());
+		
+		// CRITICAL: Free batch shard data immediately after extraction
+		BatchShardData.Empty();
+		
+		// Build hash tables with accumulated samples so far
+		UE_LOG(LogTemp, Log, TEXT("BuildHashTablesIncrementallyFromShards: Building hash tables from accumulated samples"));
+		
+		FSpatialHashTableBuilder::FBuildConfig BuildConfig = BaseConfig;
+		BuildConfig.BBoxMin = BBoxMin;
+		BuildConfig.BBoxMax = BBoxMax;
+		BuildConfig.bComputeBoundingBox = false;
+		BuildConfig.NumTimeSteps = TotalTimeSteps;
+		BuildConfig.StartTimeStep = GlobalMinTimeStep;
+		
+		FSpatialHashTableBuilder Builder;
+		if (!Builder.BuildHashTables(BuildConfig, TimeStepSamples))
+		{
+			UE_LOG(LogTemp, Error, TEXT("BuildHashTablesIncrementallyFromShards: Failed to build hash tables after batch %d-%d"),
+				BatchStart, BatchEnd - 1);
+			return false;
+		}
+		
+		// CRITICAL: Free time step samples immediately after building hash tables
+		// This is the key memory optimization - we don't keep samples around
+		TimeStepSamples.Empty();
+		TimeStepSamples.SetNum(TotalTimeSteps); // Re-initialize for next batch
+		
+		UE_LOG(LogTemp, Log, TEXT("BuildHashTablesIncrementallyFromShards: Batch %d-%d complete, hash tables built and samples freed"),
+			BatchStart, BatchEnd - 1);
+	}
+	
+	UE_LOG(LogTemp, Log, TEXT("BuildHashTablesIncrementallyFromShards: Successfully completed incremental hash table building"));
+	return true;
 }
 
 bool USpatialHashTableManager::LoadTrajectoryDataFromDirectory(
