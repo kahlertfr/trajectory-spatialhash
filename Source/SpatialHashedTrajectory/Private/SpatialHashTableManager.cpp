@@ -720,7 +720,10 @@ bool USpatialHashTableManager::LoadTrajectoryDataFromDirectory(
 				}
 				
 				// Calculate global time step
-				int32 GlobalTimeStep = ShardStartTimeStep + LocalTimeStep;
+				// ShardStartTimeStep: base timestep for the shard interval
+				// Entry.StartTimeStepInInterval: offset within interval where this trajectory starts
+				// LocalTimeStep: index into Entry.Positions array
+				int32 GlobalTimeStep = ShardStartTimeStep + Entry.StartTimeStepInInterval + LocalTimeStep;
 				int32 ArrayIndex = GlobalTimeStep - GlobalMinTimeStep;
 				
 				if (ArrayIndex >= 0 && ArrayIndex < OutTimeStepSamples.Num())
