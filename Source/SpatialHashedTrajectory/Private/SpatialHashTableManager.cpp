@@ -704,15 +704,6 @@ bool USpatialHashTableManager::BuildHashTablesIncrementallyFromShards(
 		BatchMinTimeStep = INT32_MAX;
 		BatchMaxTimeStep = INT32_MIN;
 		
-		for (int32 ShardIdx = BatchStart; ShardIdx < BatchEnd; ++ShardIdx)
-		{
-			int32 ShardStartTimeStep = ShardStartTimeSteps[ShardIdx];
-			// We need to re-load to get TimeStepIntervalSize (or store it in pass 1)
-			// For now, calculate from our stored data
-			BatchMinTimeStep = FMath::Min(BatchMinTimeStep, ShardStartTimeStep);
-			// Assume same interval size for estimation (will be corrected below)
-		}
-		
 		// Load current batch of shards
 		TArray<FShardFileData> BatchShardData;
 		BatchShardData.Reserve(CurrentBatchSize);
@@ -800,9 +791,11 @@ bool USpatialHashTableManager::BuildHashTablesIncrementallyFromShards(
 			int32 GlobalTimeStep = BatchMinTimeStep + TimeStepIdx;
 			const TArray<FSpatialHashTableBuilder::FTrajectorySample>& Samples = BatchTimeStepSamples[TimeStepIdx];
 			
-			// Skip empty timesteps
+			// Skip empty timesteps (log for debugging)
 			if (Samples.Num() == 0)
 			{
+				UE_LOG(LogTemp, Verbose, TEXT("BuildHashTablesIncrementallyFromShards: Timestep %d has no samples, skipping"),
+					GlobalTimeStep);
 				return;
 			}
 			
