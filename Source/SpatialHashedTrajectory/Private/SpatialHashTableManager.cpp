@@ -502,8 +502,8 @@ void USpatialHashTableManager::CreateHashTablesAsync(
 		// Build hash tables incrementally during shard batch processing
 		bool bSuccess = Manager->BuildHashTablesIncrementallyFromShards(DatasetDirectory, Config);
 		
-		// Return to game thread for final logging and cleanup
-		AsyncTask(ENamedThreads::GameThread, [WeakThis, bSuccess, CellSize]()
+		// Return to game thread for final logging, loading, and cleanup
+		AsyncTask(ENamedThreads::GameThread, [WeakThis, bSuccess, CellSize, DatasetDirectory, StartTimeStep, EndTimeStep]()
 		{
 			if (USpatialHashTableManager* Mgr = WeakThis.Get())
 			{
@@ -511,6 +511,20 @@ void USpatialHashTableManager::CreateHashTablesAsync(
 				{
 					UE_LOG(LogTemp, Log, TEXT("USpatialHashTableManager::CreateHashTablesAsync: Successfully created hash tables for cell size %.3f"),
 						CellSize);
+					
+					// Load the newly created hash tables
+					UE_LOG(LogTemp, Log, TEXT("USpatialHashTableManager::CreateHashTablesAsync: Loading newly created hash tables..."));
+					int32 LoadedCount = Mgr->LoadHashTables(DatasetDirectory, CellSize, StartTimeStep, EndTimeStep, false);
+					
+					if (LoadedCount > 0)
+					{
+						UE_LOG(LogTemp, Log, TEXT("USpatialHashTableManager::CreateHashTablesAsync: Successfully loaded %d hash tables"),
+							LoadedCount);
+					}
+					else
+					{
+						UE_LOG(LogTemp, Warning, TEXT("USpatialHashTableManager::CreateHashTablesAsync: Created hash tables but failed to load them"));
+					}
 				}
 				else
 				{

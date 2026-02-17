@@ -101,6 +101,7 @@ public:
 	 * Create hash tables from trajectory data asynchronously (non-blocking)
 	 * This method returns immediately and performs the work on background threads.
 	 * Progress can be monitored through the completion delegate or by checking IsCreatingHashTables().
+	 * After successful creation, the newly created hash tables are automatically loaded.
 	 * 
 	 * @param DatasetDirectory Output directory for hash tables
 	 * @param CellSize Cell size for the hash tables
