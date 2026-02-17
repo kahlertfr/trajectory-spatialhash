@@ -5,18 +5,35 @@
 #include "HAL/PlatformFileManager.h"
 #include "Misc/Paths.h"
 
+// ============================================================================
+// Z-Order Curve (Morton Code) Implementation
+// ============================================================================
+// The Z-Order curve maps 3D coordinates to a 1D index while preserving
+// spatial locality. Points that are close in 3D space have similar Z-Order
+// keys, making it ideal for spatial indexing and range queries.
+//
+// Algorithm: Bit interleaving
+// Given 3D cell coordinates (x, y, z), we interleave their bits:
+//   Result bits: ...z₂y₂x₂ z₁y₁x₁ z₀y₀x₀
+// where x₀ is the least significant bit of x, y₀ of y, etc.
+//
+// This creates a space-filling curve that visits cells in a coherent order.
+// ============================================================================
+
 // Helper function to interleave bits for Z-Order curve calculation
+// Spreads the bits of a 21-bit value to every 3rd position
 static uint64 SplitBy3(uint32 Value)
 {
-	// Limit to 21 bits
+	// Limit input to 21 bits (supports coordinates up to 2,097,151)
 	uint64 x = Value & 0x1fffff;
 	
-	// Spread bits to every 3rd position
-	x = (x | x << 32) & 0x1f00000000ffff;
-	x = (x | x << 16) & 0x1f0000ff0000ff;
-	x = (x | x << 8)  & 0x100f00f00f00f00f;
-	x = (x | x << 4)  & 0x10c30c30c30c30c3;
-	x = (x | x << 2)  & 0x1249249249249249;
+	// Spread bits to every 3rd position using a series of bit manipulations
+	// Each step spreads bits further apart by masking and shifting
+	x = (x | x << 32) & 0x1f00000000ffff;  // Spread to positions ...ffff
+	x = (x | x << 16) & 0x1f0000ff0000ff;  // Spread to positions ...ff...ff
+	x = (x | x << 8)  & 0x100f00f00f00f00f; // Spread to positions ...0f..0f..0f..0f
+	x = (x | x << 4)  & 0x10c30c30c30c30c3; // Spread to positions ...03..03..03..03..03
+	x = (x | x << 2)  & 0x1249249249249249; // Spread to positions ...1..1..1..1..1..1..1
 	
 	return x;
 }
@@ -24,11 +41,14 @@ static uint64 SplitBy3(uint32 Value)
 uint64 FSpatialHashTable::CalculateZOrderKey(int32 CellX, int32 CellY, int32 CellZ)
 {
 	// Ensure coordinates are non-negative and within 21-bit range
+	// This supports cell coordinates from 0 to 2,097,151 in each dimension
 	uint32 X = FMath::Clamp(CellX, 0, 0x1fffff);
 	uint32 Y = FMath::Clamp(CellY, 0, 0x1fffff);
 	uint32 Z = FMath::Clamp(CellZ, 0, 0x1fffff);
 	
-	// Interleave bits: x, y, z, x, y, z, ... (X at bit 0, Y at bit 1, Z at bit 2)
+	// Interleave bits: x at bit 0, y at bit 1, z at bit 2, repeating
+	// Result pattern: ...z₂y₂x₂ z₁y₁x₁ z₀y₀x₀
+	// This creates a 63-bit Morton code (21 bits × 3 dimensions)
 	return SplitBy3(X) | (SplitBy3(Y) << 1) | (SplitBy3(Z) << 2);
 }
 
