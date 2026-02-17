@@ -101,7 +101,11 @@ public:
 	 * Create hash tables from trajectory data asynchronously (non-blocking)
 	 * This method returns immediately and performs the work on background threads.
 	 * Progress can be monitored through the completion delegate or by checking IsCreatingHashTables().
-	 * After successful creation, the newly created hash tables are automatically loaded.
+	 * After successful creation, the newly created hash tables are automatically loaded on the game thread.
+	 * 
+	 * Note: Loading happens on the game thread and may cause a brief frame hitch if loading many hash tables.
+	 * LoadFromFile() is optimized (only loads headers/entries, not trajectory IDs), but for datasets with
+	 * hundreds of timesteps, consider loading in smaller batches separately if frame time is critical.
 	 * 
 	 * @param DatasetDirectory Output directory for hash tables
 	 * @param CellSize Cell size for the hash tables

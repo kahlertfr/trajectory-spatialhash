@@ -513,6 +513,11 @@ void USpatialHashTableManager::CreateHashTablesAsync(
 						CellSize);
 					
 					// Load the newly created hash tables
+					// Note: Loading happens on game thread to safely update LoadedHashTables map.
+					// LoadFromFile() is optimized (only loads headers/entries, not trajectory IDs),
+					// but loading many hash tables could still cause a brief frame hitch.
+					// For large datasets with hundreds of timesteps, consider calling LoadHashTables()
+					// separately in smaller batches if frame time is critical.
 					UE_LOG(LogTemp, Log, TEXT("USpatialHashTableManager::CreateHashTablesAsync: Loading newly created hash tables..."));
 					int32 LoadedCount = Mgr->LoadHashTables(DatasetDirectory, CellSize, StartTimeStep, EndTimeStep, false);
 					
