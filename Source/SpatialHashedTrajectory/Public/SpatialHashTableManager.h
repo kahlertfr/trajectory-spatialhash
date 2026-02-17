@@ -299,10 +299,15 @@ protected:
 		int32& OutGlobalMinTimeStep);
 
 	/**
-	 * Build hash tables from shards with batch processing
-	 * This method processes shards in batches, freeing shard data immediately after
-	 * extraction to prevent memory overflow. Samples accumulate across batches, then
-	 * hash tables are built once at the end with all accumulated data.
+	 * Build hash tables from shards with batch processing and per-timestep building
+	 * This method processes shards in batches. Each batch:
+	 * - Loads shard files (each shard contains multiple timesteps)
+	 * - Builds one hash table per timestep in parallel
+	 * - Writes hash tables to disk
+	 * - Frees all batch data before loading next batch
+	 * 
+	 * No data accumulation across batches - each timestep's hash table is complete
+	 * and independent after building from its batch.
 	 * 
 	 * @param DatasetDirectory Base directory containing trajectory data
 	 * @param BaseConfig Base configuration for hash table building
