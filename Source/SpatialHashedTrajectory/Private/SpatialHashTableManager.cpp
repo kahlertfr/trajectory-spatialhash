@@ -7,7 +7,6 @@
 #include "Async/Async.h"
 #include "Async/ParallelFor.h"
 #include "TrajectoryDataLoader.h"
-#include "LoadedDataset.h"
 
 USpatialHashTableManager::USpatialHashTableManager()
 {
