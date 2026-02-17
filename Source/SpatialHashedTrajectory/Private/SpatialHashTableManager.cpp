@@ -527,10 +527,15 @@ bool USpatialHashTableManager::BuildHashTablesIncrementallyFromShards(
 	const FString& DatasetDirectory,
 	const FSpatialHashTableBuilder::FBuildConfig& BaseConfig)
 {
-	// INCREMENTAL HASH TABLE BUILDING
-	// This method processes shards in batches and builds/updates hash tables after each batch.
-	// Key strategy: Build hash tables after each batch (they get overwritten/updated)
-	// This keeps only one batch of samples in memory at a time.
+	// BATCH PROCESSING WITH IMMEDIATE SHARD CLEANUP
+	// This method processes shards in batches, freeing shard data immediately after extraction.
+	// Samples accumulate across batches (much smaller than shard data), then hash tables
+	// are built once at the end with all accumulated data.
+	// 
+	// Key strategy:
+	// - Free shard data per batch (large: ~6GB per batch)
+	// - Accumulate samples across batches (small: ~0.5GB per batch)
+	// - Build complete hash tables at end with all samples
 	
 	UTrajectoryDataLoader* Loader = UTrajectoryDataLoader::Get();
 	if (!Loader)

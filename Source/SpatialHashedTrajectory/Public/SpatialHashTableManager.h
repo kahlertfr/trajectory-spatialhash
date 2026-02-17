@@ -299,9 +299,10 @@ protected:
 		int32& OutGlobalMinTimeStep);
 
 	/**
-	 * Build hash tables incrementally from shards
-	 * This method processes shards in batches and builds hash tables after each batch,
-	 * freeing memory immediately to prevent overflow.
+	 * Build hash tables from shards with batch processing
+	 * This method processes shards in batches, freeing shard data immediately after
+	 * extraction to prevent memory overflow. Samples accumulate across batches, then
+	 * hash tables are built once at the end with all accumulated data.
 	 * 
 	 * @param DatasetDirectory Base directory containing trajectory data
 	 * @param BaseConfig Base configuration for hash table building
