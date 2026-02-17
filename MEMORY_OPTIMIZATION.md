@@ -18,7 +18,7 @@ For a dataset with:
 - 1000 time steps
 - Each trajectory sample: ~20 bytes (ID + 3D position)
 
-**Unoptimized memory usage**: 200+ GB peak memory consumption
+**Hypothetical unoptimized memory usage**: 200+ GB peak memory consumption
 
 ## Memory Optimization Strategy
 
@@ -90,7 +90,7 @@ if (!bSuccess) {
 
 ## Memory Usage Comparison
 
-### Before Optimization
+### Before Optimization (Hypothetical 10M Trajectory Example)
 
 ```
 Phase                    Memory Usage
@@ -101,7 +101,7 @@ Build Hash Tables        50 GB + 100 GB + 70 GB (hash tables)
 Peak Memory              220 GB
 ```
 
-### After Optimization
+### After Optimization (Hypothetical 10M Trajectory Example)
 
 ```
 Phase                    Memory Usage
@@ -113,6 +113,8 @@ Save & Free              100 GB (hash tables freed immediately)
 Complete                 0 GB (samples freed)
 Peak Memory              ~103 GB (53% reduction)
 ```
+
+**Note**: Numbers above are hypothetical estimates for a 10M trajectory dataset. See "Performance Metrics" section for actual test results.
 
 ## Implementation Details
 
