@@ -8,7 +8,6 @@
 #include "Async/ParallelFor.h"
 #include "TrajectoryDataLoader.h"
 #include "LoadedDataset.h"
-#include <atomic>
 
 USpatialHashTableManager::USpatialHashTableManager()
 {
@@ -675,7 +674,7 @@ bool USpatialHashTableManager::LoadTrajectoryDataFromDirectory(
 	// Second pass: extract trajectory samples from all shards
 	// Process shards in parallel to improve performance
 	FCriticalSection SamplesMutex;
-	std::atomic<int32> TotalSamplesProcessed(0);
+	FThreadSafeCounter TotalSamplesProcessed;
 	
 	ParallelFor(ShardDataArray.Num(), [&](int32 ShardIdx)
 	{
@@ -717,7 +716,7 @@ bool USpatialHashTableManager::LoadTrajectoryDataFromDirectory(
 					// Thread-safe addition to the output array
 					FScopeLock Lock(&SamplesMutex);
 					OutTimeStepSamples[ArrayIndex].Add(Sample);
-					TotalSamplesProcessed++;
+					TotalSamplesProcessed.Increment();
 				}
 			}
 		}
@@ -741,7 +740,7 @@ bool USpatialHashTableManager::LoadTrajectoryDataFromDirectory(
 	}
 	
 	UE_LOG(LogTemp, Log, TEXT("USpatialHashTableManager::LoadTrajectoryDataFromDirectory: Loaded %d total samples across %d time steps from %d shards"),
-		TotalSamplesProcessed.load(), TotalTimeSteps, ShardDataArray.Num());
+		TotalSamplesProcessed.GetValue(), TotalTimeSteps, ShardDataArray.Num());
 	
 	return true;
 }
