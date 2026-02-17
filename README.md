@@ -89,18 +89,21 @@ Event BeginPlay
 
 **Auto-Creation Behavior:**
 - If `Auto Create` is `true` (default) and hash tables don't exist for the requested cell size, the manager will automatically create them from trajectory data
+- **Important:** Hash tables are now built from the **COMPLETE dataset** - all shards and all trajectories are processed
 - **Note:** Auto-creation in `LoadHashTables` runs synchronously and will block until complete
 - For non-blocking creation, use `CreateHashTablesAsync` (see below)
-- Trajectory data is loaded using the **TrajectoryData plugin** (https://github.com/kahlertfr/ue-plugin-trajectory-data)
+- Trajectory data is loaded using the **TrajectoryData plugin's `LoadShardFile` function** (https://github.com/kahlertfr/ue-plugin-trajectory-data)
 - Supports the full trajectory data format specification:
   - `dataset-manifest.json` - Dataset metadata (scenario name, physical times, units)
   - `dataset-meta.bin` - Binary metadata
   - `dataset-trajmeta.bin` - Per-trajectory metadata
-  - `shard-*.bin` - Time-interval data files
-- The system automatically loads all trajectories and time steps from the dataset
+  - `shard-*.bin` - Time-interval data files (**ALL shards are processed**)
+- **Performance:** Shards are processed in parallel using multiple CPU cores
+- **Memory Management:** Memory usage is proportional to the number of shards and trajectory entries
 - If hash tables already exist, they are simply loaded from disk
 - Set `Auto Create` to `false` to only load existing hash tables without attempting creation
 - See [trajectory data specification](https://github.com/kahlertfr/ue-plugin-trajectory-data/blob/main/specification-trajectory-data-shard.md) for data format details
+- See [LoadShardFile documentation](https://github.com/kahlertfr/ue-plugin-trajectory-data/blob/main/LOAD_SHARD_FILE.md) for details on shard loading
 
 #### Creating Hash Tables Asynchronously (Non-Blocking)
 
@@ -111,27 +114,41 @@ On Button Click or Custom Event
 ├─ Call "Create Hash Tables Async" on Manager
 │  ├─ Dataset Directory: Path to trajectory data
 │  ├─ Cell Size: 10.0
-│  ├─ Start Time Step: 0
-│  └─ End Time Step: 1000
+│  ├─ Start Time Step: (ignored - all time steps are processed)
+│  └─ End Time Step: (ignored - all time steps are processed)
 └─ Optional: Poll "Is Creating Hash Tables" to check progress
    └─ Branch: If False, creation is complete
 ```
 
 **Async Creation Benefits:**
 - **Non-blocking:** Returns immediately, game thread stays responsive
-- **Parallelized:** Time steps are processed in parallel across multiple CPU cores
-- **Performance:** Significant speedup for datasets with many time steps
+- **Parallelized:** 
+  - Shards are processed in parallel
+  - Time steps within shards are also processed in parallel
+  - Two-level parallelism for maximum performance
+- **Complete dataset:** Processes ALL trajectories from ALL shards
+- **Performance:** Significant speedup for large datasets with multiple shards
 - Can monitor progress with `Is Creating Hash Tables` node
+
+**Important Notes:**
+- The `Start Time Step` and `End Time Step` parameters are **ignored** in the new implementation
+- Hash tables are built for the **complete time range** of the dataset (all time steps in all shards)
+- This ensures hash tables represent the full spatial distribution of the data
 
 **Trajectory Data Format:**
 
-This plugin uses the **TrajectoryData plugin** for loading trajectory data. The dataset directory should contain:
+This plugin uses the **TrajectoryData plugin's LoadShardFile** for loading complete shard data. The dataset directory should contain:
 - `dataset-manifest.json` - Human-readable metadata (scenario name, physical times, coordinate units)
 - `dataset-meta.bin` - Binary dataset metadata (time step ranges, bounding box, etc.)
 - `dataset-trajmeta.bin` - Per-trajectory metadata
-- `shard-*.bin` - Time-interval data files with trajectory positions
+- `shard-*.bin` - Time-interval data files with trajectory positions (**ALL shards are loaded and processed**)
 
-See the [trajectory data specification](https://github.com/kahlertfr/ue-plugin-trajectory-data/blob/main/specification-trajectory-data-shard.md) for detailed format information.
+Each shard file is loaded completely using `LoadShardFile`, which provides structured access to all trajectory entries in the shard. This ensures:
+- Complete dataset coverage (no trajectory filtering)
+- All trajectories are included in hash tables
+- Spatial distribution accurately represents the full dataset
+
+See the [trajectory data specification](https://github.com/kahlertfr/ue-plugin-trajectory-data/blob/main/specification-trajectory-data-shard.md) for detailed format information and [LoadShardFile documentation](https://github.com/kahlertfr/ue-plugin-trajectory-data/blob/main/LOAD_SHARD_FILE.md) for shard loading details.
 
 **Note:** The Dataset Directory should be an absolute filesystem path, not a Content Browser path. Use Unreal's path functions like `FPaths::ProjectContentDir()` to construct the correct path.
 
@@ -194,7 +211,34 @@ Call "Unload All Hash Tables"
 
 ### Building Spatial Hash Tables (C++)
 
-The plugin provides functionality to build spatial hash tables from trajectory data:
+The plugin provides functionality to build spatial hash tables from trajectory data. **Note:** The recommended approach is to use `USpatialHashTableManager` which now uses `LoadShardFile` to process complete datasets.
+
+**Using the Manager (Recommended):**
+
+```cpp
+#include "SpatialHashTableManager.h"
+
+// Create manager
+USpatialHashTableManager* Manager = NewObject<USpatialHashTableManager>();
+
+// Create hash tables from complete dataset (processes all shards)
+Manager->CreateHashTablesAsync(
+    TEXT("/Path/To/Dataset"),
+    10.0f,  // Cell size
+    0,      // Start time step (ignored - all time steps processed)
+    0);     // End time step (ignored - all time steps processed)
+
+// Or synchronously
+bool bSuccess = Manager->TryCreateHashTables(
+    TEXT("/Path/To/Dataset"),
+    10.0f,  // Cell size  
+    0,      // Start time step (ignored)
+    0);     // End time step (ignored)
+```
+
+**Direct Builder API:**
+
+If you already have trajectory samples prepared in memory:
 
 ```cpp
 #include "SpatialHashTableBuilder.h"
@@ -210,12 +254,20 @@ Config.NumTimeSteps = 1000;  // Number of time steps to process
 TArray<TArray<FSpatialHashTableBuilder::FTrajectorySample>> TimeStepSamples;
 // ... populate TimeStepSamples with trajectory data ...
 
-// Build hash tables
+// Build hash tables (processes time steps in parallel)
 FSpatialHashTableBuilder Builder;
 if (Builder.BuildHashTables(Config, TimeStepSamples))
 {
     UE_LOG(LogTemp, Log, TEXT("Successfully built spatial hash tables"));
 }
+```
+
+**Key Implementation Details:**
+- Hash tables are built from **ALL trajectories** in the dataset
+- Uses `LoadShardFile` from TrajectoryData plugin for complete shard data
+- Shards are processed in parallel for better performance
+- Time steps are also processed in parallel
+- No trajectory filtering or selection is applied
 ```
 
 ### Loading and Querying Hash Tables
