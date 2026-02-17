@@ -278,12 +278,16 @@ protected:
 
 	/**
 	 * Load trajectory data from dataset directory
-	 * This method looks for trajectory data files and loads them into the format needed by the builder
+	 * This method uses LoadShardFile to load complete shard data and processes ALL trajectories
+	 * in the dataset, regardless of the time range parameters (which are kept for API compatibility).
 	 * 
-	 * @param DatasetDirectory Base directory containing trajectory data
-	 * @param StartTimeStep First time step to load
-	 * @param EndTimeStep Last time step to load
-	 * @param OutTimeStepSamples Output array of trajectory samples for each time step
+	 * The method finds all shard files in the dataset directory, loads them using LoadShardFile,
+	 * and processes them in parallel while managing memory constraints.
+	 * 
+	 * @param DatasetDirectory Base directory containing trajectory data (with shard-*.bin files)
+	 * @param StartTimeStep Unused - kept for API compatibility (all time steps are processed)
+	 * @param EndTimeStep Unused - kept for API compatibility (all time steps are processed)
+	 * @param OutTimeStepSamples Output array of trajectory samples for each time step in the complete dataset
 	 * @return True if trajectory data was loaded successfully
 	 */
 	bool LoadTrajectoryDataFromDirectory(

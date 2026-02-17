@@ -5,8 +5,10 @@
 #include "HAL/PlatformFileManager.h"
 #include "Misc/FileHelper.h"
 #include "Async/Async.h"
+#include "Async/ParallelFor.h"
 #include "TrajectoryDataLoader.h"
 #include "LoadedDataset.h"
+#include <atomic>
 
 USpatialHashTableManager::USpatialHashTableManager()
 {
@@ -416,10 +418,14 @@ bool USpatialHashTableManager::TryCreateHashTables(
 		return false;
 	}
 	
-	UE_LOG(LogTemp, Log, TEXT("USpatialHashTableManager::TryCreateHashTables: Creating hash tables for cell size %.3f (time steps %d-%d)"),
-		CellSize, StartTimeStep, EndTimeStep);
+	UE_LOG(LogTemp, Log, TEXT("USpatialHashTableManager::TryCreateHashTables: Creating hash tables for cell size %.3f from complete dataset (processing all shards)"),
+		CellSize);
 	
-	// Load trajectory data from the dataset directory
+	// Note: StartTimeStep and EndTimeStep parameters are now ignored
+	// The new implementation processes ALL trajectory data from all shards in the dataset
+	// This ensures hash tables are built from complete data
+	
+	// Load trajectory data from the dataset directory (processes all shards)
 	TArray<TArray<FSpatialHashTableBuilder::FTrajectorySample>> TimeStepSamples;
 	if (!LoadTrajectoryDataFromDirectory(DatasetDirectory, StartTimeStep, EndTimeStep, TimeStepSamples))
 	{
@@ -433,7 +439,7 @@ bool USpatialHashTableManager::TryCreateHashTables(
 		return false;
 	}
 	
-	UE_LOG(LogTemp, Log, TEXT("USpatialHashTableManager::TryCreateHashTables: Loaded %d time steps of trajectory data"),
+	UE_LOG(LogTemp, Log, TEXT("USpatialHashTableManager::TryCreateHashTables: Loaded %d time steps of trajectory data from complete dataset"),
 		TimeStepSamples.Num());
 	
 	// Setup configuration for building
@@ -444,7 +450,7 @@ bool USpatialHashTableManager::TryCreateHashTables(
 	Config.OutputDirectory = DatasetDirectory;
 	Config.NumTimeSteps = TimeStepSamples.Num();
 	
-	// Build the hash tables
+	// Build the hash tables (this uses parallel processing internally)
 	FSpatialHashTableBuilder Builder;
 	if (!Builder.BuildHashTables(Config, TimeStepSamples))
 	{
@@ -497,10 +503,12 @@ void USpatialHashTableManager::CreateHashTablesAsync(
 			return;
 		}
 		
-		UE_LOG(LogTemp, Log, TEXT("USpatialHashTableManager::CreateHashTablesAsync: Creating hash tables for cell size %.3f (time steps %d-%d)"),
-			CellSize, StartTimeStep, EndTimeStep);
+		UE_LOG(LogTemp, Log, TEXT("USpatialHashTableManager::CreateHashTablesAsync: Creating hash tables for cell size %.3f from complete dataset (processing all shards)"),
+			CellSize);
 		
 		// Load trajectory data - check if manager still exists
+		// Note: StartTimeStep and EndTimeStep parameters are now ignored
+		// The implementation processes ALL trajectory data from all shards in the dataset
 		USpatialHashTableManager* Manager = WeakThis.Get();
 		if (!Manager)
 		{
@@ -534,7 +542,7 @@ void USpatialHashTableManager::CreateHashTablesAsync(
 			return;
 		}
 		
-		UE_LOG(LogTemp, Log, TEXT("USpatialHashTableManager::CreateHashTablesAsync: Loaded %d time steps of trajectory data"),
+		UE_LOG(LogTemp, Log, TEXT("USpatialHashTableManager::CreateHashTablesAsync: Loaded %d time steps of trajectory data from complete dataset"),
 			TimeStepSamples.Num());
 		
 		// Setup configuration for building
@@ -545,7 +553,8 @@ void USpatialHashTableManager::CreateHashTablesAsync(
 		Config.OutputDirectory = DatasetDirectory;
 		Config.NumTimeSteps = TimeStepSamples.Num();
 		
-		// Build the hash tables (this will use parallel processing internally)
+		// Build the hash tables (this will use parallel processing internally for time steps,
+		// and we've already parallelized shard processing in LoadTrajectoryDataFromDirectory)
 		FSpatialHashTableBuilder Builder;
 		bool bSuccess = Builder.BuildHashTables(Config, TimeStepSamples);
 		
@@ -578,7 +587,7 @@ bool USpatialHashTableManager::LoadTrajectoryDataFromDirectory(
 {
 	OutTimeStepSamples.Reset();
 	
-	// Use the trajectory data plugin to load the dataset
+	// Use the trajectory data plugin to load shards
 	UTrajectoryDataLoader* Loader = UTrajectoryDataLoader::Get();
 	if (!Loader)
 	{
@@ -586,88 +595,142 @@ bool USpatialHashTableManager::LoadTrajectoryDataFromDirectory(
 		return false;
 	}
 	
-	// Set up load parameters
-	FTrajectoryLoadParams LoadParams;
-	LoadParams.DatasetPath = DatasetDirectory;
-	LoadParams.SelectionStrategy = ETrajectorySelectionStrategy::All;
-	LoadParams.StartTimeStep = StartTimeStep;
-	LoadParams.EndTimeStep = EndTimeStep;
-	LoadParams.SampleRate = 1; // Load all samples
-	
-	// Load the dataset synchronously
-	FLoadedDataset LoadedDataset;
-	if (!Loader->LoadTrajectoriesSync(LoadParams, LoadedDataset))
+	// Find all shard files in the dataset directory
+	IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
+	if (!PlatformFile.DirectoryExists(*DatasetDirectory))
 	{
-		UE_LOG(LogTemp, Error, TEXT("USpatialHashTableManager::LoadTrajectoryDataFromDirectory: Failed to load dataset from %s"),
+		UE_LOG(LogTemp, Error, TEXT("USpatialHashTableManager::LoadTrajectoryDataFromDirectory: Dataset directory does not exist: %s"), 
 			*DatasetDirectory);
 		return false;
 	}
 	
-	// Check if we have data
-	if (LoadedDataset.TrajectoryCount == 0 || LoadedDataset.TimeStepCount == 0)
+	TArray<FString> ShardFiles;
+	PlatformFile.FindFiles([&ShardFiles](const TCHAR* FilenameOrDirectory, bool bIsDirectory)
 	{
-		UE_LOG(LogTemp, Error, TEXT("USpatialHashTableManager::LoadTrajectoryDataFromDirectory: Loaded dataset is empty"));
+		if (!bIsDirectory)
+		{
+			FString Filename = FPaths::GetCleanFilename(FilenameOrDirectory);
+			if (Filename.StartsWith(TEXT("shard-")) && Filename.EndsWith(TEXT(".bin")))
+			{
+				ShardFiles.Add(FilenameOrDirectory);
+			}
+		}
+		return true;
+	}, *DatasetDirectory, false);
+	
+	if (ShardFiles.Num() == 0)
+	{
+		UE_LOG(LogTemp, Error, TEXT("USpatialHashTableManager::LoadTrajectoryDataFromDirectory: No shard files found in %s"),
+			*DatasetDirectory);
 		return false;
 	}
 	
-	UE_LOG(LogTemp, Log, TEXT("USpatialHashTableManager::LoadTrajectoryDataFromDirectory: Loaded %d trajectories with %d time steps"),
-		LoadedDataset.TrajectoryCount, LoadedDataset.TimeStepCount);
+	// Sort shard files by name to ensure consistent ordering
+	ShardFiles.Sort();
 	
-	// Convert loaded dataset to hash table builder format
-	int32 NumTimeSteps = EndTimeStep - StartTimeStep + 1;
-	OutTimeStepSamples.SetNum(NumTimeSteps);
+	UE_LOG(LogTemp, Log, TEXT("USpatialHashTableManager::LoadTrajectoryDataFromDirectory: Found %d shard files"), ShardFiles.Num());
 	
-	// Iterate through all trajectories and time steps
-	for (int32 TrajIdx = 0; TrajIdx < LoadedDataset.TrajectoryCount; ++TrajIdx)
+	// Determine the global time step range from the dataset
+	// We'll process all shards to build complete hash tables
+	int32 GlobalMinTimeStep = INT32_MAX;
+	int32 GlobalMaxTimeStep = INT32_MIN;
+	
+	// First pass: determine the complete time range
+	TArray<FShardFileData> ShardDataArray;
+	ShardDataArray.Reserve(ShardFiles.Num());
+	
+	for (const FString& ShardFile : ShardFiles)
 	{
-		const FTrajectoryMetadata& TrajMeta = LoadedDataset.TrajectoryMetadata[TrajIdx];
-		
-		for (int32 TimeStepIdx = 0; TimeStepIdx < LoadedDataset.TimeStepCount; ++TimeStepIdx)
+		FShardFileData ShardData = Loader->LoadShardFile(ShardFile);
+		if (!ShardData.bSuccess)
 		{
-			int32 ActualTimeStep = LoadedDataset.StartTimeStep + TimeStepIdx;
-			
-			// Check if this time step is in our requested range
-			if (ActualTimeStep < StartTimeStep || ActualTimeStep > EndTimeStep)
+			UE_LOG(LogTemp, Warning, TEXT("USpatialHashTableManager::LoadTrajectoryDataFromDirectory: Failed to load shard %s: %s"),
+				*ShardFile, *ShardData.ErrorMessage);
+			continue;
+		}
+		
+		// Calculate the time step range for this shard
+		int32 ShardStartTimeStep = ShardData.Header.GlobalIntervalIndex * ShardData.Header.TimeStepIntervalSize;
+		int32 ShardEndTimeStep = ShardStartTimeStep + ShardData.Header.TimeStepIntervalSize - 1;
+		
+		GlobalMinTimeStep = FMath::Min(GlobalMinTimeStep, ShardStartTimeStep);
+		GlobalMaxTimeStep = FMath::Max(GlobalMaxTimeStep, ShardEndTimeStep);
+		
+		ShardDataArray.Add(MoveTemp(ShardData));
+	}
+	
+	if (ShardDataArray.Num() == 0)
+	{
+		UE_LOG(LogTemp, Error, TEXT("USpatialHashTableManager::LoadTrajectoryDataFromDirectory: Failed to load any shard files"));
+		return false;
+	}
+	
+	UE_LOG(LogTemp, Log, TEXT("USpatialHashTableManager::LoadTrajectoryDataFromDirectory: Global time step range: %d to %d"),
+		GlobalMinTimeStep, GlobalMaxTimeStep);
+	
+	// Initialize output array for all time steps in the dataset
+	int32 TotalTimeSteps = GlobalMaxTimeStep - GlobalMinTimeStep + 1;
+	OutTimeStepSamples.SetNum(TotalTimeSteps);
+	
+	// Second pass: extract trajectory samples from all shards
+	// Process shards in parallel to improve performance
+	FCriticalSection SamplesMutex;
+	std::atomic<int32> TotalSamplesProcessed(0);
+	
+	ParallelFor(ShardDataArray.Num(), [&](int32 ShardIdx)
+	{
+		const FShardFileData& ShardData = ShardDataArray[ShardIdx];
+		
+		// Calculate the time step range for this shard
+		int32 ShardStartTimeStep = ShardData.Header.GlobalIntervalIndex * ShardData.Header.TimeStepIntervalSize;
+		
+		// Process each trajectory entry in this shard
+		for (const FShardTrajectoryEntry& Entry : ShardData.Entries)
+		{
+			// Skip entries with no valid samples
+			if (Entry.StartTimeStepInInterval == -1 || Entry.ValidSampleCount == 0)
 			{
 				continue;
 			}
 			
-			// Get position for this trajectory at this time step
-			// Note: Positions array uses row-major storage: [traj0_t0, traj0_t1, ..., traj1_t0, traj1_t1, ...]
-			// So index = TrajIdx * TimeStepCount + TimeStepIdx
-			int32 DataIndex = TrajIdx * LoadedDataset.TimeStepCount + TimeStepIdx;
-			if (DataIndex >= LoadedDataset.Positions.Num())
+			// Process each position in the entry
+			for (int32 LocalTimeStep = 0; LocalTimeStep < Entry.Positions.Num(); ++LocalTimeStep)
 			{
-				continue;
-			}
-			
-			FVector Position = LoadedDataset.Positions[DataIndex];
-			
-			// Skip invalid positions (NaN check)
-			if (!FMath::IsFinite(Position.X) || !FMath::IsFinite(Position.Y) || !FMath::IsFinite(Position.Z))
-			{
-				continue;
-			}
-			
-			// Add sample to the appropriate time step
-			int32 ArrayIndex = ActualTimeStep - StartTimeStep;
-			if (ArrayIndex >= 0 && ArrayIndex < OutTimeStepSamples.Num())
-			{
-				FSpatialHashTableBuilder::FTrajectorySample Sample(TrajMeta.TrajectoryID, Position);
-				OutTimeStepSamples[ArrayIndex].Add(Sample);
+				const FVector3f& Pos = Entry.Positions[LocalTimeStep];
+				
+				// Skip invalid positions (NaN check)
+				if (FMath::IsNaN(Pos.X))
+				{
+					continue;
+				}
+				
+				// Calculate global time step
+				int32 GlobalTimeStep = ShardStartTimeStep + LocalTimeStep;
+				int32 ArrayIndex = GlobalTimeStep - GlobalMinTimeStep;
+				
+				if (ArrayIndex >= 0 && ArrayIndex < OutTimeStepSamples.Num())
+				{
+					// Convert to FSpatialHashTableBuilder format
+					FVector Position(Pos.X, Pos.Y, Pos.Z);
+					FSpatialHashTableBuilder::FTrajectorySample Sample(static_cast<uint32>(Entry.TrajectoryId), Position);
+					
+					// Thread-safe addition to the output array
+					FScopeLock Lock(&SamplesMutex);
+					OutTimeStepSamples[ArrayIndex].Add(Sample);
+					TotalSamplesProcessed++;
+				}
 			}
 		}
-	}
+	});
 	
 	// Verify we have at least some data
 	bool bHasData = false;
-	int32 TotalSamples = 0;
 	for (const auto& TimeStepData : OutTimeStepSamples)
 	{
 		if (TimeStepData.Num() > 0)
 		{
 			bHasData = true;
-			TotalSamples += TimeStepData.Num();
+			break;
 		}
 	}
 	
@@ -677,8 +740,8 @@ bool USpatialHashTableManager::LoadTrajectoryDataFromDirectory(
 		return false;
 	}
 	
-	UE_LOG(LogTemp, Log, TEXT("USpatialHashTableManager::LoadTrajectoryDataFromDirectory: Loaded %d total samples across %d time steps"),
-		TotalSamples, NumTimeSteps);
+	UE_LOG(LogTemp, Log, TEXT("USpatialHashTableManager::LoadTrajectoryDataFromDirectory: Loaded %d total samples across %d time steps from %d shards"),
+		TotalSamplesProcessed.load(), TotalTimeSteps, ShardDataArray.Num());
 	
 	return true;
 }
