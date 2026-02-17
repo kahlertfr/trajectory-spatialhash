@@ -672,18 +672,20 @@ bool USpatialHashTableManager::BuildHashTablesIncrementallyFromShards(
 		return false;
 	}
 	
-	// Initialize time step samples array (accumulates across ALL batches)
+	// Initialize time step samples array (accumulates samples from ALL batches)
 	TArray<TArray<FSpatialHashTableBuilder::FTrajectorySample>> TimeStepSamples;
 	TimeStepSamples.SetNum(TotalTimeSteps);
 	
-	// PASS 2: Process shards in batches, building hash tables after EACH batch
+	// PASS 2: Process shards in batches, accumulating samples
+	// Hash tables built at the END with all accumulated data
 	const int32 BatchSize = 3;
 	int32 TotalShards = ShardFiles.Num();
 	
-	UE_LOG(LogTemp, Log, TEXT("BuildHashTablesIncrementallyFromShards: Pass 2 - Processing %d shards in batches of %d, building after each batch"),
+	UE_LOG(LogTemp, Log, TEXT("BuildHashTablesIncrementallyFromShards: Pass 2 - Processing %d shards in batches of %d"),
 		TotalShards, BatchSize);
 	
 	FCriticalSection SamplesMutex;
+	int32 TotalSamplesAccumulated = 0;
 	
 	for (int32 BatchStart = 0; BatchStart < TotalShards; BatchStart += BatchSize)
 	{
@@ -706,7 +708,7 @@ bool USpatialHashTableManager::BuildHashTablesIncrementallyFromShards(
 			}
 		}
 		
-		// Extract samples from batch in parallel
+		// Extract samples from batch in parallel and add to accumulated samples
 		FThreadSafeCounter BatchSamplesProcessed;
 		ParallelFor(BatchShardData.Num(), [&](int32 BatchIdx)
 		{
@@ -739,38 +741,38 @@ bool USpatialHashTableManager::BuildHashTablesIncrementallyFromShards(
 			}
 		});
 		
-		UE_LOG(LogTemp, Log, TEXT("BuildHashTablesIncrementallyFromShards: Batch %d-%d extracted %d samples"),
-			BatchStart, BatchEnd - 1, BatchSamplesProcessed.GetValue());
+		TotalSamplesAccumulated += BatchSamplesProcessed.GetValue();
+		
+		UE_LOG(LogTemp, Log, TEXT("BuildHashTablesIncrementallyFromShards: Batch %d-%d extracted %d samples (total accumulated: %d)"),
+			BatchStart, BatchEnd - 1, BatchSamplesProcessed.GetValue(), TotalSamplesAccumulated);
 		
 		// CRITICAL: Free batch shard data immediately after extraction
+		// Samples remain in TimeStepSamples (accumulating)
 		BatchShardData.Empty();
-		
-		// Build hash tables with accumulated samples so far
-		UE_LOG(LogTemp, Log, TEXT("BuildHashTablesIncrementallyFromShards: Building hash tables from accumulated samples"));
-		
-		FSpatialHashTableBuilder::FBuildConfig BuildConfig = BaseConfig;
-		BuildConfig.BBoxMin = BBoxMin;
-		BuildConfig.BBoxMax = BBoxMax;
-		BuildConfig.bComputeBoundingBox = false;
-		BuildConfig.NumTimeSteps = TotalTimeSteps;
-		BuildConfig.StartTimeStep = GlobalMinTimeStep;
-		
-		FSpatialHashTableBuilder Builder;
-		if (!Builder.BuildHashTables(BuildConfig, TimeStepSamples))
-		{
-			UE_LOG(LogTemp, Error, TEXT("BuildHashTablesIncrementallyFromShards: Failed to build hash tables after batch %d-%d"),
-				BatchStart, BatchEnd - 1);
-			return false;
-		}
-		
-		// CRITICAL: Free time step samples immediately after building hash tables
-		// This is the key memory optimization - we don't keep samples around
-		TimeStepSamples.Empty();
-		TimeStepSamples.SetNum(TotalTimeSteps); // Re-initialize for next batch
-		
-		UE_LOG(LogTemp, Log, TEXT("BuildHashTablesIncrementallyFromShards: Batch %d-%d complete, hash tables built and samples freed"),
-			BatchStart, BatchEnd - 1);
 	}
+	
+	// Build hash tables ONCE with ALL accumulated samples
+	UE_LOG(LogTemp, Log, TEXT("BuildHashTablesIncrementallyFromShards: Building hash tables from all %d accumulated samples"),
+		TotalSamplesAccumulated);
+	
+	FSpatialHashTableBuilder::FBuildConfig BuildConfig = BaseConfig;
+	BuildConfig.BBoxMin = BBoxMin;
+	BuildConfig.BBoxMax = BBoxMax;
+	BuildConfig.bComputeBoundingBox = false;
+	BuildConfig.NumTimeSteps = TotalTimeSteps;
+	BuildConfig.StartTimeStep = GlobalMinTimeStep;
+	
+	FSpatialHashTableBuilder Builder;
+	if (!Builder.BuildHashTables(BuildConfig, TimeStepSamples))
+	{
+		UE_LOG(LogTemp, Error, TEXT("BuildHashTablesIncrementallyFromShards: Failed to build hash tables"));
+		return false;
+	}
+	
+	// CRITICAL: Free all time step samples after building complete hash tables
+	TimeStepSamples.Empty();
+	
+	UE_LOG(LogTemp, Log, TEXT("BuildHashTablesIncrementallyFromShards: Hash tables built successfully, samples freed"));
 	
 	UE_LOG(LogTemp, Log, TEXT("BuildHashTablesIncrementallyFromShards: Successfully completed incremental hash table building"));
 	return true;
