@@ -18,11 +18,11 @@ ParallelFor(ShardDataArray.Num(), [...]);
 
 ## Solution
 
-Process shards in batches of 2-3 at a time:
+Process shards in small batches instead of loading all at once (default: 3 shards per batch, configurable):
 
 ```cpp
-// NEW: Process in batches
-const int32 BatchSize = 3;
+// NEW: Process in batches (configurable batch size)
+const int32 BatchSize = 3; // Default: 3, configurable based on system memory
 
 for (int32 BatchStart = 0; BatchStart < TotalShards; BatchStart += BatchSize) {
     // 1. Load only 2-3 shards
@@ -90,16 +90,18 @@ t=5:   Free batch 2    [] 0GB
 
 ## Configuration
 
-The batch size is configurable:
+The batch size is configurable based on system memory:
 
 ```cpp
-const int32 BatchSize = 3; // Process 3 shards at a time
+const int32 BatchSize = 3; // Configurable: default is 3
 ```
 
 **Recommended values**:
-- **2-3**: Best for memory-constrained systems (8-16GB RAM)
+- **2-3**: Best for memory-constrained systems (8-16GB RAM) - **Default**
 - **5-10**: Good for systems with more memory (32GB+ RAM)
 - **Higher**: Only if you have abundant memory and want faster processing
+
+The default of 3 provides a good balance between memory usage and performance for most systems.
 
 ## Performance Characteristics
 

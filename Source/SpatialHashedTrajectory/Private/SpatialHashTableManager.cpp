@@ -675,9 +675,7 @@ bool USpatialHashTableManager::LoadTrajectoryDataFromDirectory(
 	// but we don't want to load all shard data at once.
 	// So we'll do a lightweight pass to get just the time range from each shard.
 	TArray<int32> ShardStartTimeSteps;
-	TArray<int32> ShardTimeStepSizes;
 	ShardStartTimeSteps.Reserve(ShardFiles.Num());
-	ShardTimeStepSizes.Reserve(ShardFiles.Num());
 	
 	UE_LOG(LogTemp, Log, TEXT("USpatialHashTableManager::LoadTrajectoryDataFromDirectory: First pass - determining time range from %d shards"), ShardFiles.Num());
 	
@@ -705,11 +703,10 @@ bool USpatialHashTableManager::LoadTrajectoryDataFromDirectory(
 		GlobalMinTimeStep = FMath::Min(GlobalMinTimeStep, ShardStartTimeStep);
 		GlobalMaxTimeStep = FMath::Max(GlobalMaxTimeStep, ShardEndTimeStep);
 		
-		// Store metadata for second pass
+		// Store starting timestep for second pass
 		ShardStartTimeSteps.Add(ShardStartTimeStep);
-		ShardTimeStepSizes.Add(ShardData.Header.TimeStepIntervalSize);
 		
-		// IMPORTANT: Free shard data immediately - we only needed the header
+		// IMPORTANT: Shard data freed automatically when ShardData goes out of scope
 		// This prevents loading all shards into memory at once
 	}
 	
@@ -732,8 +729,8 @@ bool USpatialHashTableManager::LoadTrajectoryDataFromDirectory(
 	OutTimeStepSamples.SetNum(TotalTimeSteps);
 	
 	// MEMORY OPTIMIZATION: Second pass - process shards in batches
-	// Process 2-3 shards at a time to prevent memory overflow
-	const int32 BatchSize = 3; // Process 3 shards at a time
+	// Process 3 shards at a time (configurable) to prevent memory overflow
+	const int32 BatchSize = 3; // Configurable: 2-3 for memory-constrained systems, 5-10 for high-memory systems
 	int32 TotalShards = ShardFiles.Num();
 	int32 TotalSamplesProcessed = 0;
 	
@@ -798,8 +795,8 @@ bool USpatialHashTableManager::LoadTrajectoryDataFromDirectory(
 				{
 					const FVector3f& Pos = Entry.Positions[LocalTimeStep];
 					
-					// Skip invalid positions (NaN check)
-					if (FMath::IsNaN(Pos.X))
+					// Skip invalid positions (NaN check for all components)
+					if (FMath::IsNaN(Pos.X) || FMath::IsNaN(Pos.Y) || FMath::IsNaN(Pos.Z))
 					{
 						continue;
 					}
@@ -833,9 +830,8 @@ bool USpatialHashTableManager::LoadTrajectoryDataFromDirectory(
 			BatchStart, BatchEnd - 1, BatchSamplesProcessed.GetValue(), TotalSamplesProcessed);
 	}
 	
-	// Free metadata arrays
+	// Free metadata array
 	ShardStartTimeSteps.Empty();
-	ShardTimeStepSizes.Empty();
 	
 	// Verify we have at least some data
 	bool bHasData = false;

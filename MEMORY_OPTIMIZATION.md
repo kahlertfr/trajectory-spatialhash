@@ -28,7 +28,7 @@ For a dataset with:
 
 **Problem**: Loading all shard files into memory at once causes memory overflow before processing can begin.
 
-**Solution**: Process shards in batches of 2-3 at a time.
+**Solution**: Process shards in small batches (default: 3 shards at a time, configurable).
 
 ```cpp
 // Process shards in batches
