@@ -452,7 +452,13 @@ bool USpatialHashTableManager::TryCreateHashTables(
 	
 	// Build the hash tables (this uses parallel processing internally)
 	FSpatialHashTableBuilder Builder;
-	if (!Builder.BuildHashTables(Config, TimeStepSamples))
+	bool bSuccess = Builder.BuildHashTables(Config, TimeStepSamples);
+	
+	// MEMORY OPTIMIZATION: Free trajectory samples immediately after building hash tables
+	// This is crucial for large datasets with millions of trajectories
+	TimeStepSamples.Empty();
+	
+	if (!bSuccess)
 	{
 		UE_LOG(LogTemp, Error, TEXT("USpatialHashTableManager::TryCreateHashTables: Failed to build hash tables"));
 		return false;
@@ -559,6 +565,10 @@ void USpatialHashTableManager::CreateHashTablesAsync(
 		// and we've already parallelized shard processing in LoadTrajectoryDataFromDirectory)
 		FSpatialHashTableBuilder Builder;
 		bool bSuccess = Builder.BuildHashTables(Config, TimeStepSamples);
+		
+		// MEMORY OPTIMIZATION: Free trajectory samples immediately after building hash tables
+		// This is crucial for large datasets with millions of trajectories
+		TimeStepSamples.Empty();
 		
 		// Return to game thread for final logging and cleanup
 		AsyncTask(ENamedThreads::GameThread, [WeakThis, bSuccess, CellSize]()
@@ -778,6 +788,11 @@ bool USpatialHashTableManager::LoadTrajectoryDataFromDirectory(
 		}
 	});
 	
+	// MEMORY OPTIMIZATION: Free shard data immediately after processing
+	// This is crucial for large datasets with millions of trajectories
+	ShardDataArray.Empty();
+	ShardStartTimeSteps.Empty();
+	
 	// Verify we have at least some data
 	bool bHasData = false;
 	for (const auto& TimeStepData : OutTimeStepSamples)
@@ -795,8 +810,8 @@ bool USpatialHashTableManager::LoadTrajectoryDataFromDirectory(
 		return false;
 	}
 	
-	UE_LOG(LogTemp, Log, TEXT("USpatialHashTableManager::LoadTrajectoryDataFromDirectory: Loaded %d total samples across %d time steps from %d shards"),
-		TotalSamplesProcessed.GetValue(), TotalTimeSteps, ShardDataArray.Num());
+	UE_LOG(LogTemp, Log, TEXT("USpatialHashTableManager::LoadTrajectoryDataFromDirectory: Loaded %d total samples across %d time steps from %d shards (shard data freed)"),
+		TotalSamplesProcessed.GetValue(), TotalTimeSteps, ShardFiles.Num());
 	
 	return true;
 }

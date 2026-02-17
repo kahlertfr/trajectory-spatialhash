@@ -98,6 +98,11 @@ bool FSpatialHashTableBuilder::BuildHashTables(
 			return;
 		}
 
+		// MEMORY OPTIMIZATION: Free hash table memory immediately after saving to disk
+		// This is crucial for large datasets with millions of trajectories
+		HashTable.Entries.Empty();
+		HashTable.TrajectoryIds.Empty();
+
 		// Log progress at intervals (thread-safe logging)
 		if ((TimeStep + 1) % 100 == 0 || TimeStep == (int32)NumTimeSteps - 1)
 		{
