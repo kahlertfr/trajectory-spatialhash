@@ -603,9 +603,16 @@ bool USpatialHashTableManager::LoadTrajectoryDataFromDirectory(
 	}
 	
 	TArray<FString> ShardFiles;
-	// Find all files in the dataset directory
+	// Find all files in the dataset directory using visitor pattern
 	TArray<FString> AllFiles;
-	PlatformFile.FindFiles(AllFiles, *DatasetDirectory, true, false);
+	PlatformFile.IterateDirectory(*DatasetDirectory, [&AllFiles](const TCHAR* FilenameOrDirectory, bool bIsDirectory) -> bool
+	{
+		if (!bIsDirectory)
+		{
+			AllFiles.Add(FilenameOrDirectory);
+		}
+		return true; // Continue iteration
+	});
 	
 	// Filter to keep only shard-*.bin files
 	for (const FString& File : AllFiles)
