@@ -137,13 +137,27 @@ bool FSpatialHashTableBuilder::BuildHashTableForTimeStep(
 		return true;
 	}
 
+	// ============================================================================
+	// CORE ALGORITHM: Build spatial hash table using Z-Order curve indexing
+	// ============================================================================
+	// This algorithm implements spatial hashing with Z-Order (Morton code) keys
+	// to enable efficient spatial queries on trajectory data.
+	//
+	// Key steps:
+	// 1. Partition 3D space into uniform grid cells
+	// 2. Map each cell to a Z-Order key (Morton code) for spatial locality
+	// 3. Collect all trajectory IDs in each cell
+	// 4. Sort by Z-Order keys for efficient binary search queries
+	// ============================================================================
+
 	// Map from Z-Order key to cell data
+	// This accumulates trajectory IDs for each spatial cell
 	TMap<uint64, TArray<uint32>> CellMap;
 
-	// Process each sample and assign to cells
+	// STEP 1: Process each trajectory sample and assign to spatial cells
 	for (const FTrajectorySample& Sample : Samples)
 	{
-		// Convert position to cell coordinates
+		// Convert 3D world position to discrete cell coordinates
 		int32 CellX, CellY, CellZ;
 		FSpatialHashTable::WorldToCellCoordinates(
 			Sample.Position,
@@ -151,34 +165,39 @@ bool FSpatialHashTableBuilder::BuildHashTableForTimeStep(
 			Config.CellSize,
 			CellX, CellY, CellZ);
 
-		// Calculate Z-Order key
+		// STEP 2: Calculate Z-Order key (Morton code) for this cell
+		// This interleaves the bits of (x,y,z) to create a single 64-bit key
+		// that preserves spatial locality - nearby cells have similar keys
 		uint64 Key = FSpatialHashTable::CalculateZOrderKey(CellX, CellY, CellZ);
 
-		// Add trajectory ID to cell
+		// STEP 3: Add trajectory ID to the corresponding cell
+		// Multiple trajectories can occupy the same cell
 		TArray<uint32>& TrajectoryIds = CellMap.FindOrAdd(Key);
 		TrajectoryIds.Add(Sample.TrajectoryId);
 	}
 
-	// Convert cell map to hash table entries
+	// STEP 4: Convert cell map to hash table entries
 	OutHashTable.Entries.Reserve(CellMap.Num());
 	OutHashTable.TrajectoryIds.Reserve(Samples.Num());
 
-	// Sort keys for consistent ordering
+	// Sort Z-Order keys for consistent ordering and efficient binary search
 	TArray<uint64> Keys;
 	CellMap.GetKeys(Keys);
 	Keys.Sort();
 
-	// Build entries and trajectory IDs array
+	// STEP 5: Build final hash table structure
+	// - Entries array: sorted by Z-Order key, each entry points to trajectory IDs
+	// - TrajectoryIds array: flat array of all trajectory IDs, grouped by cell
 	uint32 CurrentIndex = 0;
 	for (uint64 Key : Keys)
 	{
 		const TArray<uint32>& TrajectoryIds = CellMap[Key];
 		
-		// Create hash entry
+		// Create hash entry with Z-Order key and index into trajectory IDs array
 		FSpatialHashEntry Entry(Key, CurrentIndex, TrajectoryIds.Num());
 		OutHashTable.Entries.Add(Entry);
 
-		// Add trajectory IDs
+		// Add trajectory IDs to flat array
 		for (uint32 TrajectoryId : TrajectoryIds)
 		{
 			OutHashTable.TrajectoryIds.Add(TrajectoryId);
