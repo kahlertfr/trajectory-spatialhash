@@ -642,14 +642,29 @@ bool USpatialHashTableManager::LoadTrajectoryDataFromDirectory(
 	
 	UE_LOG(LogTemp, Log, TEXT("USpatialHashTableManager::LoadTrajectoryDataFromDirectory: Found %d shard files"), ShardFiles.Num());
 	
+	// Helper function to parse timestep from shard filename (e.g., "shard-3046.bin" -> 3046)
+	auto ParseTimestepFromFilename = [](const FString& FilePath) -> int32
+	{
+		FString Filename = FPaths::GetCleanFilename(FilePath);
+		// Remove "shard-" prefix and ".bin" suffix
+		if (Filename.StartsWith(TEXT("shard-")) && Filename.EndsWith(TEXT(".bin")))
+		{
+			FString NumberStr = Filename.Mid(6, Filename.Len() - 10); // Extract number between "shard-" and ".bin"
+			return FCString::Atoi(*NumberStr);
+		}
+		return 0;
+	};
+	
 	// Determine the global time step range from the dataset
 	// We'll process all shards to build complete hash tables
 	int32 GlobalMinTimeStep = INT32_MAX;
 	int32 GlobalMaxTimeStep = INT32_MIN;
 	
-	// First pass: determine the complete time range
+	// First pass: determine the complete time range and load shard data
 	TArray<FShardFileData> ShardDataArray;
+	TArray<int32> ShardStartTimeSteps; // Store the starting timestep for each shard (from filename)
 	ShardDataArray.Reserve(ShardFiles.Num());
+	ShardStartTimeSteps.Reserve(ShardFiles.Num());
 	
 	for (const FString& ShardFile : ShardFiles)
 	{
@@ -661,14 +676,22 @@ bool USpatialHashTableManager::LoadTrajectoryDataFromDirectory(
 			continue;
 		}
 		
+		// Parse the starting timestep from the shard filename
+		int32 ShardStartTimeStep = ParseTimestepFromFilename(ShardFile);
+		
 		// Calculate the time step range for this shard
-		int32 ShardStartTimeStep = ShardData.Header.GlobalIntervalIndex * ShardData.Header.TimeStepIntervalSize;
+		// Assume each shard covers TimeStepIntervalSize timesteps
 		int32 ShardEndTimeStep = ShardStartTimeStep + ShardData.Header.TimeStepIntervalSize - 1;
+		
+		UE_LOG(LogTemp, Log, TEXT("Loaded shard %s: Filename timestep=%d, IntervalSize=%d, Range: %d to %d"),
+			*FPaths::GetCleanFilename(ShardFile), ShardStartTimeStep, ShardData.Header.TimeStepIntervalSize,
+			ShardStartTimeStep, ShardEndTimeStep);
 		
 		GlobalMinTimeStep = FMath::Min(GlobalMinTimeStep, ShardStartTimeStep);
 		GlobalMaxTimeStep = FMath::Max(GlobalMaxTimeStep, ShardEndTimeStep);
 		
 		ShardDataArray.Add(MoveTemp(ShardData));
+		ShardStartTimeSteps.Add(ShardStartTimeStep);
 	}
 	
 	if (ShardDataArray.Num() == 0)
@@ -698,17 +721,17 @@ bool USpatialHashTableManager::LoadTrajectoryDataFromDirectory(
 	{
 		const FShardFileData& ShardData = ShardDataArray[ShardIdx];
 		
-		// Calculate the time step range for this shard
-		int32 ShardStartTimeStep = ShardData.Header.GlobalIntervalIndex * ShardData.Header.TimeStepIntervalSize;
+		// Get the starting timestep for this shard (from filename)
+		int32 ShardStartTimeStep = ShardStartTimeSteps[ShardIdx];
 		
-		UE_LOG(LogTemp, Verbose, TEXT("Processing shard %d: GlobalIntervalIndex=%d, TimeStepIntervalSize=%d, ShardStartTimeStep=%d"),
-			ShardIdx, ShardData.Header.GlobalIntervalIndex, ShardData.Header.TimeStepIntervalSize, ShardStartTimeStep);
+		UE_LOG(LogTemp, Verbose, TEXT("Processing shard %d: FilenameTimeStep=%d, TimeStepIntervalSize=%d"),
+			ShardIdx, ShardStartTimeStep, ShardData.Header.TimeStepIntervalSize);
 		
 		// Process each trajectory entry in this shard
 		for (const FShardTrajectoryEntry& Entry : ShardData.Entries)
 		{
 			// Skip entries with no valid samples
-			if (Entry.StartTimeStepInInterval == -1 || Entry.ValidSampleCount == 0)
+			if (Entry.ValidSampleCount == 0)
 			{
 				continue;
 			}
@@ -725,17 +748,16 @@ bool USpatialHashTableManager::LoadTrajectoryDataFromDirectory(
 				}
 				
 				// Calculate global time step
-				// ShardStartTimeStep: base timestep for the shard interval
-				// Entry.StartTimeStepInInterval: offset within interval where this trajectory starts  
-				// LocalTimeStep: index into Entry.Positions array
-				int32 GlobalTimeStep = ShardStartTimeStep + Entry.StartTimeStepInInterval + LocalTimeStep;
+				// ShardStartTimeStep: starting timestep from shard filename (e.g., 3046 from "shard-3046.bin")
+				// LocalTimeStep: index into Entry.Positions array (0, 1, 2, ...)
+				int32 GlobalTimeStep = ShardStartTimeStep + LocalTimeStep;
 				
 				// Debug: Log first sample of first entry for verification
 				static bool bLoggedFirstSample = false;
 				if (!bLoggedFirstSample && LocalTimeStep == 0)
 				{
-					UE_LOG(LogTemp, Warning, TEXT("First sample: ShardStartTimeStep=%d, Entry.StartTimeStepInInterval=%d, LocalTimeStep=%d, GlobalTimeStep=%d"),
-						ShardStartTimeStep, Entry.StartTimeStepInInterval, LocalTimeStep, GlobalTimeStep);
+					UE_LOG(LogTemp, Warning, TEXT("First sample: ShardStartTimeStep=%d, LocalTimeStep=%d, GlobalTimeStep=%d"),
+						ShardStartTimeStep, LocalTimeStep, GlobalTimeStep);
 					bLoggedFirstSample = true;
 				}
 				
