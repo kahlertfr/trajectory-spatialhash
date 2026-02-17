@@ -603,18 +603,19 @@ bool USpatialHashTableManager::LoadTrajectoryDataFromDirectory(
 	}
 	
 	TArray<FString> ShardFiles;
-	PlatformFile.FindFiles([&ShardFiles](const TCHAR* FilenameOrDirectory, bool bIsDirectory)
+	// Find all files in the dataset directory
+	TArray<FString> AllFiles;
+	PlatformFile.FindFiles(AllFiles, *DatasetDirectory, true, false);
+	
+	// Filter to keep only shard-*.bin files
+	for (const FString& File : AllFiles)
 	{
-		if (!bIsDirectory)
+		FString Filename = FPaths::GetCleanFilename(File);
+		if (Filename.StartsWith(TEXT("shard-")) && Filename.EndsWith(TEXT(".bin")))
 		{
-			FString Filename = FPaths::GetCleanFilename(FilenameOrDirectory);
-			if (Filename.StartsWith(TEXT("shard-")) && Filename.EndsWith(TEXT(".bin")))
-			{
-				ShardFiles.Add(FilenameOrDirectory);
-			}
+			ShardFiles.Add(File);
 		}
-		return true;
-	}, *DatasetDirectory, false);
+	}
 	
 	if (ShardFiles.Num() == 0)
 	{
