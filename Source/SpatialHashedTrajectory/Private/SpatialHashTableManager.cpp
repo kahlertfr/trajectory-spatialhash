@@ -485,45 +485,12 @@ void USpatialHashTableManager::CreateHashTablesAsync(
 		UE_LOG(LogTemp, Log, TEXT("USpatialHashTableManager::CreateHashTablesAsync: Creating hash tables for cell size %.3f from complete dataset (processing all shards)"),
 			CellSize);
 		
-		// Load trajectory data - check if manager still exists
-		// Note: StartTimeStep and EndTimeStep parameters are now ignored
-		// The implementation processes ALL trajectory data from all shards in the dataset
+		// MEMORY OPTIMIZATION: Build hash tables incrementally per batch
 		USpatialHashTableManager* Manager = WeakThis.Get();
 		if (!Manager)
 		{
 			return;
 		}
-		
-		TArray<TArray<FSpatialHashTableBuilder::FTrajectorySample>> TimeStepSamples;
-		int32 GlobalMinTimeStep = 0;
-		if (!Manager->LoadTrajectoryDataFromDirectory(DatasetDirectory, StartTimeStep, EndTimeStep, TimeStepSamples, GlobalMinTimeStep))
-		{
-			AsyncTask(ENamedThreads::GameThread, [WeakThis]()
-			{
-				if (USpatialHashTableManager* Mgr = WeakThis.Get())
-				{
-					UE_LOG(LogTemp, Error, TEXT("USpatialHashTableManager::CreateHashTablesAsync: Failed to load trajectory data"));
-					Mgr->bIsCreatingHashTables = false;
-				}
-			});
-			return;
-		}
-		
-		if (TimeStepSamples.Num() == 0)
-		{
-			AsyncTask(ENamedThreads::GameThread, [WeakThis]()
-			{
-				if (USpatialHashTableManager* Mgr = WeakThis.Get())
-				{
-					UE_LOG(LogTemp, Error, TEXT("USpatialHashTableManager::CreateHashTablesAsync: No trajectory data found"));
-					Mgr->bIsCreatingHashTables = false;
-				}
-			});
-			return;
-		}
-		
-		UE_LOG(LogTemp, Log, TEXT("USpatialHashTableManager::CreateHashTablesAsync: Loaded %d time steps of trajectory data from complete dataset (starting from timestep %d)"),
-			TimeStepSamples.Num(), GlobalMinTimeStep);
 		
 		// Setup configuration for building
 		FSpatialHashTableBuilder::FBuildConfig Config;
@@ -531,17 +498,9 @@ void USpatialHashTableManager::CreateHashTablesAsync(
 		Config.bComputeBoundingBox = true;
 		Config.BoundingBoxMargin = 1.0f;
 		Config.OutputDirectory = DatasetDirectory;
-		Config.NumTimeSteps = TimeStepSamples.Num();
-		Config.StartTimeStep = GlobalMinTimeStep; // Use actual timestep numbers from shard data
 		
-		// Build the hash tables (this will use parallel processing internally for time steps,
-		// and we've already parallelized shard processing in LoadTrajectoryDataFromDirectory)
-		FSpatialHashTableBuilder Builder;
-		bool bSuccess = Builder.BuildHashTables(Config, TimeStepSamples);
-		
-		// MEMORY OPTIMIZATION: Free trajectory samples immediately after building hash tables
-		// This is crucial for large datasets with millions of trajectories
-		TimeStepSamples.Empty();
+		// Build hash tables incrementally during shard batch processing
+		bool bSuccess = Manager->BuildHashTablesIncrementallyFromShards(DatasetDirectory, Config);
 		
 		// Return to game thread for final logging and cleanup
 		AsyncTask(ENamedThreads::GameThread, [WeakThis, bSuccess, CellSize]()
