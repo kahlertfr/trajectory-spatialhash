@@ -425,7 +425,8 @@ bool USpatialHashTableManager::TryCreateHashTables(
 	
 	// Load trajectory data from the dataset directory (processes all shards)
 	TArray<TArray<FSpatialHashTableBuilder::FTrajectorySample>> TimeStepSamples;
-	if (!LoadTrajectoryDataFromDirectory(DatasetDirectory, StartTimeStep, EndTimeStep, TimeStepSamples))
+	int32 GlobalMinTimeStep = 0;
+	if (!LoadTrajectoryDataFromDirectory(DatasetDirectory, StartTimeStep, EndTimeStep, TimeStepSamples, GlobalMinTimeStep))
 	{
 		UE_LOG(LogTemp, Error, TEXT("USpatialHashTableManager::TryCreateHashTables: Failed to load trajectory data"));
 		return false;
@@ -437,8 +438,8 @@ bool USpatialHashTableManager::TryCreateHashTables(
 		return false;
 	}
 	
-	UE_LOG(LogTemp, Log, TEXT("USpatialHashTableManager::TryCreateHashTables: Loaded %d time steps of trajectory data from complete dataset"),
-		TimeStepSamples.Num());
+	UE_LOG(LogTemp, Log, TEXT("USpatialHashTableManager::TryCreateHashTables: Loaded %d time steps of trajectory data from complete dataset (starting from timestep %d)"),
+		TimeStepSamples.Num(), GlobalMinTimeStep);
 	
 	// Setup configuration for building
 	FSpatialHashTableBuilder::FBuildConfig Config;
@@ -447,6 +448,7 @@ bool USpatialHashTableManager::TryCreateHashTables(
 	Config.BoundingBoxMargin = 1.0f;
 	Config.OutputDirectory = DatasetDirectory;
 	Config.NumTimeSteps = TimeStepSamples.Num();
+	Config.StartTimeStep = GlobalMinTimeStep; // Use actual timestep numbers from shard data
 	
 	// Build the hash tables (this uses parallel processing internally)
 	FSpatialHashTableBuilder Builder;
@@ -514,7 +516,8 @@ void USpatialHashTableManager::CreateHashTablesAsync(
 		}
 		
 		TArray<TArray<FSpatialHashTableBuilder::FTrajectorySample>> TimeStepSamples;
-		if (!Manager->LoadTrajectoryDataFromDirectory(DatasetDirectory, StartTimeStep, EndTimeStep, TimeStepSamples))
+		int32 GlobalMinTimeStep = 0;
+		if (!Manager->LoadTrajectoryDataFromDirectory(DatasetDirectory, StartTimeStep, EndTimeStep, TimeStepSamples, GlobalMinTimeStep))
 		{
 			AsyncTask(ENamedThreads::GameThread, [WeakThis]()
 			{
@@ -540,8 +543,8 @@ void USpatialHashTableManager::CreateHashTablesAsync(
 			return;
 		}
 		
-		UE_LOG(LogTemp, Log, TEXT("USpatialHashTableManager::CreateHashTablesAsync: Loaded %d time steps of trajectory data from complete dataset"),
-			TimeStepSamples.Num());
+		UE_LOG(LogTemp, Log, TEXT("USpatialHashTableManager::CreateHashTablesAsync: Loaded %d time steps of trajectory data from complete dataset (starting from timestep %d)"),
+			TimeStepSamples.Num(), GlobalMinTimeStep);
 		
 		// Setup configuration for building
 		FSpatialHashTableBuilder::FBuildConfig Config;
@@ -550,6 +553,7 @@ void USpatialHashTableManager::CreateHashTablesAsync(
 		Config.BoundingBoxMargin = 1.0f;
 		Config.OutputDirectory = DatasetDirectory;
 		Config.NumTimeSteps = TimeStepSamples.Num();
+		Config.StartTimeStep = GlobalMinTimeStep; // Use actual timestep numbers from shard data
 		
 		// Build the hash tables (this will use parallel processing internally for time steps,
 		// and we've already parallelized shard processing in LoadTrajectoryDataFromDirectory)
@@ -581,9 +585,11 @@ bool USpatialHashTableManager::LoadTrajectoryDataFromDirectory(
 	const FString& DatasetDirectory,
 	int32 StartTimeStep,
 	int32 EndTimeStep,
-	TArray<TArray<FSpatialHashTableBuilder::FTrajectorySample>>& OutTimeStepSamples)
+	TArray<TArray<FSpatialHashTableBuilder::FTrajectorySample>>& OutTimeStepSamples,
+	int32& OutGlobalMinTimeStep)
 {
 	OutTimeStepSamples.Reset();
+	OutGlobalMinTimeStep = 0;
 	
 	// Use the trajectory data plugin to load shards
 	UTrajectoryDataLoader* Loader = UTrajectoryDataLoader::Get();
@@ -673,6 +679,9 @@ bool USpatialHashTableManager::LoadTrajectoryDataFromDirectory(
 	
 	UE_LOG(LogTemp, Log, TEXT("USpatialHashTableManager::LoadTrajectoryDataFromDirectory: Global time step range: %d to %d"),
 		GlobalMinTimeStep, GlobalMaxTimeStep);
+	
+	// Store the global minimum timestep for the caller
+	OutGlobalMinTimeStep = GlobalMinTimeStep;
 	
 	// Initialize output array for all time steps in the dataset
 	int32 TotalTimeSteps = GlobalMaxTimeStep - GlobalMinTimeStep + 1;

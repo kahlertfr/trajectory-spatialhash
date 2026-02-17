@@ -288,13 +288,15 @@ protected:
 	 * @param StartTimeStep Unused - kept for API compatibility (all time steps are processed)
 	 * @param EndTimeStep Unused - kept for API compatibility (all time steps are processed)
 	 * @param OutTimeStepSamples Output array of trajectory samples for each time step in the complete dataset
+	 * @param OutGlobalMinTimeStep Output parameter receiving the first timestep number in the dataset
 	 * @return True if trajectory data was loaded successfully
 	 */
 	bool LoadTrajectoryDataFromDirectory(
 		const FString& DatasetDirectory,
 		int32 StartTimeStep,
 		int32 EndTimeStep,
-		TArray<TArray<FSpatialHashTableBuilder::FTrajectorySample>>& OutTimeStepSamples);
+		TArray<TArray<FSpatialHashTableBuilder::FTrajectorySample>>& OutTimeStepSamples,
+		int32& OutGlobalMinTimeStep);
 
 
 	/**

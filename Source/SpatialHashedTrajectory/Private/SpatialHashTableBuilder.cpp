@@ -67,20 +67,23 @@ bool FSpatialHashTableBuilder::BuildHashTables(
 		ModifiedConfig.BBoxMax = BBoxMax;
 		ModifiedConfig.bComputeBoundingBox = false;
 
-		if (!BuildHashTableForTimeStep(TimeStep, TimeStepSamples[TimeStep], ModifiedConfig, HashTable))
+		// Calculate actual timestep number for this array index
+		uint32 ActualTimeStep = Config.StartTimeStep + TimeStep;
+
+		if (!BuildHashTableForTimeStep(ActualTimeStep, TimeStepSamples[TimeStep], ModifiedConfig, HashTable))
 		{
 			FScopeLock Lock(&ErrorLogMutex);
-			UE_LOG(LogTemp, Error, TEXT("FSpatialHashTableBuilder::BuildHashTables: Failed to build hash table for time step %u"), TimeStep);
+			UE_LOG(LogTemp, Error, TEXT("FSpatialHashTableBuilder::BuildHashTables: Failed to build hash table for time step %u"), ActualTimeStep);
 			bHasError = true;
 			return;
 		}
 
-		// Save hash table to file
-		FString Filename = GetOutputFilename(Config.OutputDirectory, Config.CellSize, TimeStep);
+		// Save hash table to file using actual timestep number
+		FString Filename = GetOutputFilename(Config.OutputDirectory, Config.CellSize, ActualTimeStep);
 		if (!HashTable.SaveToFile(Filename))
 		{
 			FScopeLock Lock(&ErrorLogMutex);
-			UE_LOG(LogTemp, Error, TEXT("FSpatialHashTableBuilder::BuildHashTables: Failed to save hash table for time step %u"), TimeStep);
+			UE_LOG(LogTemp, Error, TEXT("FSpatialHashTableBuilder::BuildHashTables: Failed to save hash table for time step %u"), ActualTimeStep);
 			bHasError = true;
 			return;
 		}

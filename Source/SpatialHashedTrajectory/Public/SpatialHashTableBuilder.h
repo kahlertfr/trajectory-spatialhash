@@ -40,6 +40,9 @@ public:
 		/** Number of time steps to process */
 		uint32 NumTimeSteps;
 
+		/** Starting timestep number (offset for file naming) - used when array index 0 corresponds to a different timestep number */
+		uint32 StartTimeStep;
+
 		FBuildConfig()
 			: CellSize(10.0f)
 			, BBoxMin(FVector::ZeroVector)
@@ -48,6 +51,7 @@ public:
 			, BoundingBoxMargin(1.0f)
 			, OutputDirectory(TEXT(""))
 			, NumTimeSteps(0)
+			, StartTimeStep(0)
 		{
 		}
 	};
