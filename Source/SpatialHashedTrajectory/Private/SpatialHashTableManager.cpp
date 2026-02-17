@@ -679,6 +679,8 @@ bool USpatialHashTableManager::LoadTrajectoryDataFromDirectory(
 	
 	UE_LOG(LogTemp, Log, TEXT("USpatialHashTableManager::LoadTrajectoryDataFromDirectory: Global time step range: %d to %d"),
 		GlobalMinTimeStep, GlobalMaxTimeStep);
+	UE_LOG(LogTemp, Log, TEXT("USpatialHashTableManager::LoadTrajectoryDataFromDirectory: GlobalMinTimeStep = %d will be used as StartTimeStep"),
+		GlobalMinTimeStep);
 	
 	// Store the global minimum timestep for the caller
 	OutGlobalMinTimeStep = GlobalMinTimeStep;
@@ -698,6 +700,9 @@ bool USpatialHashTableManager::LoadTrajectoryDataFromDirectory(
 		
 		// Calculate the time step range for this shard
 		int32 ShardStartTimeStep = ShardData.Header.GlobalIntervalIndex * ShardData.Header.TimeStepIntervalSize;
+		
+		UE_LOG(LogTemp, Verbose, TEXT("Processing shard %d: GlobalIntervalIndex=%d, TimeStepIntervalSize=%d, ShardStartTimeStep=%d"),
+			ShardIdx, ShardData.Header.GlobalIntervalIndex, ShardData.Header.TimeStepIntervalSize, ShardStartTimeStep);
 		
 		// Process each trajectory entry in this shard
 		for (const FShardTrajectoryEntry& Entry : ShardData.Entries)
@@ -721,9 +726,19 @@ bool USpatialHashTableManager::LoadTrajectoryDataFromDirectory(
 				
 				// Calculate global time step
 				// ShardStartTimeStep: base timestep for the shard interval
-				// Entry.StartTimeStepInInterval: offset within interval where this trajectory starts
+				// Entry.StartTimeStepInInterval: offset within interval where this trajectory starts  
 				// LocalTimeStep: index into Entry.Positions array
 				int32 GlobalTimeStep = ShardStartTimeStep + Entry.StartTimeStepInInterval + LocalTimeStep;
+				
+				// Debug: Log first sample of first entry for verification
+				static bool bLoggedFirstSample = false;
+				if (!bLoggedFirstSample && LocalTimeStep == 0)
+				{
+					UE_LOG(LogTemp, Warning, TEXT("First sample: ShardStartTimeStep=%d, Entry.StartTimeStepInInterval=%d, LocalTimeStep=%d, GlobalTimeStep=%d"),
+						ShardStartTimeStep, Entry.StartTimeStepInInterval, LocalTimeStep, GlobalTimeStep);
+					bLoggedFirstSample = true;
+				}
+				
 				int32 ArrayIndex = GlobalTimeStep - GlobalMinTimeStep;
 				
 				if (ArrayIndex >= 0 && ArrayIndex < OutTimeStepSamples.Num())

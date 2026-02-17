@@ -45,6 +45,8 @@ bool FSpatialHashTableBuilder::BuildHashTables(
 	uint32 NumTimeSteps = FMath::Min((uint32)TimeStepSamples.Num(), Config.NumTimeSteps > 0 ? Config.NumTimeSteps : (uint32)TimeStepSamples.Num());
 	
 	UE_LOG(LogTemp, Log, TEXT("FSpatialHashTableBuilder::BuildHashTables: Building hash tables for %u time steps in parallel"), NumTimeSteps);
+	UE_LOG(LogTemp, Log, TEXT("FSpatialHashTableBuilder::BuildHashTables: Config.StartTimeStep = %u"), Config.StartTimeStep);
+	UE_LOG(LogTemp, Log, TEXT("FSpatialHashTableBuilder::BuildHashTables: First file will be timestep_%05d.bin"), Config.StartTimeStep);
 
 	// Use thread-safe bool for error tracking
 	FThreadSafeBool bHasError(false);
@@ -69,6 +71,14 @@ bool FSpatialHashTableBuilder::BuildHashTables(
 
 		// Calculate actual timestep number for this array index
 		uint32 ActualTimeStep = Config.StartTimeStep + TimeStep;
+		
+		// Debug: Log first few timesteps
+		if (TimeStep < 3)
+		{
+			FScopeLock Lock(&ErrorLogMutex);
+			UE_LOG(LogTemp, Warning, TEXT("Building hash table: ArrayIndex=%d, Config.StartTimeStep=%u, ActualTimeStep=%u"),
+				TimeStep, Config.StartTimeStep, ActualTimeStep);
+		}
 
 		if (!BuildHashTableForTimeStep(ActualTimeStep, TimeStepSamples[TimeStep], ModifiedConfig, HashTable))
 		{
