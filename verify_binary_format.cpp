@@ -101,17 +101,23 @@ void verifyBinaryFormat(const char* filename) {
             printf("  ... (%u more entries)\n", header.NumEntries - 5);
         }
 
-        // Verify entries are sorted
+        // Verify entries are sorted in strictly ascending order
+        // Note: The implementation uses TMap which ensures unique keys,
+        // so Z-Order keys must be strictly increasing (no duplicates)
         bool sorted = true;
         for (uint32_t i = 1; i < header.NumEntries; i++) {
             if (entries[i].ZOrderKey <= entries[i-1].ZOrderKey) {
-                printf("\n❌ FAIL: Entries not sorted at index %u!\n", i);
+                printf("\n❌ FAIL: Entries not strictly sorted at index %u!\n", i);
+                printf("   Entry[%u].ZOrderKey = 0x%016llX\n", i-1, 
+                       (unsigned long long)entries[i-1].ZOrderKey);
+                printf("   Entry[%u].ZOrderKey = 0x%016llX\n", i, 
+                       (unsigned long long)entries[i].ZOrderKey);
                 sorted = false;
                 break;
             }
         }
         if (sorted) {
-            printf("\n✓ Entries are sorted by Z-Order key\n");
+            printf("\n✓ Entries are strictly sorted (ascending, no duplicates)\n");
         }
     }
 

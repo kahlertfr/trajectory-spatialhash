@@ -4,6 +4,8 @@
 
 This document verifies that the binary file format written by `FSpatialHashTable::SaveToFile()` matches the specification in `specification-spatial-hash-table.md`.
 
+**Note**: Line numbers referenced in this document are accurate as of commit b910383. As the codebase evolves, refer to the specific struct definitions and function implementations rather than exact line numbers.
+
 ## Specification Summary
 
 According to `specification-spatial-hash-table.md`, the binary file structure is:
