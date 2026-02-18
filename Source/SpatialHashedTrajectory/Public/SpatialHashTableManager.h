@@ -671,4 +671,16 @@ protected:
 	 * @return True if successful (directory exists and shard files found), false otherwise
 	 */
 	bool GetShardFiles(const FString& DatasetDirectory, TArray<FString>& OutShardFiles) const;
+
+	/**
+	 * Get or load a hash table, returning a raw pointer for use in async callbacks.
+	 * This is a convenience wrapper around GetHashTable() that returns a raw pointer
+	 * instead of TSharedPtr for easier use in lambda captures.
+	 * 
+	 * @param DatasetDirectory Base directory containing the dataset (currently unused, for future loading)
+	 * @param CellSize Cell size of the hash table
+	 * @param TimeStep Time step of the hash table
+	 * @return Raw pointer to hash table, or nullptr if not found
+	 */
+	FSpatialHashTable* GetOrLoadHashTable(const FString& DatasetDirectory, float CellSize, int32 TimeStep) const;
 };

@@ -377,6 +377,15 @@ TSharedPtr<FSpatialHashTable> USpatialHashTableManager::GetHashTable(
 	return nullptr;
 }
 
+FSpatialHashTable* USpatialHashTableManager::GetOrLoadHashTable(
+	const FString& DatasetDirectory,
+	float CellSize,
+	int32 TimeStep) const
+{
+	TSharedPtr<FSpatialHashTable> HashTable = GetHashTable(CellSize, TimeStep);
+	return HashTable.Get();
+}
+
 bool USpatialHashTableManager::CheckHashTablesExist(
 	const FString& DatasetDirectory,
 	float CellSize,
@@ -1997,7 +2006,7 @@ void USpatialHashTableManager::QueryRadiusOverTimeRangeAsync(
 			}
 			
 			// Filter trajectories that have samples within radius
-			FilterTrajectoriesInRadius(QueryPosition, Radius, TrajectoryData, Results);
+			FilterByDistance(QueryPosition, Radius, TrajectoryData, Results);
 			
 			// Invoke completion callback
 			OnComplete.ExecuteIfBound(Results);
