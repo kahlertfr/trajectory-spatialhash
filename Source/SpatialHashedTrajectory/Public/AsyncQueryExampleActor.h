@@ -13,12 +13,12 @@
  * Shows proper callback handling without busy-waiting
  */
 UCLASS()
-class SPATIALHASHEDTRAJECTORY_API UAsyncQueryExampleActor : public AActor
+class SPATIALHASHEDTRAJECTORY_API AAsyncQueryExampleActor : public AActor
 {
 	GENERATED_BODY()
 
 public:
-	UAsyncQueryExampleActor();
+	AAsyncQueryExampleActor();
 
 	// ============================================================================
 	// EXAMPLE 1: Basic Async Query
