@@ -568,4 +568,15 @@ protected:
 	 * @return Timestep number, or 0 if parsing fails
 	 */
 	static int32 ParseTimestepFromFilename(const FString& FilePath);
+
+	/**
+	 * Get list of shard files from dataset directory
+	 * Delegates to TrajectoryData plugin's functionality for discovering shard files.
+	 * This centralizes the shard file discovery logic that was duplicated across multiple methods.
+	 * 
+	 * @param DatasetDirectory Base directory containing trajectory data
+	 * @param OutShardFiles Output array of full paths to shard files (sorted)
+	 * @return True if successful (directory exists and shard files found), false otherwise
+	 */
+	bool GetShardFiles(const FString& DatasetDirectory, TArray<FString>& OutShardFiles) const;
 };

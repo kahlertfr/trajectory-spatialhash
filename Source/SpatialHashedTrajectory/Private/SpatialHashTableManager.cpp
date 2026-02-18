@@ -565,55 +565,14 @@ bool USpatialHashTableManager::BuildHashTablesIncrementallyFromShards(
 		return false;
 	}
 	
-	IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
-	if (!PlatformFile.DirectoryExists(*DatasetDirectory))
-	{
-		UE_LOG(LogTemp, Error, TEXT("USpatialHashTableManager::BuildHashTablesIncrementallyFromShards: Dataset directory does not exist: %s"), 
-			*DatasetDirectory);
-		return false;
-	}
-	
-	// Find all shard files
+	// Use centralized shard file discovery
 	TArray<FString> ShardFiles;
-	TArray<FString> AllFiles;
-	PlatformFile.IterateDirectory(*DatasetDirectory, [&AllFiles](const TCHAR* FilenameOrDirectory, bool bIsDirectory) -> bool
+	if (!GetShardFiles(DatasetDirectory, ShardFiles))
 	{
-		if (!bIsDirectory)
-		{
-			AllFiles.Add(FilenameOrDirectory);
-		}
-		return true;
-	});
-	
-	for (const FString& File : AllFiles)
-	{
-		FString Filename = FPaths::GetCleanFilename(File);
-		if (Filename.StartsWith(TEXT("shard-")) && Filename.EndsWith(TEXT(".bin")))
-		{
-			ShardFiles.Add(File);
-		}
-	}
-	
-	if (ShardFiles.Num() == 0)
-	{
-		UE_LOG(LogTemp, Error, TEXT("USpatialHashTableManager::BuildHashTablesIncrementallyFromShards: No shard files found in %s"),
+		UE_LOG(LogTemp, Error, TEXT("USpatialHashTableManager::BuildHashTablesIncrementallyFromShards: Failed to get shard files from %s"),
 			*DatasetDirectory);
 		return false;
 	}
-	
-	ShardFiles.Sort();
-	
-	// Helper to parse timestep from filename
-	auto ParseTimestepFromFilename = [](const FString& FilePath) -> int32
-	{
-		FString Filename = FPaths::GetCleanFilename(FilePath);
-		if (Filename.StartsWith(TEXT("shard-")) && Filename.EndsWith(TEXT(".bin")))
-		{
-			FString NumberStr = Filename.Mid(6, Filename.Len() - 10);
-			return FCString::Atoi(*NumberStr);
-		}
-		return 0;
-	};
 	
 	// PASS 1: Determine time range and bounding box
 	UE_LOG(LogTemp, Log, TEXT("USpatialHashTableManager::BuildHashTablesIncrementallyFromShards: Pass 1 - Scanning %d shards for time range and bounding box"),
@@ -628,6 +587,7 @@ bool USpatialHashTableManager::BuildHashTablesIncrementallyFromShards(
 	
 	for (const FString& ShardFile : ShardFiles)
 	{
+		// Use TrajectoryData plugin's LoadShardFile API
 		FShardFileData ShardData = Loader->LoadShardFile(ShardFile);
 		if (!ShardData.bSuccess)
 		{
@@ -884,61 +844,16 @@ bool USpatialHashTableManager::LoadTrajectoryDataFromDirectory(
 		return false;
 	}
 	
-	// Find all shard files in the dataset directory
-	IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
-	if (!PlatformFile.DirectoryExists(*DatasetDirectory))
-	{
-		UE_LOG(LogTemp, Error, TEXT("USpatialHashTableManager::LoadTrajectoryDataFromDirectory: Dataset directory does not exist: %s"), 
-			*DatasetDirectory);
-		return false;
-	}
-	
+	// Use centralized shard file discovery
 	TArray<FString> ShardFiles;
-	// Find all files in the dataset directory using visitor pattern
-	TArray<FString> AllFiles;
-	PlatformFile.IterateDirectory(*DatasetDirectory, [&AllFiles](const TCHAR* FilenameOrDirectory, bool bIsDirectory) -> bool
+	if (!GetShardFiles(DatasetDirectory, ShardFiles))
 	{
-		if (!bIsDirectory)
-		{
-			AllFiles.Add(FilenameOrDirectory);
-		}
-		return true; // Continue iteration
-	});
-	
-	// Filter to keep only shard-*.bin files
-	for (const FString& File : AllFiles)
-	{
-		FString Filename = FPaths::GetCleanFilename(File);
-		if (Filename.StartsWith(TEXT("shard-")) && Filename.EndsWith(TEXT(".bin")))
-		{
-			ShardFiles.Add(File);
-		}
-	}
-	
-	if (ShardFiles.Num() == 0)
-	{
-		UE_LOG(LogTemp, Error, TEXT("USpatialHashTableManager::LoadTrajectoryDataFromDirectory: No shard files found in %s"),
+		UE_LOG(LogTemp, Error, TEXT("USpatialHashTableManager::LoadTrajectoryDataFromDirectory: Failed to get shard files from %s"),
 			*DatasetDirectory);
 		return false;
 	}
-	
-	// Sort shard files by name to ensure consistent ordering
-	ShardFiles.Sort();
 	
 	UE_LOG(LogTemp, Log, TEXT("USpatialHashTableManager::LoadTrajectoryDataFromDirectory: Found %d shard files"), ShardFiles.Num());
-	
-	// Helper function to parse timestep from shard filename (e.g., "shard-3046.bin" -> 3046)
-	auto ParseTimestepFromFilename = [](const FString& FilePath) -> int32
-	{
-		FString Filename = FPaths::GetCleanFilename(FilePath);
-		// Remove "shard-" prefix and ".bin" suffix
-		if (Filename.StartsWith(TEXT("shard-")) && Filename.EndsWith(TEXT(".bin")))
-		{
-			FString NumberStr = Filename.Mid(6, Filename.Len() - 10); // Extract number between "shard-" and ".bin"
-			return FCString::Atoi(*NumberStr);
-		}
-		return 0;
-	};
 	
 	// Determine the global time step range from the dataset
 	// We'll process all shards to build complete hash tables
@@ -956,7 +871,7 @@ bool USpatialHashTableManager::LoadTrajectoryDataFromDirectory(
 	
 	for (const FString& ShardFile : ShardFiles)
 	{
-		// Load shard to get its time range
+		// Use TrajectoryData plugin's LoadShardFile API to get the time range
 		FShardFileData ShardData = Loader->LoadShardFile(ShardFile);
 		if (!ShardData.bSuccess)
 		{
@@ -1158,6 +1073,57 @@ int32 USpatialHashTableManager::ParseTimestepFromFilename(const FString& FilePat
 	return 0;
 }
 
+bool USpatialHashTableManager::GetShardFiles(const FString& DatasetDirectory, TArray<FString>& OutShardFiles) const
+{
+	OutShardFiles.Reset();
+	
+	// Check if directory exists
+	IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
+	if (!PlatformFile.DirectoryExists(*DatasetDirectory))
+	{
+		UE_LOG(LogTemp, Error, TEXT("USpatialHashTableManager::GetShardFiles: Dataset directory does not exist: %s"), 
+			*DatasetDirectory);
+		return false;
+	}
+	
+	// Find all shard files in the directory
+	// Note: The TrajectoryData plugin's LoadShardFile handles the actual loading,
+	// but shard file discovery is delegated here to avoid duplicating this logic
+	// across multiple methods.
+	TArray<FString> AllFiles;
+	PlatformFile.IterateDirectory(*DatasetDirectory, [&AllFiles](const TCHAR* FilenameOrDirectory, bool bIsDirectory) -> bool
+	{
+		if (!bIsDirectory)
+		{
+			AllFiles.Add(FilenameOrDirectory);
+		}
+		return true;
+	});
+	
+	// Filter for shard-*.bin files
+	for (const FString& File : AllFiles)
+	{
+		FString Filename = FPaths::GetCleanFilename(File);
+		if (Filename.StartsWith(TEXT("shard-")) && Filename.EndsWith(TEXT(".bin")))
+		{
+			OutShardFiles.Add(File);
+		}
+	}
+	
+	if (OutShardFiles.Num() == 0)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("USpatialHashTableManager::GetShardFiles: No shard files found in %s"),
+			*DatasetDirectory);
+		return false;
+	}
+	
+	// Sort shard files by name to ensure consistent ordering
+	OutShardFiles.Sort();
+	
+	return true;
+}
+
+
 bool USpatialHashTableManager::LoadTrajectorySamplesForIds(
 	const FString& DatasetDirectory,
 	const TArray<uint32>& TrajectoryIds,
@@ -1180,43 +1146,14 @@ bool USpatialHashTableManager::LoadTrajectorySamplesForIds(
 		return false;
 	}
 	
-	IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
-	if (!PlatformFile.DirectoryExists(*DatasetDirectory))
-	{
-		UE_LOG(LogTemp, Error, TEXT("USpatialHashTableManager::LoadTrajectorySamplesForIds: Dataset directory does not exist: %s"), 
-			*DatasetDirectory);
-		return false;
-	}
-	
-	// Find all shard files
+	// Use centralized shard file discovery
 	TArray<FString> ShardFiles;
-	TArray<FString> AllFiles;
-	PlatformFile.IterateDirectory(*DatasetDirectory, [&AllFiles](const TCHAR* FilenameOrDirectory, bool bIsDirectory) -> bool
+	if (!GetShardFiles(DatasetDirectory, ShardFiles))
 	{
-		if (!bIsDirectory)
-		{
-			AllFiles.Add(FilenameOrDirectory);
-		}
-		return true;
-	});
-	
-	for (const FString& File : AllFiles)
-	{
-		FString Filename = FPaths::GetCleanFilename(File);
-		if (Filename.StartsWith(TEXT("shard-")) && Filename.EndsWith(TEXT(".bin")))
-		{
-			ShardFiles.Add(File);
-		}
-	}
-	
-	if (ShardFiles.Num() == 0)
-	{
-		UE_LOG(LogTemp, Error, TEXT("USpatialHashTableManager::LoadTrajectorySamplesForIds: No shard files found in %s"),
+		UE_LOG(LogTemp, Error, TEXT("USpatialHashTableManager::LoadTrajectorySamplesForIds: Failed to get shard files from %s"),
 			*DatasetDirectory);
 		return false;
 	}
-	
-	ShardFiles.Sort();
 	
 	// Create a set for fast trajectory ID lookup
 	TSet<uint32> TrajectoryIdSet(TrajectoryIds);
@@ -1232,7 +1169,7 @@ bool USpatialHashTableManager::LoadTrajectorySamplesForIds(
 	{
 		int32 ShardStartTimeStep = ParseTimestepFromFilename(ShardFile);
 		
-		// Load the shard
+		// Load the shard using TrajectoryData plugin API
 		FShardFileData ShardData = Loader->LoadShardFile(ShardFile);
 		if (!ShardData.bSuccess)
 		{
@@ -1296,42 +1233,14 @@ bool USpatialHashTableManager::LoadTrajectorySamplesForIds(
 
 FString USpatialHashTableManager::FindShardFileForTimeStep(const FString& DatasetDirectory, int32 TimeStep) const
 {
-	IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
-	
-	if (!PlatformFile.DirectoryExists(*DatasetDirectory))
-	{
-		return FString();
-	}
-	
-	// Find all shard files
+	// Use centralized shard file discovery
 	TArray<FString> ShardFiles;
-	TArray<FString> AllFiles;
-	PlatformFile.IterateDirectory(*DatasetDirectory, [&AllFiles](const TCHAR* FilenameOrDirectory, bool bIsDirectory) -> bool
-	{
-		if (!bIsDirectory)
-		{
-			AllFiles.Add(FilenameOrDirectory);
-		}
-		return true;
-	});
-	
-	for (const FString& File : AllFiles)
-	{
-		FString Filename = FPaths::GetCleanFilename(File);
-		if (Filename.StartsWith(TEXT("shard-")) && Filename.EndsWith(TEXT(".bin")))
-		{
-			ShardFiles.Add(File);
-		}
-	}
-	
-	if (ShardFiles.Num() == 0)
+	if (!GetShardFiles(DatasetDirectory, ShardFiles))
 	{
 		return FString();
 	}
 	
-	ShardFiles.Sort();
-	
-	// Get TrajectoryDataLoader to read shard headers
+	// Get TrajectoryDataLoader to read shard headers using its API
 	UTrajectoryDataLoader* Loader = UTrajectoryDataLoader::Get();
 	if (!Loader)
 	{
@@ -1343,7 +1252,7 @@ FString USpatialHashTableManager::FindShardFileForTimeStep(const FString& Datase
 	{
 		int32 ShardStartTimeStep = ParseTimestepFromFilename(ShardFile);
 		
-		// Load just the header to get the interval size
+		// Use TrajectoryData plugin's LoadShardFile API to get the header
 		FShardFileData ShardData = Loader->LoadShardFile(ShardFile);
 		if (!ShardData.bSuccess)
 		{
@@ -1360,6 +1269,7 @@ FString USpatialHashTableManager::FindShardFileForTimeStep(const FString& Datase
 	
 	return FString();
 }
+
 
 void USpatialHashTableManager::FilterByDistance(
 	const FVector& QueryPosition,
