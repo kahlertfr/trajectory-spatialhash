@@ -37,6 +37,9 @@ void USpatialHashQueryRadiusAsyncTask::Activate()
 		return;
 	}
 
+	// Use weak pointer to prevent issues if task is destroyed before callback executes
+	TWeakObjectPtr<USpatialHashQueryRadiusAsyncTask> WeakThis(this);
+
 	// Call the C++ async method
 	SpatialHashManager->QueryRadiusWithDistanceCheckAsync(
 		Dataset,
@@ -44,11 +47,15 @@ void USpatialHashQueryRadiusAsyncTask::Activate()
 		QueryRadius,
 		HashCellSize,
 		QueryTimeStep,
-		FOnSpatialHashQueryComplete::CreateLambda([this](const TArray<FSpatialHashQueryResult>& Results)
+		FOnSpatialHashQueryComplete::CreateLambda([WeakThis](const TArray<FSpatialHashQueryResult>& Results)
 		{
-			// Broadcast to Blueprint
-			OnComplete.Broadcast(Results);
-			SetReadyToDestroy();
+			// Check if task is still valid before broadcasting
+			if (USpatialHashQueryRadiusAsyncTask* Task = WeakThis.Get())
+			{
+				// Broadcast to Blueprint
+				Task->OnComplete.Broadcast(Results);
+				Task->SetReadyToDestroy();
+			}
 		})
 	);
 }
@@ -89,6 +96,9 @@ void USpatialHashQueryDualRadiusAsyncTask::Activate()
 		return;
 	}
 
+	// Use weak pointer to prevent issues if task is destroyed before callback executes
+	TWeakObjectPtr<USpatialHashQueryDualRadiusAsyncTask> WeakThis(this);
+
 	// Call the C++ async method
 	SpatialHashManager->QueryDualRadiusWithDistanceCheckAsync(
 		Dataset,
@@ -97,11 +107,15 @@ void USpatialHashQueryDualRadiusAsyncTask::Activate()
 		Outer,
 		HashCellSize,
 		QueryTimeStep,
-		FOnSpatialHashDualQueryComplete::CreateLambda([this](const TArray<FSpatialHashQueryResult>& InnerResults, const TArray<FSpatialHashQueryResult>& OuterResults)
+		FOnSpatialHashDualQueryComplete::CreateLambda([WeakThis](const TArray<FSpatialHashQueryResult>& InnerResults, const TArray<FSpatialHashQueryResult>& OuterResults)
 		{
-			// Broadcast to Blueprint
-			OnComplete.Broadcast(InnerResults, OuterResults);
-			SetReadyToDestroy();
+			// Check if task is still valid before broadcasting
+			if (USpatialHashQueryDualRadiusAsyncTask* Task = WeakThis.Get())
+			{
+				// Broadcast to Blueprint
+				Task->OnComplete.Broadcast(InnerResults, OuterResults);
+				Task->SetReadyToDestroy();
+			}
 		})
 	);
 }
@@ -142,6 +156,9 @@ void USpatialHashQueryTimeRangeAsyncTask::Activate()
 		return;
 	}
 
+	// Use weak pointer to prevent issues if task is destroyed before callback executes
+	TWeakObjectPtr<USpatialHashQueryTimeRangeAsyncTask> WeakThis(this);
+
 	// Call the C++ async method
 	SpatialHashManager->QueryRadiusOverTimeRangeAsync(
 		Dataset,
@@ -150,11 +167,15 @@ void USpatialHashQueryTimeRangeAsyncTask::Activate()
 		HashCellSize,
 		StartTime,
 		EndTime,
-		FOnSpatialHashQueryComplete::CreateLambda([this](const TArray<FSpatialHashQueryResult>& Results)
+		FOnSpatialHashQueryComplete::CreateLambda([WeakThis](const TArray<FSpatialHashQueryResult>& Results)
 		{
-			// Broadcast to Blueprint
-			OnComplete.Broadcast(Results);
-			SetReadyToDestroy();
+			// Check if task is still valid before broadcasting
+			if (USpatialHashQueryTimeRangeAsyncTask* Task = WeakThis.Get())
+			{
+				// Broadcast to Blueprint
+				Task->OnComplete.Broadcast(Results);
+				Task->SetReadyToDestroy();
+			}
 		})
 	);
 }
@@ -195,6 +216,9 @@ void USpatialHashQueryTrajectoryAsyncTask::Activate()
 		return;
 	}
 
+	// Use weak pointer to prevent issues if task is destroyed before callback executes
+	TWeakObjectPtr<USpatialHashQueryTrajectoryAsyncTask> WeakThis(this);
+
 	// Call the C++ async method
 	SpatialHashManager->QueryTrajectoryRadiusOverTimeRangeAsync(
 		Dataset,
@@ -203,11 +227,15 @@ void USpatialHashQueryTrajectoryAsyncTask::Activate()
 		HashCellSize,
 		StartTime,
 		EndTime,
-		FOnSpatialHashQueryComplete::CreateLambda([this](const TArray<FSpatialHashQueryResult>& Results)
+		FOnSpatialHashQueryComplete::CreateLambda([WeakThis](const TArray<FSpatialHashQueryResult>& Results)
 		{
-			// Broadcast to Blueprint
-			OnComplete.Broadcast(Results);
-			SetReadyToDestroy();
+			// Check if task is still valid before broadcasting
+			if (USpatialHashQueryTrajectoryAsyncTask* Task = WeakThis.Get())
+			{
+				// Broadcast to Blueprint
+				Task->OnComplete.Broadcast(Results);
+				Task->SetReadyToDestroy();
+			}
 		})
 	);
 }
