@@ -2195,9 +2195,9 @@ void USpatialHashTableManager::QueryRadiusWithDistanceCheckAsyncBP(
 	float Radius,
 	float CellSize,
 	int32 TimeStep,
-	const FOnSpatialHashQueryCompleteBlueprint& OnQueryComplete)
+	FOnSpatialHashQueryCompleteBlueprint OnQueryComplete)
 {
-	// Wrap the Blueprint delegate with a C++ delegate that broadcasts the result
+	// Capture delegate by value (copy) to ensure it remains valid for the async operation
 	QueryRadiusWithDistanceCheckAsync(
 		DatasetDirectory,
 		QueryPosition,
@@ -2219,9 +2219,9 @@ void USpatialHashTableManager::QueryDualRadiusWithDistanceCheckAsyncBP(
 	float OuterRadius,
 	float CellSize,
 	int32 TimeStep,
-	const FOnSpatialHashDualQueryCompleteBlueprint& OnQueryComplete)
+	FOnSpatialHashDualQueryCompleteBlueprint OnQueryComplete)
 {
-	// Wrap the Blueprint delegate with a C++ delegate that broadcasts the result
+	// Capture delegate by value (copy) to ensure it remains valid for the async operation
 	QueryDualRadiusWithDistanceCheckAsync(
 		DatasetDirectory,
 		QueryPosition,
@@ -2244,9 +2244,9 @@ void USpatialHashTableManager::QueryRadiusOverTimeRangeAsyncBP(
 	float CellSize,
 	int32 StartTimeStep,
 	int32 EndTimeStep,
-	const FOnSpatialHashQueryCompleteBlueprint& OnQueryComplete)
+	FOnSpatialHashQueryCompleteBlueprint OnQueryComplete)
 {
-	// Wrap the Blueprint delegate with a C++ delegate that broadcasts the result
+	// Capture delegate by value (copy) to ensure it remains valid for the async operation
 	QueryRadiusOverTimeRangeAsync(
 		DatasetDirectory,
 		QueryPosition,
@@ -2269,9 +2269,9 @@ void USpatialHashTableManager::QueryTrajectoryRadiusOverTimeRangeAsyncBP(
 	float CellSize,
 	int32 StartTimeStep,
 	int32 EndTimeStep,
-	const FOnSpatialHashQueryCompleteBlueprint& OnQueryComplete)
+	FOnSpatialHashQueryCompleteBlueprint OnQueryComplete)
 {
-	// Wrap the Blueprint delegate with a C++ delegate that broadcasts the result
+	// Capture delegate by value (copy) to ensure it remains valid for the async operation
 	QueryTrajectoryRadiusOverTimeRangeAsync(
 		DatasetDirectory,
 		static_cast<uint32>(QueryTrajectoryId),

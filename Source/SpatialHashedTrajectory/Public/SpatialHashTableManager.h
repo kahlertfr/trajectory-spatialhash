@@ -485,7 +485,7 @@ public:
 		float Radius,
 		float CellSize,
 		int32 TimeStep,
-		const FOnSpatialHashQueryCompleteBlueprint& OnQueryComplete);
+		FOnSpatialHashQueryCompleteBlueprint OnQueryComplete);
 
 	/**
 	 * Blueprint-accessible async query for dual radius at a single timestep.
@@ -508,7 +508,7 @@ public:
 		float OuterRadius,
 		float CellSize,
 		int32 TimeStep,
-		const FOnSpatialHashDualQueryCompleteBlueprint& OnQueryComplete);
+		FOnSpatialHashDualQueryCompleteBlueprint OnQueryComplete);
 
 	/**
 	 * Blueprint-accessible async query for trajectories over a time range.
@@ -531,7 +531,7 @@ public:
 		float CellSize,
 		int32 StartTimeStep,
 		int32 EndTimeStep,
-		const FOnSpatialHashQueryCompleteBlueprint& OnQueryComplete);
+		FOnSpatialHashQueryCompleteBlueprint OnQueryComplete);
 
 	/**
 	 * Blueprint-accessible async query for a trajectory over a time range.
@@ -554,7 +554,7 @@ public:
 		float CellSize,
 		int32 StartTimeStep,
 		int32 EndTimeStep,
-		const FOnSpatialHashQueryCompleteBlueprint& OnQueryComplete);
+		FOnSpatialHashQueryCompleteBlueprint OnQueryComplete);
 
 protected:
 	/** Tolerance for floating-point comparison of cell sizes */
