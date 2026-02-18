@@ -195,6 +195,18 @@ public:
 	bool QueryAtPosition(const FVector& WorldPos, TArray<uint32>& OutTrajectoryIds) const;
 
 	/**
+	 * Query trajectory IDs within a radius around a world position
+	 * This gathers all possible trajectory IDs from cells that overlap with the query radius.
+	 * Does NOT perform actual distance calculations - returns all trajectories in overlapping cells.
+	 * 
+	 * @param WorldPos Center of the query sphere
+	 * @param Radius Search radius in world units
+	 * @param OutTrajectoryIds Output array of unique trajectory IDs
+	 * @return Number of trajectories found
+	 */
+	int32 QueryTrajectoryIdsInRadius(const FVector& WorldPos, float Radius, TArray<uint32>& OutTrajectoryIds) const;
+
+	/**
 	 * Save hash table to binary file
 	 * @param Filename Path to output file
 	 * @return true if successful, false otherwise

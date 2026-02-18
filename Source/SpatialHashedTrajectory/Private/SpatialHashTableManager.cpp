@@ -7,6 +7,7 @@
 #include "Async/Async.h"
 #include "Async/ParallelFor.h"
 #include "TrajectoryDataLoader.h"
+#include "TrajectoryDataCppApi.h"
 
 USpatialHashTableManager::USpatialHashTableManager()
 {
@@ -376,6 +377,15 @@ TSharedPtr<FSpatialHashTable> USpatialHashTableManager::GetHashTable(
 	return nullptr;
 }
 
+FSpatialHashTable* USpatialHashTableManager::GetOrLoadHashTable(
+	const FString& DatasetDirectory,
+	float CellSize,
+	int32 TimeStep) const
+{
+	TSharedPtr<FSpatialHashTable> HashTable = GetHashTable(CellSize, TimeStep);
+	return HashTable.Get();
+}
+
 bool USpatialHashTableManager::CheckHashTablesExist(
 	const FString& DatasetDirectory,
 	float CellSize,
@@ -565,55 +575,14 @@ bool USpatialHashTableManager::BuildHashTablesIncrementallyFromShards(
 		return false;
 	}
 	
-	IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
-	if (!PlatformFile.DirectoryExists(*DatasetDirectory))
-	{
-		UE_LOG(LogTemp, Error, TEXT("USpatialHashTableManager::BuildHashTablesIncrementallyFromShards: Dataset directory does not exist: %s"), 
-			*DatasetDirectory);
-		return false;
-	}
-	
-	// Find all shard files
+	// Use centralized shard file discovery
 	TArray<FString> ShardFiles;
-	TArray<FString> AllFiles;
-	PlatformFile.IterateDirectory(*DatasetDirectory, [&AllFiles](const TCHAR* FilenameOrDirectory, bool bIsDirectory) -> bool
+	if (!GetShardFiles(DatasetDirectory, ShardFiles))
 	{
-		if (!bIsDirectory)
-		{
-			AllFiles.Add(FilenameOrDirectory);
-		}
-		return true;
-	});
-	
-	for (const FString& File : AllFiles)
-	{
-		FString Filename = FPaths::GetCleanFilename(File);
-		if (Filename.StartsWith(TEXT("shard-")) && Filename.EndsWith(TEXT(".bin")))
-		{
-			ShardFiles.Add(File);
-		}
-	}
-	
-	if (ShardFiles.Num() == 0)
-	{
-		UE_LOG(LogTemp, Error, TEXT("USpatialHashTableManager::BuildHashTablesIncrementallyFromShards: No shard files found in %s"),
+		UE_LOG(LogTemp, Error, TEXT("USpatialHashTableManager::BuildHashTablesIncrementallyFromShards: Failed to get shard files from %s"),
 			*DatasetDirectory);
 		return false;
 	}
-	
-	ShardFiles.Sort();
-	
-	// Helper to parse timestep from filename
-	auto ParseTimestepFromFilename = [](const FString& FilePath) -> int32
-	{
-		FString Filename = FPaths::GetCleanFilename(FilePath);
-		if (Filename.StartsWith(TEXT("shard-")) && Filename.EndsWith(TEXT(".bin")))
-		{
-			FString NumberStr = Filename.Mid(6, Filename.Len() - 10);
-			return FCString::Atoi(*NumberStr);
-		}
-		return 0;
-	};
 	
 	// PASS 1: Determine time range and bounding box
 	UE_LOG(LogTemp, Log, TEXT("USpatialHashTableManager::BuildHashTablesIncrementallyFromShards: Pass 1 - Scanning %d shards for time range and bounding box"),
@@ -628,6 +597,7 @@ bool USpatialHashTableManager::BuildHashTablesIncrementallyFromShards(
 	
 	for (const FString& ShardFile : ShardFiles)
 	{
+		// Use TrajectoryData plugin's LoadShardFile API
 		FShardFileData ShardData = Loader->LoadShardFile(ShardFile);
 		if (!ShardData.bSuccess)
 		{
@@ -884,61 +854,16 @@ bool USpatialHashTableManager::LoadTrajectoryDataFromDirectory(
 		return false;
 	}
 	
-	// Find all shard files in the dataset directory
-	IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
-	if (!PlatformFile.DirectoryExists(*DatasetDirectory))
-	{
-		UE_LOG(LogTemp, Error, TEXT("USpatialHashTableManager::LoadTrajectoryDataFromDirectory: Dataset directory does not exist: %s"), 
-			*DatasetDirectory);
-		return false;
-	}
-	
+	// Use centralized shard file discovery
 	TArray<FString> ShardFiles;
-	// Find all files in the dataset directory using visitor pattern
-	TArray<FString> AllFiles;
-	PlatformFile.IterateDirectory(*DatasetDirectory, [&AllFiles](const TCHAR* FilenameOrDirectory, bool bIsDirectory) -> bool
+	if (!GetShardFiles(DatasetDirectory, ShardFiles))
 	{
-		if (!bIsDirectory)
-		{
-			AllFiles.Add(FilenameOrDirectory);
-		}
-		return true; // Continue iteration
-	});
-	
-	// Filter to keep only shard-*.bin files
-	for (const FString& File : AllFiles)
-	{
-		FString Filename = FPaths::GetCleanFilename(File);
-		if (Filename.StartsWith(TEXT("shard-")) && Filename.EndsWith(TEXT(".bin")))
-		{
-			ShardFiles.Add(File);
-		}
-	}
-	
-	if (ShardFiles.Num() == 0)
-	{
-		UE_LOG(LogTemp, Error, TEXT("USpatialHashTableManager::LoadTrajectoryDataFromDirectory: No shard files found in %s"),
+		UE_LOG(LogTemp, Error, TEXT("USpatialHashTableManager::LoadTrajectoryDataFromDirectory: Failed to get shard files from %s"),
 			*DatasetDirectory);
 		return false;
 	}
-	
-	// Sort shard files by name to ensure consistent ordering
-	ShardFiles.Sort();
 	
 	UE_LOG(LogTemp, Log, TEXT("USpatialHashTableManager::LoadTrajectoryDataFromDirectory: Found %d shard files"), ShardFiles.Num());
-	
-	// Helper function to parse timestep from shard filename (e.g., "shard-3046.bin" -> 3046)
-	auto ParseTimestepFromFilename = [](const FString& FilePath) -> int32
-	{
-		FString Filename = FPaths::GetCleanFilename(FilePath);
-		// Remove "shard-" prefix and ".bin" suffix
-		if (Filename.StartsWith(TEXT("shard-")) && Filename.EndsWith(TEXT(".bin")))
-		{
-			FString NumberStr = Filename.Mid(6, Filename.Len() - 10); // Extract number between "shard-" and ".bin"
-			return FCString::Atoi(*NumberStr);
-		}
-		return 0;
-	};
 	
 	// Determine the global time step range from the dataset
 	// We'll process all shards to build complete hash tables
@@ -956,7 +881,7 @@ bool USpatialHashTableManager::LoadTrajectoryDataFromDirectory(
 	
 	for (const FString& ShardFile : ShardFiles)
 	{
-		// Load shard to get its time range
+		// Use TrajectoryData plugin's LoadShardFile API to get the time range
 		FShardFileData ShardData = Loader->LoadShardFile(ShardFile);
 		if (!ShardData.bSuccess)
 		{
@@ -1140,4 +1065,1122 @@ FVector USpatialHashTableManager::GetTrajectoryPosition(int32 TrajectoryId, int3
 	// Note: Warning is shown in QueryFixedRadiusNeighbors to avoid spam
 
 	return FVector::ZeroVector;
+}
+
+int32 USpatialHashTableManager::ParseTimestepFromFilename(const FString& FilePath)
+{
+	FString Filename = FPaths::GetCleanFilename(FilePath);
+	
+	// Expected format: "shard-XXXX.bin"
+	const int32 PrefixLength = 6;  // Length of "shard-"
+	const int32 SuffixLength = 4;  // Length of ".bin"
+	
+	if (Filename.StartsWith(TEXT("shard-")) && Filename.EndsWith(TEXT(".bin")))
+	{
+		FString NumberStr = Filename.Mid(PrefixLength, Filename.Len() - PrefixLength - SuffixLength);
+		return FCString::Atoi(*NumberStr);
+	}
+	return 0;
+}
+
+bool USpatialHashTableManager::GetShardFiles(const FString& DatasetDirectory, TArray<FString>& OutShardFiles) const
+{
+	OutShardFiles.Reset();
+	
+	// Check if directory exists
+	IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
+	if (!PlatformFile.DirectoryExists(*DatasetDirectory))
+	{
+		UE_LOG(LogTemp, Error, TEXT("USpatialHashTableManager::GetShardFiles: Dataset directory does not exist: %s"), 
+			*DatasetDirectory);
+		return false;
+	}
+	
+	// Find all shard files in the directory
+	// Note: The TrajectoryData plugin's LoadShardFile handles the actual loading,
+	// but shard file discovery is delegated here to avoid duplicating this logic
+	// across multiple methods.
+	TArray<FString> AllFiles;
+	PlatformFile.IterateDirectory(*DatasetDirectory, [&AllFiles](const TCHAR* FilenameOrDirectory, bool bIsDirectory) -> bool
+	{
+		if (!bIsDirectory)
+		{
+			AllFiles.Add(FilenameOrDirectory);
+		}
+		return true;
+	});
+	
+	// Filter for shard-*.bin files
+	for (const FString& File : AllFiles)
+	{
+		FString Filename = FPaths::GetCleanFilename(File);
+		if (Filename.StartsWith(TEXT("shard-")) && Filename.EndsWith(TEXT(".bin")))
+		{
+			OutShardFiles.Add(File);
+		}
+	}
+	
+	if (OutShardFiles.Num() == 0)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("USpatialHashTableManager::GetShardFiles: No shard files found in %s"),
+			*DatasetDirectory);
+		return false;
+	}
+	
+	// Sort shard files by name to ensure consistent ordering
+	OutShardFiles.Sort();
+	
+	return true;
+}
+
+
+bool USpatialHashTableManager::LoadTrajectorySamplesForIds(
+	const FString& DatasetDirectory,
+	const TArray<uint32>& TrajectoryIds,
+	int32 StartTimeStep,
+	int32 EndTimeStep,
+	TMap<uint32, TArray<FTrajectorySamplePoint>>& OutTrajectoryData) const
+{
+	OutTrajectoryData.Reset();
+	
+	if (TrajectoryIds.Num() == 0)
+	{
+		return true; // Nothing to load
+	}
+	
+	// Get TrajectoryDataLoader
+	UTrajectoryDataLoader* Loader = UTrajectoryDataLoader::Get();
+	if (!Loader)
+	{
+		UE_LOG(LogTemp, Error, TEXT("USpatialHashTableManager::LoadTrajectorySamplesForIds: Failed to get TrajectoryDataLoader"));
+		return false;
+	}
+	
+	// Use centralized shard file discovery
+	TArray<FString> ShardFiles;
+	if (!GetShardFiles(DatasetDirectory, ShardFiles))
+	{
+		UE_LOG(LogTemp, Error, TEXT("USpatialHashTableManager::LoadTrajectorySamplesForIds: Failed to get shard files from %s"),
+			*DatasetDirectory);
+		return false;
+	}
+	
+	// Create a set for fast trajectory ID lookup
+	TSet<uint32> TrajectoryIdSet(TrajectoryIds);
+	
+	// Initialize output arrays for all requested trajectory IDs
+	for (uint32 TrajId : TrajectoryIds)
+	{
+		OutTrajectoryData.Add(TrajId, TArray<FTrajectorySamplePoint>());
+	}
+	
+	// Load data from shards that overlap with the time range
+	for (const FString& ShardFile : ShardFiles)
+	{
+		int32 ShardStartTimeStep = ParseTimestepFromFilename(ShardFile);
+		
+		// Load the shard using TrajectoryData plugin API
+		FShardFileData ShardData = Loader->LoadShardFile(ShardFile);
+		if (!ShardData.bSuccess)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("LoadTrajectorySamplesForIds: Failed to load shard %s: %s"),
+				*ShardFile, *ShardData.ErrorMessage);
+			continue;
+		}
+		
+		int32 ShardEndTimeStep = ShardStartTimeStep + ShardData.Header.TimeStepIntervalSize - 1;
+		
+		// Skip shards that don't overlap with our time range
+		if (ShardEndTimeStep < StartTimeStep || ShardStartTimeStep > EndTimeStep)
+		{
+			continue;
+		}
+		
+		// Process entries in this shard
+		for (const FShardTrajectoryEntry& Entry : ShardData.Entries)
+		{
+			// Skip trajectories we're not interested in
+			if (!TrajectoryIdSet.Contains(Entry.TrajectoryId))
+			{
+				continue;
+			}
+			
+			// Get or create the array for this trajectory
+			TArray<FTrajectorySamplePoint>& SamplePoints = OutTrajectoryData.FindOrAdd(Entry.TrajectoryId);
+			
+			// Add samples that fall within the time range
+			for (int32 LocalTimeStep = 0; LocalTimeStep < Entry.Positions.Num(); ++LocalTimeStep)
+			{
+				int32 GlobalTimeStep = ShardStartTimeStep + LocalTimeStep;
+				
+				// Skip samples outside the requested time range
+				if (GlobalTimeStep < StartTimeStep || GlobalTimeStep > EndTimeStep)
+				{
+					continue;
+				}
+				
+				const FVector3f& Pos = Entry.Positions[LocalTimeStep];
+				
+				// Skip invalid positions
+				if (FMath::IsNaN(Pos.X) || FMath::IsNaN(Pos.Y) || FMath::IsNaN(Pos.Z))
+				{
+					continue;
+				}
+				
+				// Add the sample point
+				FTrajectorySamplePoint SamplePoint;
+				SamplePoint.Position = FVector(Pos.X, Pos.Y, Pos.Z);
+				SamplePoint.TimeStep = GlobalTimeStep;
+				SamplePoint.Distance = 0.0f; // Will be calculated later
+				
+				SamplePoints.Add(SamplePoint);
+			}
+		}
+	}
+	
+	return true;
+}
+
+FString USpatialHashTableManager::FindShardFileForTimeStep(const FString& DatasetDirectory, int32 TimeStep) const
+{
+	// Use centralized shard file discovery
+	TArray<FString> ShardFiles;
+	if (!GetShardFiles(DatasetDirectory, ShardFiles))
+	{
+		return FString();
+	}
+	
+	// Get TrajectoryDataLoader to read shard headers using its API
+	UTrajectoryDataLoader* Loader = UTrajectoryDataLoader::Get();
+	if (!Loader)
+	{
+		return FString();
+	}
+	
+	// Find the shard that contains this timestep
+	for (const FString& ShardFile : ShardFiles)
+	{
+		int32 ShardStartTimeStep = ParseTimestepFromFilename(ShardFile);
+		
+		// Use TrajectoryData plugin's LoadShardFile API to get the header
+		FShardFileData ShardData = Loader->LoadShardFile(ShardFile);
+		if (!ShardData.bSuccess)
+		{
+			continue;
+		}
+		
+		int32 ShardEndTimeStep = ShardStartTimeStep + ShardData.Header.TimeStepIntervalSize - 1;
+		
+		if (TimeStep >= ShardStartTimeStep && TimeStep <= ShardEndTimeStep)
+		{
+			return ShardFile;
+		}
+	}
+	
+	return FString();
+}
+
+
+void USpatialHashTableManager::FilterByDistance(
+	const FVector& QueryPosition,
+	float Radius,
+	const TMap<uint32, TArray<FTrajectorySamplePoint>>& TrajectoryData,
+	TArray<FSpatialHashQueryResult>& OutResults) const
+{
+	OutResults.Reset();
+	
+	float RadiusSquared = Radius * Radius;
+	
+	for (const auto& Pair : TrajectoryData)
+	{
+		uint32 TrajectoryId = Pair.Key;
+		const TArray<FTrajectorySamplePoint>& SamplePoints = Pair.Value;
+		
+		FSpatialHashQueryResult Result(TrajectoryId);
+		
+		for (const FTrajectorySamplePoint& Sample : SamplePoints)
+		{
+			float DistanceSquared = FVector::DistSquared(QueryPosition, Sample.Position);
+			
+			if (DistanceSquared <= RadiusSquared)
+			{
+				FTrajectorySamplePoint FilteredSample = Sample;
+				FilteredSample.Distance = FMath::Sqrt(DistanceSquared);
+				Result.SamplePoints.Add(FilteredSample);
+			}
+		}
+		
+		// Only add trajectory if it has samples within radius
+		if (Result.SamplePoints.Num() > 0)
+		{
+			OutResults.Add(Result);
+		}
+	}
+}
+
+void USpatialHashTableManager::FilterByDualRadius(
+	const FVector& QueryPosition,
+	float InnerRadius,
+	float OuterRadius,
+	const TMap<uint32, TArray<FTrajectorySamplePoint>>& TrajectoryData,
+	TArray<FSpatialHashQueryResult>& OutInnerResults,
+	TArray<FSpatialHashQueryResult>& OutOuterOnlyResults) const
+{
+	OutInnerResults.Reset();
+	OutOuterOnlyResults.Reset();
+	
+	float InnerRadiusSquared = InnerRadius * InnerRadius;
+	float OuterRadiusSquared = OuterRadius * OuterRadius;
+	
+	for (const auto& Pair : TrajectoryData)
+	{
+		uint32 TrajectoryId = Pair.Key;
+		const TArray<FTrajectorySamplePoint>& SamplePoints = Pair.Value;
+		
+		FSpatialHashQueryResult InnerResult(TrajectoryId);
+		FSpatialHashQueryResult OuterOnlyResult(TrajectoryId);
+		
+		for (const FTrajectorySamplePoint& Sample : SamplePoints)
+		{
+			float DistanceSquared = FVector::DistSquared(QueryPosition, Sample.Position);
+			
+			if (DistanceSquared <= InnerRadiusSquared)
+			{
+				FTrajectorySamplePoint FilteredSample = Sample;
+				FilteredSample.Distance = FMath::Sqrt(DistanceSquared);
+				InnerResult.SamplePoints.Add(FilteredSample);
+			}
+			else if (DistanceSquared <= OuterRadiusSquared)
+			{
+				FTrajectorySamplePoint FilteredSample = Sample;
+				FilteredSample.Distance = FMath::Sqrt(DistanceSquared);
+				OuterOnlyResult.SamplePoints.Add(FilteredSample);
+			}
+		}
+		
+		// Add results only if they have samples
+		if (InnerResult.SamplePoints.Num() > 0)
+		{
+			OutInnerResults.Add(InnerResult);
+		}
+		if (OuterOnlyResult.SamplePoints.Num() > 0)
+		{
+			OutOuterOnlyResults.Add(OuterOnlyResult);
+		}
+	}
+}
+
+void USpatialHashTableManager::ExtendTrajectorySamples(
+	const TMap<uint32, TArray<FTrajectorySamplePoint>>& TrajectoryData,
+	float Radius,
+	TArray<FSpatialHashQueryResult>& OutExtendedResults) const
+{
+	OutExtendedResults.Reset();
+	
+	float RadiusSquared = Radius * Radius;
+	
+	for (const auto& Pair : TrajectoryData)
+	{
+		uint32 TrajectoryId = Pair.Key;
+		const TArray<FTrajectorySamplePoint>& SamplePoints = Pair.Value;
+		
+		if (SamplePoints.Num() == 0)
+		{
+			continue;
+		}
+		
+		// Find the first entry and last exit
+		// We need to track all samples from first entry to last exit
+		int32 FirstEntryIndex = -1;
+		int32 LastExitIndex = -1;
+		
+		// The algorithm needs to account for the query trajectory position changing over time
+		// For simplicity in this implementation, we'll check distances and find ranges where
+		// the trajectory is within radius
+		
+		// Find all time ranges where trajectory is within radius
+		TArray<TPair<int32, int32>> WithinRadiusRanges;
+		int32 RangeStart = -1;
+		
+		for (int32 i = 0; i < SamplePoints.Num(); ++i)
+		{
+			const FTrajectorySamplePoint& Sample = SamplePoints[i];
+			// Sample.Distance is already computed, not squared
+			bool bWithinRadius = Sample.Distance <= Radius;
+			
+			if (bWithinRadius && RangeStart == -1)
+			{
+				// Start of a new range
+				RangeStart = i;
+			}
+			else if (!bWithinRadius && RangeStart != -1)
+			{
+				// End of a range
+				WithinRadiusRanges.Add(TPair<int32, int32>(RangeStart, i - 1));
+				RangeStart = -1;
+			}
+		}
+		
+		// Handle case where last sample is within radius
+		if (RangeStart != -1)
+		{
+			WithinRadiusRanges.Add(TPair<int32, int32>(RangeStart, SamplePoints.Num() - 1));
+		}
+		
+		// If no samples within radius, skip this trajectory
+		if (WithinRadiusRanges.Num() == 0)
+		{
+			continue;
+		}
+		
+		// Extended range is from first entry to last exit
+		FirstEntryIndex = WithinRadiusRanges[0].Key;
+		LastExitIndex = WithinRadiusRanges[WithinRadiusRanges.Num() - 1].Value;
+		
+		// Create result with extended range
+		FSpatialHashQueryResult Result(TrajectoryId);
+		for (int32 i = FirstEntryIndex; i <= LastExitIndex; ++i)
+		{
+			Result.SamplePoints.Add(SamplePoints[i]);
+		}
+		
+		OutExtendedResults.Add(Result);
+	}
+}
+
+int32 USpatialHashTableManager::QueryRadiusWithDistanceCheck(
+	const FString& DatasetDirectory,
+	FVector QueryPosition,
+	float Radius,
+	float CellSize,
+	int32 TimeStep,
+	TArray<FSpatialHashQueryResult>& OutResults)
+{
+	OutResults.Reset();
+	
+	// Get the hash table for this timestep
+	TSharedPtr<FSpatialHashTable> HashTable = GetHashTable(CellSize, TimeStep);
+	if (!HashTable.IsValid())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("USpatialHashTableManager::QueryRadiusWithDistanceCheck: Hash table not loaded for cell size %.3f, time step %d"),
+			CellSize, TimeStep);
+		return 0;
+	}
+	
+	// Query trajectory IDs in the spatial hash (no distance check yet)
+	TArray<uint32> CandidateTrajectoryIds;
+	HashTable->QueryTrajectoryIdsInRadius(QueryPosition, Radius, CandidateTrajectoryIds);
+	
+	if (CandidateTrajectoryIds.Num() == 0)
+	{
+		return 0;
+	}
+	
+	// Load actual trajectory data for these IDs
+	TMap<uint32, TArray<FTrajectorySamplePoint>> TrajectoryData;
+	if (!LoadTrajectorySamplesForIds(DatasetDirectory, CandidateTrajectoryIds, TimeStep, TimeStep, TrajectoryData))
+	{
+		UE_LOG(LogTemp, Error, TEXT("USpatialHashTableManager::QueryRadiusWithDistanceCheck: Failed to load trajectory data"));
+		return 0;
+	}
+	
+	// Filter by actual distance
+	FilterByDistance(QueryPosition, Radius, TrajectoryData, OutResults);
+	
+	return OutResults.Num();
+}
+
+int32 USpatialHashTableManager::QueryDualRadiusWithDistanceCheck(
+	const FString& DatasetDirectory,
+	FVector QueryPosition,
+	float InnerRadius,
+	float OuterRadius,
+	float CellSize,
+	int32 TimeStep,
+	TArray<FSpatialHashQueryResult>& OutInnerResults,
+	TArray<FSpatialHashQueryResult>& OutOuterOnlyResults)
+{
+	OutInnerResults.Reset();
+	OutOuterOnlyResults.Reset();
+	
+	// Validate radii
+	if (InnerRadius > OuterRadius)
+	{
+		UE_LOG(LogTemp, Error, TEXT("USpatialHashTableManager::QueryDualRadiusWithDistanceCheck: Inner radius (%.2f) must be <= outer radius (%.2f)"),
+			InnerRadius, OuterRadius);
+		return 0;
+	}
+	
+	// Get the hash table for this timestep
+	TSharedPtr<FSpatialHashTable> HashTable = GetHashTable(CellSize, TimeStep);
+	if (!HashTable.IsValid())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("USpatialHashTableManager::QueryDualRadiusWithDistanceCheck: Hash table not loaded for cell size %.3f, time step %d"),
+			CellSize, TimeStep);
+		return 0;
+	}
+	
+	// Query trajectory IDs using the outer radius
+	TArray<uint32> CandidateTrajectoryIds;
+	HashTable->QueryTrajectoryIdsInRadius(QueryPosition, OuterRadius, CandidateTrajectoryIds);
+	
+	if (CandidateTrajectoryIds.Num() == 0)
+	{
+		return 0;
+	}
+	
+	// Load actual trajectory data for these IDs
+	TMap<uint32, TArray<FTrajectorySamplePoint>> TrajectoryData;
+	if (!LoadTrajectorySamplesForIds(DatasetDirectory, CandidateTrajectoryIds, TimeStep, TimeStep, TrajectoryData))
+	{
+		UE_LOG(LogTemp, Error, TEXT("USpatialHashTableManager::QueryDualRadiusWithDistanceCheck: Failed to load trajectory data"));
+		return 0;
+	}
+	
+	// Filter by dual radius
+	FilterByDualRadius(QueryPosition, InnerRadius, OuterRadius, TrajectoryData, OutInnerResults, OutOuterOnlyResults);
+	
+	return OutInnerResults.Num() + OutOuterOnlyResults.Num();
+}
+
+int32 USpatialHashTableManager::QueryRadiusOverTimeRange(
+	const FString& DatasetDirectory,
+	FVector QueryPosition,
+	float Radius,
+	float CellSize,
+	int32 StartTimeStep,
+	int32 EndTimeStep,
+	TArray<FSpatialHashQueryResult>& OutResults)
+{
+	OutResults.Reset();
+	
+	if (StartTimeStep > EndTimeStep)
+	{
+		UE_LOG(LogTemp, Error, TEXT("USpatialHashTableManager::QueryRadiusOverTimeRange: StartTimeStep (%d) must be <= EndTimeStep (%d)"),
+			StartTimeStep, EndTimeStep);
+		return 0;
+	}
+	
+	// Collect all unique trajectory IDs across the time range
+	TSet<uint32> AllTrajectoryIds;
+	
+	for (int32 TimeStep = StartTimeStep; TimeStep <= EndTimeStep; ++TimeStep)
+	{
+		TSharedPtr<FSpatialHashTable> HashTable = GetHashTable(CellSize, TimeStep);
+		if (!HashTable.IsValid())
+		{
+			UE_LOG(LogTemp, Warning, TEXT("USpatialHashTableManager::QueryRadiusOverTimeRange: Hash table not loaded for time step %d, skipping"),
+				TimeStep);
+			continue;
+		}
+		
+		TArray<uint32> TimeStepTrajectoryIds;
+		HashTable->QueryTrajectoryIdsInRadius(QueryPosition, Radius, TimeStepTrajectoryIds);
+		
+		for (uint32 TrajId : TimeStepTrajectoryIds)
+		{
+			AllTrajectoryIds.Add(TrajId);
+		}
+	}
+	
+	if (AllTrajectoryIds.Num() == 0)
+	{
+		return 0;
+	}
+	
+	// Load trajectory data for all identified trajectories over the time range
+	TArray<uint32> TrajectoryIdArray = AllTrajectoryIds.Array();
+	TMap<uint32, TArray<FTrajectorySamplePoint>> TrajectoryData;
+	if (!LoadTrajectorySamplesForIds(DatasetDirectory, TrajectoryIdArray, StartTimeStep, EndTimeStep, TrajectoryData))
+	{
+		UE_LOG(LogTemp, Error, TEXT("USpatialHashTableManager::QueryRadiusOverTimeRange: Failed to load trajectory data"));
+		return 0;
+	}
+	
+	// Filter by actual distance
+	FilterByDistance(QueryPosition, Radius, TrajectoryData, OutResults);
+	
+	return OutResults.Num();
+}
+
+int32 USpatialHashTableManager::QueryTrajectoryRadiusOverTimeRange(
+	const FString& DatasetDirectory,
+	int32 QueryTrajectoryId,
+	float Radius,
+	float CellSize,
+	int32 StartTimeStep,
+	int32 EndTimeStep,
+	TArray<FSpatialHashQueryResult>& OutResults)
+{
+	OutResults.Reset();
+	
+	if (StartTimeStep > EndTimeStep)
+	{
+		UE_LOG(LogTemp, Error, TEXT("USpatialHashTableManager::QueryTrajectoryRadiusOverTimeRange: StartTimeStep (%d) must be <= EndTimeStep (%d)"),
+			StartTimeStep, EndTimeStep);
+		return 0;
+	}
+	
+	// First, load the query trajectory data
+	TArray<uint32> QueryTrajectoryIdArray;
+	QueryTrajectoryIdArray.Add(QueryTrajectoryId);
+	
+	TMap<uint32, TArray<FTrajectorySamplePoint>> QueryTrajectoryData;
+	if (!LoadTrajectorySamplesForIds(DatasetDirectory, QueryTrajectoryIdArray, StartTimeStep, EndTimeStep, QueryTrajectoryData))
+	{
+		UE_LOG(LogTemp, Error, TEXT("USpatialHashTableManager::QueryTrajectoryRadiusOverTimeRange: Failed to load query trajectory data"));
+		return 0;
+	}
+	
+	TArray<FTrajectorySamplePoint>* QuerySamples = QueryTrajectoryData.Find(QueryTrajectoryId);
+	if (!QuerySamples || QuerySamples->Num() == 0)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("USpatialHashTableManager::QueryTrajectoryRadiusOverTimeRange: Query trajectory %d has no samples in time range"),
+			QueryTrajectoryId);
+		return 0;
+	}
+	
+	// Collect all unique trajectory IDs across all query points in the time range
+	TSet<uint32> AllTrajectoryIds;
+	
+	for (const FTrajectorySamplePoint& QuerySample : *QuerySamples)
+	{
+		TSharedPtr<FSpatialHashTable> HashTable = GetHashTable(CellSize, QuerySample.TimeStep);
+		if (!HashTable.IsValid())
+		{
+			UE_LOG(LogTemp, Warning, TEXT("USpatialHashTableManager::QueryTrajectoryRadiusOverTimeRange: Hash table not loaded for time step %d, skipping"),
+				QuerySample.TimeStep);
+			continue;
+		}
+		
+		TArray<uint32> TimeStepTrajectoryIds;
+		HashTable->QueryTrajectoryIdsInRadius(QuerySample.Position, Radius, TimeStepTrajectoryIds);
+		
+		for (uint32 TrajId : TimeStepTrajectoryIds)
+		{
+			// Don't include the query trajectory itself
+			if (TrajId != (uint32)QueryTrajectoryId)
+			{
+				AllTrajectoryIds.Add(TrajId);
+			}
+		}
+	}
+	
+	if (AllTrajectoryIds.Num() == 0)
+	{
+		return 0;
+	}
+	
+	// Load trajectory data for all identified trajectories over the time range
+	TArray<uint32> TrajectoryIdArray = AllTrajectoryIds.Array();
+	TMap<uint32, TArray<FTrajectorySamplePoint>> TrajectoryData;
+	if (!LoadTrajectorySamplesForIds(DatasetDirectory, TrajectoryIdArray, StartTimeStep, EndTimeStep, TrajectoryData))
+	{
+		UE_LOG(LogTemp, Error, TEXT("USpatialHashTableManager::QueryTrajectoryRadiusOverTimeRange: Failed to load trajectory data"));
+		return 0;
+	}
+	
+	// For each trajectory, compute distances to all query points and mark which samples are within radius
+	for (auto& Pair : TrajectoryData)
+	{
+		TArray<FTrajectorySamplePoint>& Samples = Pair.Value;
+		
+		for (FTrajectorySamplePoint& Sample : Samples)
+		{
+			// Find the closest query sample at the same timestep
+			float MinDistance = FLT_MAX;
+			
+			for (const FTrajectorySamplePoint& QuerySample : *QuerySamples)
+			{
+				if (QuerySample.TimeStep == Sample.TimeStep)
+				{
+					float Distance = FVector::Dist(QuerySample.Position, Sample.Position);
+					if (Distance < MinDistance)
+					{
+						MinDistance = Distance;
+					}
+				}
+			}
+			
+			Sample.Distance = MinDistance;
+		}
+	}
+	
+	// Extend samples to include all points from first entry to last exit
+	ExtendTrajectorySamples(TrajectoryData, Radius, OutResults);
+	
+	return OutResults.Num();
+}
+
+// ============================================================================
+// ASYNC QUERY METHODS - Using TrajectoryDataCppApi
+// ============================================================================
+
+void USpatialHashTableManager::QueryRadiusWithDistanceCheckAsync(
+	const FString& DatasetDirectory,
+	FVector QueryPosition,
+	float Radius,
+	float CellSize,
+	int32 TimeStep,
+	FOnSpatialHashQueryComplete OnComplete)
+{
+	// Get the hash table for this cell size and timestep
+	FSpatialHashTable* HashTable = GetOrLoadHashTable(DatasetDirectory, CellSize, TimeStep);
+	if (!HashTable)
+	{
+		UE_LOG(LogTemp, Error, TEXT("USpatialHashTableManager::QueryRadiusWithDistanceCheckAsync: Failed to load hash table"));
+		// Invoke callback with empty results
+		OnComplete.ExecuteIfBound(TArray<FSpatialHashQueryResult>());
+		return;
+	}
+	
+	// Query trajectory IDs in the spatial hash (no distance check yet)
+	TArray<uint32> CandidateTrajectoryIds;
+	HashTable->QueryTrajectoryIdsInRadius(QueryPosition, Radius, CandidateTrajectoryIds);
+	
+	if (CandidateTrajectoryIds.Num() == 0)
+	{
+		// Invoke callback with empty results
+		OnComplete.ExecuteIfBound(TArray<FSpatialHashQueryResult>());
+		return;
+	}
+	
+	// Convert uint32 trajectory IDs to int64 for TrajectoryDataCppApi
+	TArray<int64> TrajectoryIdsInt64;
+	TrajectoryIdsInt64.Reserve(CandidateTrajectoryIds.Num());
+	for (uint32 TrajId : CandidateTrajectoryIds)
+	{
+		TrajectoryIdsInt64.Add(static_cast<int64>(TrajId));
+	}
+	
+	// Get the TrajectoryData C++ API
+	FTrajectoryDataCppApi* Api = FTrajectoryDataCppApi::Get();
+	if (!Api)
+	{
+		UE_LOG(LogTemp, Error, TEXT("USpatialHashTableManager::QueryRadiusWithDistanceCheckAsync: Failed to get TrajectoryDataCppApi"));
+		OnComplete.ExecuteIfBound(TArray<FSpatialHashQueryResult>());
+		return;
+	}
+	
+	// Start async query - callback will be invoked on game thread when complete
+	bool bStarted = Api->QuerySingleTimeStepAsync(
+		DatasetDirectory,
+		TrajectoryIdsInt64,
+		TimeStep,
+		FOnTrajectoryQueryComplete::CreateLambda([this, QueryPosition, Radius, OnComplete](const FTrajectoryQueryResult& Result)
+		{
+			TArray<FSpatialHashQueryResult> Results;
+			
+			if (!Result.bSuccess)
+			{
+				UE_LOG(LogTemp, Error, TEXT("QueryRadiusWithDistanceCheckAsync: Query failed: %s"), *Result.ErrorMessage);
+				OnComplete.ExecuteIfBound(Results);
+				return;
+			}
+			
+			// Convert query results to internal format and filter by actual distance
+			TMap<uint32, TArray<FTrajectorySamplePoint>> TrajectoryData;
+			
+			for (const FTrajectorySample& Sample : Result.Samples)
+			{
+				if (!Sample.bIsValid)
+				{
+					continue;
+				}
+				
+				// Convert int64 back to uint32
+				uint32 TrajId = static_cast<uint32>(Sample.TrajectoryId);
+				TArray<FTrajectorySamplePoint>& SamplePoints = TrajectoryData.FindOrAdd(TrajId);
+				
+				FTrajectorySamplePoint SamplePoint;
+				SamplePoint.Position = Sample.Position;
+				SamplePoint.TimeStep = Sample.TimeStep;
+				SamplePoint.Distance = 0.0f;
+				
+				SamplePoints.Add(SamplePoint);
+			}
+			
+			// Filter by actual distance
+			FilterByDistance(QueryPosition, Radius, TrajectoryData, Results);
+			
+			// Invoke the completion callback with results
+			OnComplete.ExecuteIfBound(Results);
+		})
+	);
+	
+	if (!bStarted)
+	{
+		UE_LOG(LogTemp, Error, TEXT("USpatialHashTableManager::QueryRadiusWithDistanceCheckAsync: Failed to start query"));
+		OnComplete.ExecuteIfBound(TArray<FSpatialHashQueryResult>());
+	}
+}
+
+void USpatialHashTableManager::QueryDualRadiusWithDistanceCheckAsync(
+	const FString& DatasetDirectory,
+	FVector QueryPosition,
+	float InnerRadius,
+	float OuterRadius,
+	float CellSize,
+	int32 TimeStep,
+	FOnSpatialHashDualQueryComplete OnComplete)
+{
+	// Get the hash table for this cell size and timestep
+	FSpatialHashTable* HashTable = GetOrLoadHashTable(DatasetDirectory, CellSize, TimeStep);
+	if (!HashTable)
+	{
+		UE_LOG(LogTemp, Error, TEXT("USpatialHashTableManager::QueryDualRadiusWithDistanceCheckAsync: Failed to load hash table"));
+		OnComplete.ExecuteIfBound(TArray<FSpatialHashQueryResult>(), TArray<FSpatialHashQueryResult>());
+		return;
+	}
+	
+	// Query trajectory IDs in the spatial hash using outer radius
+	TArray<uint32> CandidateTrajectoryIds;
+	HashTable->QueryTrajectoryIdsInRadius(QueryPosition, OuterRadius, CandidateTrajectoryIds);
+	
+	if (CandidateTrajectoryIds.Num() == 0)
+	{
+		OnComplete.ExecuteIfBound(TArray<FSpatialHashQueryResult>(), TArray<FSpatialHashQueryResult>());
+		return;
+	}
+	
+	// Convert uint32 trajectory IDs to int64
+	TArray<int64> TrajectoryIdsInt64;
+	TrajectoryIdsInt64.Reserve(CandidateTrajectoryIds.Num());
+	for (uint32 TrajId : CandidateTrajectoryIds)
+	{
+		TrajectoryIdsInt64.Add(static_cast<int64>(TrajId));
+	}
+	
+	// Get the TrajectoryData C++ API
+	FTrajectoryDataCppApi* Api = FTrajectoryDataCppApi::Get();
+	if (!Api)
+	{
+		UE_LOG(LogTemp, Error, TEXT("USpatialHashTableManager::QueryDualRadiusWithDistanceCheckAsync: Failed to get TrajectoryDataCppApi"));
+		OnComplete.ExecuteIfBound(TArray<FSpatialHashQueryResult>(), TArray<FSpatialHashQueryResult>());
+		return;
+	}
+	
+	// Start async query
+	bool bStarted = Api->QuerySingleTimeStepAsync(
+		DatasetDirectory,
+		TrajectoryIdsInt64,
+		TimeStep,
+		FOnTrajectoryQueryComplete::CreateLambda([this, QueryPosition, InnerRadius, OuterRadius, OnComplete](const FTrajectoryQueryResult& Result)
+		{
+			TArray<FSpatialHashQueryResult> InnerResults;
+			TArray<FSpatialHashQueryResult> OuterOnlyResults;
+			
+			if (!Result.bSuccess)
+			{
+				UE_LOG(LogTemp, Error, TEXT("QueryDualRadiusWithDistanceCheckAsync: Query failed: %s"), *Result.ErrorMessage);
+				OnComplete.ExecuteIfBound(InnerResults, OuterOnlyResults);
+				return;
+			}
+			
+			// Convert query results and filter by dual radius
+			TMap<uint32, TArray<FTrajectorySamplePoint>> TrajectoryData;
+			
+			for (const FTrajectorySample& Sample : Result.Samples)
+			{
+				if (!Sample.bIsValid)
+				{
+					continue;
+				}
+				
+				uint32 TrajId = static_cast<uint32>(Sample.TrajectoryId);
+				TArray<FTrajectorySamplePoint>& SamplePoints = TrajectoryData.FindOrAdd(TrajId);
+				
+				FTrajectorySamplePoint SamplePoint;
+				SamplePoint.Position = Sample.Position;
+				SamplePoint.TimeStep = Sample.TimeStep;
+				SamplePoint.Distance = 0.0f;
+				
+				SamplePoints.Add(SamplePoint);
+			}
+			
+			// Filter by dual radius
+			FilterByDualRadius(QueryPosition, InnerRadius, OuterRadius, TrajectoryData, InnerResults, OuterOnlyResults);
+			
+			// Invoke the completion callback
+			OnComplete.ExecuteIfBound(InnerResults, OuterOnlyResults);
+		})
+	);
+	
+	if (!bStarted)
+	{
+		UE_LOG(LogTemp, Error, TEXT("USpatialHashTableManager::QueryDualRadiusWithDistanceCheckAsync: Failed to start query"));
+		OnComplete.ExecuteIfBound(TArray<FSpatialHashQueryResult>(), TArray<FSpatialHashQueryResult>());
+	}
+}
+
+void USpatialHashTableManager::QueryRadiusOverTimeRangeAsync(
+	const FString& DatasetDirectory,
+	FVector QueryPosition,
+	float Radius,
+	float CellSize,
+	int32 StartTimeStep,
+	int32 EndTimeStep,
+	FOnSpatialHashQueryComplete OnComplete)
+{
+	// Gather candidate trajectory IDs from all timesteps in range
+	TSet<uint32> AllCandidateIds;
+	
+	for (int32 TimeStep = StartTimeStep; TimeStep <= EndTimeStep; ++TimeStep)
+	{
+		FSpatialHashTable* HashTable = GetOrLoadHashTable(DatasetDirectory, CellSize, TimeStep);
+		if (HashTable)
+		{
+			TArray<uint32> CandidateIds;
+			HashTable->QueryTrajectoryIdsInRadius(QueryPosition, Radius, CandidateIds);
+			AllCandidateIds.Append(CandidateIds);
+		}
+	}
+	
+	if (AllCandidateIds.Num() == 0)
+	{
+		OnComplete.ExecuteIfBound(TArray<FSpatialHashQueryResult>());
+		return;
+	}
+	
+	// Convert to array and then to int64
+	TArray<uint32> TrajectoryIdArray = AllCandidateIds.Array();
+	TArray<int64> TrajectoryIdsInt64;
+	TrajectoryIdsInt64.Reserve(TrajectoryIdArray.Num());
+	for (uint32 TrajId : TrajectoryIdArray)
+	{
+		TrajectoryIdsInt64.Add(static_cast<int64>(TrajId));
+	}
+	
+	// Get the TrajectoryData C++ API
+	FTrajectoryDataCppApi* Api = FTrajectoryDataCppApi::Get();
+	if (!Api)
+	{
+		UE_LOG(LogTemp, Error, TEXT("USpatialHashTableManager::QueryRadiusOverTimeRangeAsync: Failed to get TrajectoryDataCppApi"));
+		OnComplete.ExecuteIfBound(TArray<FSpatialHashQueryResult>());
+		return;
+	}
+	
+	// Start async query for time range
+	bool bStarted = Api->QueryTimeRangeAsync(
+		DatasetDirectory,
+		TrajectoryIdsInt64,
+		StartTimeStep,
+		EndTimeStep,
+		FOnTrajectoryTimeRangeComplete::CreateLambda([this, QueryPosition, Radius, OnComplete](const FTrajectoryTimeRangeResult& Result)
+		{
+			TArray<FSpatialHashQueryResult> Results;
+			
+			if (!Result.bSuccess)
+			{
+				UE_LOG(LogTemp, Error, TEXT("QueryRadiusOverTimeRangeAsync: Query failed: %s"), *Result.ErrorMessage);
+				OnComplete.ExecuteIfBound(Results);
+				return;
+			}
+			
+			// Convert time series results to internal format
+			TMap<uint32, TArray<FTrajectorySamplePoint>> TrajectoryData;
+			
+			for (const FTrajectoryTimeSeries& Series : Result.TimeSeries)
+			{
+				uint32 TrajId = static_cast<uint32>(Series.TrajectoryId);
+				TArray<FTrajectorySamplePoint>& SamplePoints = TrajectoryData.FindOrAdd(TrajId);
+				
+				for (int32 i = 0; i < Series.Samples.Num(); ++i)
+				{
+					const FVector& Position = Series.Samples[i];
+					int32 TimeStep = Series.StartTimeStep + i;
+					
+					// Skip invalid positions
+					if (FMath::IsNaN(Position.X) || FMath::IsNaN(Position.Y) || FMath::IsNaN(Position.Z))
+					{
+						continue;
+					}
+					
+					FTrajectorySamplePoint SamplePoint;
+					SamplePoint.Position = Position;
+					SamplePoint.TimeStep = TimeStep;
+					SamplePoint.Distance = 0.0f;
+					
+					SamplePoints.Add(SamplePoint);
+				}
+			}
+			
+			// Filter trajectories that have samples within radius
+			FilterByDistance(QueryPosition, Radius, TrajectoryData, Results);
+			
+			// Invoke completion callback
+			OnComplete.ExecuteIfBound(Results);
+		})
+	);
+	
+	if (!bStarted)
+	{
+		UE_LOG(LogTemp, Error, TEXT("USpatialHashTableManager::QueryRadiusOverTimeRangeAsync: Failed to start query"));
+		OnComplete.ExecuteIfBound(TArray<FSpatialHashQueryResult>());
+	}
+}
+
+void USpatialHashTableManager::QueryTrajectoryRadiusOverTimeRangeAsync(
+	const FString& DatasetDirectory,
+	uint32 QueryTrajectoryId,
+	float Radius,
+	float CellSize,
+	int32 StartTimeStep,
+	int32 EndTimeStep,
+	FOnSpatialHashQueryComplete OnComplete)
+{
+	// First, load the query trajectory data
+	TArray<uint32> QueryTrajIds;
+	QueryTrajIds.Add(QueryTrajectoryId);
+	TArray<int64> QueryTrajIdsInt64;
+	QueryTrajIdsInt64.Add(static_cast<int64>(QueryTrajectoryId));
+	
+	// Get the TrajectoryData C++ API
+	FTrajectoryDataCppApi* Api = FTrajectoryDataCppApi::Get();
+	if (!Api)
+	{
+		UE_LOG(LogTemp, Error, TEXT("USpatialHashTableManager::QueryTrajectoryRadiusOverTimeRangeAsync: Failed to get TrajectoryDataCppApi"));
+		OnComplete.ExecuteIfBound(TArray<FSpatialHashQueryResult>());
+		return;
+	}
+	
+	// Load query trajectory first
+	bool bStarted = Api->QueryTimeRangeAsync(
+		DatasetDirectory,
+		QueryTrajIdsInt64,
+		StartTimeStep,
+		EndTimeStep,
+		FOnTrajectoryTimeRangeComplete::CreateLambda([this, DatasetDirectory, Radius, CellSize, StartTimeStep, EndTimeStep, OnComplete, Api](const FTrajectoryTimeRangeResult& QueryResult)
+		{
+			if (!QueryResult.bSuccess || QueryResult.TimeSeries.Num() == 0)
+			{
+				UE_LOG(LogTemp, Error, TEXT("QueryTrajectoryRadiusOverTimeRangeAsync: Failed to load query trajectory"));
+				OnComplete.ExecuteIfBound(TArray<FSpatialHashQueryResult>());
+				return;
+			}
+			
+			// Convert query trajectory to internal format
+			TMap<uint32, TArray<FTrajectorySamplePoint>> QueryTrajectoryData;
+			const FTrajectoryTimeSeries& QuerySeries = QueryResult.TimeSeries[0];
+			uint32 QueryTrajId = static_cast<uint32>(QuerySeries.TrajectoryId);
+			TArray<FTrajectorySamplePoint>& QuerySamples = QueryTrajectoryData.Add(QueryTrajId);
+			
+			for (int32 i = 0; i < QuerySeries.Samples.Num(); ++i)
+			{
+				const FVector& Position = QuerySeries.Samples[i];
+				if (!FMath::IsNaN(Position.X) && !FMath::IsNaN(Position.Y) && !FMath::IsNaN(Position.Z))
+				{
+					FTrajectorySamplePoint SamplePoint;
+					SamplePoint.Position = Position;
+					SamplePoint.TimeStep = QuerySeries.StartTimeStep + i;
+					SamplePoint.Distance = 0.0f;
+					QuerySamples.Add(SamplePoint);
+				}
+			}
+			
+			// Gather candidate trajectory IDs from spatial hash
+			TSet<uint32> AllCandidateIds;
+			for (const FTrajectorySamplePoint& QuerySample : QuerySamples)
+			{
+				FSpatialHashTable* HashTable = GetOrLoadHashTable(DatasetDirectory, CellSize, QuerySample.TimeStep);
+				if (HashTable)
+				{
+					TArray<uint32> CandidateIds;
+					HashTable->QueryTrajectoryIdsInRadius(QuerySample.Position, Radius, CandidateIds);
+					AllCandidateIds.Append(CandidateIds);
+				}
+			}
+			
+			// Remove query trajectory from candidates
+			AllCandidateIds.Remove(QueryTrajId);
+			
+			if (AllCandidateIds.Num() == 0)
+			{
+				OnComplete.ExecuteIfBound(TArray<FSpatialHashQueryResult>());
+				return;
+			}
+			
+			// Convert candidates to int64
+			TArray<uint32> TrajectoryIdArray = AllCandidateIds.Array();
+			TArray<int64> TrajectoryIdsInt64;
+			TrajectoryIdsInt64.Reserve(TrajectoryIdArray.Num());
+			for (uint32 TrajId : TrajectoryIdArray)
+			{
+				TrajectoryIdsInt64.Add(static_cast<int64>(TrajId));
+			}
+			
+			// Load candidate trajectories
+			Api->QueryTimeRangeAsync(
+				DatasetDirectory,
+				TrajectoryIdsInt64,
+				StartTimeStep,
+				EndTimeStep,
+				FOnTrajectoryTimeRangeComplete::CreateLambda([this, QuerySamples, Radius, OnComplete](const FTrajectoryTimeRangeResult& CandidateResult)
+				{
+					TArray<FSpatialHashQueryResult> Results;
+					
+					if (!CandidateResult.bSuccess)
+					{
+						UE_LOG(LogTemp, Error, TEXT("QueryTrajectoryRadiusOverTimeRangeAsync: Failed to load candidate trajectories"));
+						OnComplete.ExecuteIfBound(Results);
+						return;
+					}
+					
+					// Convert candidate results
+					TMap<uint32, TArray<FTrajectorySamplePoint>> TrajectoryData;
+					for (const FTrajectoryTimeSeries& Series : CandidateResult.TimeSeries)
+					{
+						uint32 TrajId = static_cast<uint32>(Series.TrajectoryId);
+						TArray<FTrajectorySamplePoint>& SamplePoints = TrajectoryData.FindOrAdd(TrajId);
+						
+						for (int32 i = 0; i < Series.Samples.Num(); ++i)
+						{
+							const FVector& Position = Series.Samples[i];
+							if (!FMath::IsNaN(Position.X) && !FMath::IsNaN(Position.Y) && !FMath::IsNaN(Position.Z))
+							{
+								FTrajectorySamplePoint SamplePoint;
+								SamplePoint.Position = Position;
+								SamplePoint.TimeStep = Series.StartTimeStep + i;
+								SamplePoint.Distance = 0.0f;
+								SamplePoints.Add(SamplePoint);
+							}
+						}
+					}
+					
+					// Calculate minimum distance to query trajectory for each sample
+					for (auto& Pair : TrajectoryData)
+					{
+						for (FTrajectorySamplePoint& Sample : Pair.Value)
+						{
+							float MinDistance = FLT_MAX;
+							for (const FTrajectorySamplePoint& QuerySample : QuerySamples)
+							{
+								if (QuerySample.TimeStep == Sample.TimeStep)
+								{
+									float Distance = FVector::Dist(QuerySample.Position, Sample.Position);
+									if (Distance < MinDistance)
+									{
+										MinDistance = Distance;
+									}
+								}
+							}
+							Sample.Distance = MinDistance;
+						}
+					}
+					
+					// Extend samples and filter
+					ExtendTrajectorySamples(TrajectoryData, Radius, Results);
+					
+					// Invoke completion callback
+					OnComplete.ExecuteIfBound(Results);
+				})
+			);
+		})
+	);
+	
+	if (!bStarted)
+	{
+		UE_LOG(LogTemp, Error, TEXT("USpatialHashTableManager::QueryTrajectoryRadiusOverTimeRangeAsync: Failed to start query"));
+		OnComplete.ExecuteIfBound(TArray<FSpatialHashQueryResult>());
+	}
 }
