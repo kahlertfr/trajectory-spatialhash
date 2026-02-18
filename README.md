@@ -15,6 +15,37 @@ This plugin implements a spatial hash data structure optimized for fast spatial 
 - **Dual Radius Queries**: Simultaneous inner/outer radius queries for memory efficiency
 - **Trajectory Integration**: Designed to work seamlessly with trajectory data
 - **Runtime Module**: Lightweight runtime-only module with minimal overhead
+- **🆕 Async Query Support**: Non-blocking queries using TrajectoryData plugin's async API
+
+## New: Async Query Methods
+
+The plugin now supports fully asynchronous queries that don't block the game thread:
+
+```cpp
+// Async query with callback - NO BUSY WAITING!
+Manager->QueryRadiusWithDistanceCheckAsync(
+    DatasetDirectory, QueryPosition, Radius, CellSize, TimeStep,
+    FOnSpatialHashQueryComplete::CreateLambda([](const TArray<FSpatialHashQueryResult>& Results) {
+        UE_LOG(LogTemp, Log, TEXT("Found %d trajectories"), Results.Num());
+        // Process results here - callback invoked on game thread when ready
+    })
+);
+// Game thread continues immediately - smooth frame rate!
+```
+
+**Benefits:**
+- ✅ Non-blocking - game thread continues during I/O
+- ✅ Smooth frame rate even with large datasets
+- ✅ Proper async callbacks (no busy-waiting)
+- ✅ Thread-safe result delivery on game thread
+
+**Available Async Methods:**
+- `QueryRadiusWithDistanceCheckAsync()` - Single point, single timestep
+- `QueryDualRadiusWithDistanceCheckAsync()` - Inner/outer radius simultaneously  
+- `QueryRadiusOverTimeRangeAsync()` - Single point over time range
+- `QueryTrajectoryRadiusOverTimeRangeAsync()` - Trajectory interaction queries
+
+📖 **See [ASYNC_QUERY_METHODS.md](ASYNC_QUERY_METHODS.md) for complete documentation and 8 working examples!**
 
 ## Dependencies
 
