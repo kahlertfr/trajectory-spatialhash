@@ -154,6 +154,69 @@ bool FSpatialHashTable::QueryAtPosition(const FVector& WorldPos, TArray<uint32>&
 	return false;
 }
 
+int32 FSpatialHashTable::QueryTrajectoryIdsInRadius(const FVector& WorldPos, float Radius, TArray<uint32>& OutTrajectoryIds) const
+{
+	OutTrajectoryIds.Reset();
+	
+	// Calculate the bounding box of cells that could overlap with the query radius
+	FVector BBoxMin = Header.GetBBoxMin();
+	float CellSize = Header.CellSize;
+	
+	// Calculate the cell range that encompasses the query sphere
+	int32 CenterCellX, CenterCellY, CenterCellZ;
+	WorldToCellCoordinates(WorldPos, BBoxMin, CellSize, CenterCellX, CenterCellY, CenterCellZ);
+	
+	// Calculate how many cells to check in each direction
+	// Add 1 to ensure we cover the full radius even at cell boundaries
+	int32 CellRadius = FMath::CeilToInt(Radius / CellSize) + 1;
+	
+	// Use a set to collect unique trajectory IDs
+	TSet<uint32> UniqueTrajectoryIds;
+	
+	// Iterate over all cells within the bounding box
+	for (int32 dx = -CellRadius; dx <= CellRadius; ++dx)
+	{
+		for (int32 dy = -CellRadius; dy <= CellRadius; ++dy)
+		{
+			for (int32 dz = -CellRadius; dz <= CellRadius; ++dz)
+			{
+				int32 CellX = CenterCellX + dx;
+				int32 CellY = CenterCellY + dy;
+				int32 CellZ = CenterCellZ + dz;
+				
+				// Skip cells that are outside the valid range
+				if (CellX < 0 || CellY < 0 || CellZ < 0)
+					continue;
+				
+				// Calculate Z-Order key for this cell
+				uint64 Key = CalculateZOrderKey(CellX, CellY, CellZ);
+				
+				// Find entry for this cell
+				int32 EntryIndex = FindEntry(Key);
+				if (EntryIndex >= 0)
+				{
+					// Get trajectory IDs for this cell
+					TArray<uint32> CellTrajectoryIds;
+					if (GetTrajectoryIdsForCell(EntryIndex, CellTrajectoryIds))
+					{
+						// Add to unique set
+						for (uint32 TrajId : CellTrajectoryIds)
+						{
+							UniqueTrajectoryIds.Add(TrajId);
+						}
+					}
+				}
+			}
+		}
+	}
+	
+	// Convert set to array
+	OutTrajectoryIds = UniqueTrajectoryIds.Array();
+	
+	return OutTrajectoryIds.Num();
+}
+
+
 bool FSpatialHashTable::SaveToFile(const FString& Filename) const
 {
 	// Validate before saving

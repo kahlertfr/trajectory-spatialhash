@@ -38,6 +38,68 @@ struct FSpatialQueryResult
 };
 
 /**
+ * Trajectory sample with position and time information
+ */
+USTRUCT(BlueprintType)
+struct FTrajectorySamplePoint
+{
+	GENERATED_BODY()
+
+	/** World position of the sample */
+	UPROPERTY(BlueprintReadOnly, Category = "Spatial Hash")
+	FVector Position;
+
+	/** Time step of this sample */
+	UPROPERTY(BlueprintReadOnly, Category = "Spatial Hash")
+	int32 TimeStep;
+
+	/** Distance from query point (only valid for radius queries) */
+	UPROPERTY(BlueprintReadOnly, Category = "Spatial Hash")
+	float Distance;
+
+	FTrajectorySamplePoint()
+		: Position(FVector::ZeroVector)
+		, TimeStep(0)
+		, Distance(0.0f)
+	{
+	}
+
+	FTrajectorySamplePoint(const FVector& InPosition, int32 InTimeStep, float InDistance)
+		: Position(InPosition)
+		, TimeStep(InTimeStep)
+		, Distance(InDistance)
+	{
+	}
+};
+
+/**
+ * Result structure containing full trajectory with all sample points
+ */
+USTRUCT(BlueprintType)
+struct FTrajectoryQueryResult
+{
+	GENERATED_BODY()
+
+	/** Trajectory ID */
+	UPROPERTY(BlueprintReadOnly, Category = "Spatial Hash")
+	int32 TrajectoryId;
+
+	/** All sample points for this trajectory within the query parameters */
+	UPROPERTY(BlueprintReadOnly, Category = "Spatial Hash")
+	TArray<FTrajectorySamplePoint> SamplePoints;
+
+	FTrajectoryQueryResult()
+		: TrajectoryId(0)
+	{
+	}
+
+	FTrajectoryQueryResult(int32 InId)
+		: TrajectoryId(InId)
+	{
+	}
+};
+
+/**
  * Spatial Hash Table Manager
  * 
  * Blueprint-accessible manager for loading, creating, and querying spatial hash tables.
@@ -161,6 +223,100 @@ public:
 		float CellSize,
 		int32 TimeStep,
 		TArray<int32>& OutTrajectoryIds);
+
+	/**
+	 * Query trajectories with actual distance calculation for a single point at a single timestep (Case A)
+	 * Returns trajectory samples that are within the query radius after actual distance calculation.
+	 * 
+	 * @param DatasetDirectory Path to dataset containing trajectory data
+	 * @param QueryPosition World position to query
+	 * @param Radius Search radius in world units
+	 * @param CellSize Cell size of hash table to use
+	 * @param TimeStep Time step to query
+	 * @param OutResults Array of trajectory query results with sample points
+	 * @return Number of trajectories found
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Spatial Hash")
+	int32 QueryRadiusWithDistanceCheck(
+		const FString& DatasetDirectory,
+		FVector QueryPosition,
+		float Radius,
+		float CellSize,
+		int32 TimeStep,
+		TArray<FTrajectoryQueryResult>& OutResults);
+
+	/**
+	 * Query trajectories with dual radius (inner and outer) for a single point at a single timestep
+	 * Returns two separate arrays: one for inner radius, one for outer radius only (excluding inner).
+	 * 
+	 * @param DatasetDirectory Path to dataset containing trajectory data
+	 * @param QueryPosition World position to query
+	 * @param InnerRadius Inner search radius in world units
+	 * @param OuterRadius Outer search radius in world units (must be >= InnerRadius)
+	 * @param CellSize Cell size of hash table to use
+	 * @param TimeStep Time step to query
+	 * @param OutInnerResults Trajectories within inner radius
+	 * @param OutOuterOnlyResults Trajectories between inner and outer radius
+	 * @return Total number of trajectories found (inner + outer)
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Spatial Hash")
+	int32 QueryDualRadiusWithDistanceCheck(
+		const FString& DatasetDirectory,
+		FVector QueryPosition,
+		float InnerRadius,
+		float OuterRadius,
+		float CellSize,
+		int32 TimeStep,
+		TArray<FTrajectoryQueryResult>& OutInnerResults,
+		TArray<FTrajectoryQueryResult>& OutOuterOnlyResults);
+
+	/**
+	 * Query trajectories over a time range for a single point (Case B)
+	 * Returns trajectories that have at least one sample within the query radius during the time range.
+	 * 
+	 * @param DatasetDirectory Path to dataset containing trajectory data
+	 * @param QueryPosition World position to query
+	 * @param Radius Search radius in world units
+	 * @param CellSize Cell size of hash table to use
+	 * @param StartTimeStep First time step to query (inclusive)
+	 * @param EndTimeStep Last time step to query (inclusive)
+	 * @param OutResults Array of trajectory query results with all sample points in time range
+	 * @return Number of trajectories found
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Spatial Hash")
+	int32 QueryRadiusOverTimeRange(
+		const FString& DatasetDirectory,
+		FVector QueryPosition,
+		float Radius,
+		float CellSize,
+		int32 StartTimeStep,
+		int32 EndTimeStep,
+		TArray<FTrajectoryQueryResult>& OutResults);
+
+	/**
+	 * Query trajectories for a query trajectory over a time range (Case C)
+	 * Returns trajectories that intersect with the query trajectory's radius during the time range.
+	 * For each matching trajectory, includes all sample points from when it first enters until it
+	 * last exits the query radius (accounting for re-entry).
+	 * 
+	 * @param DatasetDirectory Path to dataset containing trajectory data
+	 * @param QueryTrajectoryId ID of the query trajectory
+	 * @param Radius Search radius around each query point
+	 * @param CellSize Cell size of hash table to use
+	 * @param StartTimeStep First time step to query (inclusive)
+	 * @param EndTimeStep Last time step to query (inclusive)
+	 * @param OutResults Array of trajectory query results with extended sample points
+	 * @return Number of trajectories found
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Spatial Hash")
+	int32 QueryTrajectoryRadiusOverTimeRange(
+		const FString& DatasetDirectory,
+		int32 QueryTrajectoryId,
+		float Radius,
+		float CellSize,
+		int32 StartTimeStep,
+		int32 EndTimeStep,
+		TArray<FTrajectoryQueryResult>& OutResults);
 
 	/**
 	 * Unload hash tables for a specific cell size
@@ -331,4 +487,78 @@ protected:
 	 * @return Position of trajectory at time step
 	 */
 	FVector GetTrajectoryPosition(int32 TrajectoryId, int32 TimeStep) const;
+
+	/**
+	 * Load trajectory sample data for specific trajectory IDs and time range
+	 * Loads data from shard files using the TrajectoryData plugin.
+	 * 
+	 * @param DatasetDirectory Base directory containing trajectory data
+	 * @param TrajectoryIds Array of trajectory IDs to load
+	 * @param StartTimeStep First time step to load (inclusive)
+	 * @param EndTimeStep Last time step to load (inclusive)
+	 * @param OutTrajectoryData Map from trajectory ID to array of sample points
+	 * @return True if data was loaded successfully
+	 */
+	bool LoadTrajectorySamplesForIds(
+		const FString& DatasetDirectory,
+		const TArray<uint32>& TrajectoryIds,
+		int32 StartTimeStep,
+		int32 EndTimeStep,
+		TMap<uint32, TArray<FTrajectorySamplePoint>>& OutTrajectoryData) const;
+
+	/**
+	 * Find which shard file contains a specific time step
+	 * 
+	 * @param DatasetDirectory Base directory containing trajectory data
+	 * @param TimeStep Time step to find
+	 * @return Path to shard file, or empty string if not found
+	 */
+	FString FindShardFileForTimeStep(const FString& DatasetDirectory, int32 TimeStep) const;
+
+	/**
+	 * Compute actual distance between a query point and trajectory samples
+	 * Filters trajectory samples by distance and returns those within radius.
+	 * 
+	 * @param QueryPosition Query point position
+	 * @param Radius Search radius
+	 * @param TrajectoryData Map of trajectory samples
+	 * @param OutResults Filtered results with distance calculations
+	 */
+	void FilterByDistance(
+		const FVector& QueryPosition,
+		float Radius,
+		const TMap<uint32, TArray<FTrajectorySamplePoint>>& TrajectoryData,
+		TArray<FTrajectoryQueryResult>& OutResults) const;
+
+	/**
+	 * Compute actual distance for dual radius query
+	 * Filters trajectory samples into inner and outer radius results.
+	 * 
+	 * @param QueryPosition Query point position
+	 * @param InnerRadius Inner search radius
+	 * @param OuterRadius Outer search radius
+	 * @param TrajectoryData Map of trajectory samples
+	 * @param OutInnerResults Results within inner radius
+	 * @param OutOuterOnlyResults Results between inner and outer radius
+	 */
+	void FilterByDualRadius(
+		const FVector& QueryPosition,
+		float InnerRadius,
+		float OuterRadius,
+		const TMap<uint32, TArray<FTrajectorySamplePoint>>& TrajectoryData,
+		TArray<FTrajectoryQueryResult>& OutInnerResults,
+		TArray<FTrajectoryQueryResult>& OutOuterOnlyResults) const;
+
+	/**
+	 * Extend trajectory samples to include all points from first entry to last exit
+	 * Used for Case C to handle trajectory re-entry into query radius.
+	 * 
+	 * @param TrajectoryData Trajectory samples with distance information
+	 * @param Radius Query radius for determining entry/exit
+	 * @param OutExtendedResults Results with extended sample ranges
+	 */
+	void ExtendTrajectorySamples(
+		const TMap<uint32, TArray<FTrajectorySamplePoint>>& TrajectoryData,
+		float Radius,
+		TArray<FTrajectoryQueryResult>& OutExtendedResults) const;
 };
