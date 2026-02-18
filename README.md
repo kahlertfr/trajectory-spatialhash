@@ -10,6 +10,9 @@ This plugin implements a spatial hash data structure optimized for fast spatial 
 
 - **Spatial Hash Table**: Efficient spatial indexing data structure
 - **Fixed Radius Queries**: Fast nearest neighbor searches within a specified radius
+- **Distance-Verified Queries**: Actual distance calculations using TrajectoryData plugin
+- **Multiple Query Types**: Support for single point, time range, and trajectory-based queries
+- **Dual Radius Queries**: Simultaneous inner/outer radius queries for memory efficiency
 - **Trajectory Integration**: Designed to work seamlessly with trajectory data
 - **Runtime Module**: Lightweight runtime-only module with minimal overhead
 
@@ -154,8 +157,9 @@ See the [trajectory data specification](https://github.com/kahlertfr/ue-plugin-t
 
 #### Querying Nearest Neighbors
 
-To find all trajectories within a specific radius:
+The plugin now supports advanced nearest neighbor queries with actual distance calculations:
 
+**Basic Query (Legacy - returns trajectory IDs only):**
 ```
 On Some Event
 └─ Call "Query Fixed Radius Neighbors" on Manager
@@ -168,6 +172,32 @@ On Some Event
          └─ Do something with each result
             ├─ Trajectory ID
             └─ Distance
+```
+
+**Advanced Queries with Distance Verification:**
+
+For queries with actual distance calculations using TrajectoryData, see the [Nearest Neighbor Query Guide](NEAREST_NEIGHBOR_QUERY_GUIDE.md) for detailed examples.
+
+**Query Types:**
+- **Single Point, Single Timestep (Case A)**: Returns one sample per trajectory within radius at a specific time
+- **Single Point, Time Range (Case B)**: Returns trajectories with samples within radius over a time range
+- **Trajectory Query (Case C)**: Returns trajectories that intersect with a moving query trajectory
+- **Dual Radius**: Simultaneously query inner and outer radius for memory efficiency
+
+Example:
+```
+On Some Event
+└─ Call "Query Radius With Distance Check" on Manager
+   ├─ Dataset Directory: Path to trajectory data
+   ├─ Query Position: (X, Y, Z)
+   ├─ Radius: 50.0
+   ├─ Cell Size: 10.0
+   ├─ Time Step: Current time step
+   └─ Out Results: Array of FTrajectoryQueryResult
+      └─ ForEach Loop
+         └─ Process trajectory with full sample data
+            ├─ Trajectory ID
+            └─ Sample Points (with positions, distances, timesteps)
 ```
 
 #### Querying a Single Cell
@@ -325,6 +355,8 @@ Each `.bin` file contains a complete hash table for one time step at a specific 
 - **Time Step**: Each hash table represents trajectory positions at a single point in time
 - **Binary Format**: Hash tables are stored in a binary format optimized for memory-mapped loading without parsing
 - **On-Demand Loading**: Trajectory IDs are read from disk only when queried, not loaded into memory, significantly reducing memory usage when managing multiple hash tables
+- **Two-Phase Queries**: Advanced queries use spatial hash for candidate selection, then TrajectoryData for precise distance verification
+- **Distance Verification**: Actual position data loaded from TrajectoryData plugin ensures accurate results within query radius
 
 ### Memory Optimization
 
@@ -343,7 +375,11 @@ The plugin provides the following core functionality:
 
 ### Spatial Hash Table Manager (`USpatialHashTableManager`) - Blueprint Accessible
 - **Load Hash Tables**: Load hash tables from disk for a specific cell size and time range
-- **Query Fixed Radius Neighbors**: Find all trajectories within a radius at a specific time step
+- **Query Fixed Radius Neighbors**: Find all trajectories within a radius at a specific time step (trajectory IDs only)
+- **Query Radius With Distance Check**: Find trajectories with actual distance verification (returns full sample data)
+- **Query Dual Radius With Distance Check**: Query inner and outer radius simultaneously
+- **Query Radius Over Time Range**: Find trajectories within radius across multiple timesteps
+- **Query Trajectory Radius Over Time Range**: Find trajectories intersecting with a moving query trajectory
 - **Query Cell**: Get all trajectories in the same cell as a query position
 - **Memory Management**: Check loaded hash tables, get memory stats, and unload hash tables
 - **Multiple Cell Sizes**: Manage and query hash tables with different cell sizes simultaneously
@@ -352,6 +388,7 @@ The plugin provides the following core functionality:
 - Load hash tables from binary files with `LoadFromFile()` (trajectory IDs not loaded for memory optimization)
 - Save hash tables to binary files with `SaveToFile()`
 - Query trajectories at world positions with `QueryAtPosition()` (reads trajectory IDs from disk on-demand)
+- Query trajectory IDs in radius with `QueryTrajectoryIdsInRadius()` (candidate selection for distance verification)
 - Calculate Z-Order keys for spatial cells
 - Binary search for efficient cell lookups
 - Memory-efficient: only header and entries loaded; trajectory IDs read on-demand
@@ -364,6 +401,8 @@ The plugin provides the following core functionality:
 - Automatic directory structure creation
 
 For detailed information about the binary file format, see [specification-spatial-hash-table.md](specification-spatial-hash-table.md).
+
+For comprehensive examples of distance-verified queries, see [NEAREST_NEIGHBOR_QUERY_GUIDE.md](NEAREST_NEIGHBOR_QUERY_GUIDE.md).
 
 ## Development
 
