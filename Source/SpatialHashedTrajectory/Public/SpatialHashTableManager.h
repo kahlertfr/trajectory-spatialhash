@@ -490,8 +490,7 @@ protected:
 
 	/**
 	 * Load trajectory sample data for specific trajectory IDs and time range
-	 * Uses the TrajectoryData plugin's query API (FTrajectoryDataCppApi) to load data.
-	 * The plugin handles all shard file discovery and loading internally.
+	 * Loads data from shard files using the TrajectoryData plugin's LoadShardFile.
 	 * 
 	 * @param DatasetDirectory Base directory containing trajectory data
 	 * @param TrajectoryIds Array of trajectory IDs to load

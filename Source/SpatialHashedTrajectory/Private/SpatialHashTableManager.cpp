@@ -7,7 +7,6 @@
 #include "Async/Async.h"
 #include "Async/ParallelFor.h"
 #include "TrajectoryDataLoader.h"
-#include "TrajectoryDataCppApi.h"
 
 USpatialHashTableManager::USpatialHashTableManager()
 {
@@ -1139,55 +1138,93 @@ bool USpatialHashTableManager::LoadTrajectorySamplesForIds(
 		return true; // Nothing to load
 	}
 	
-	// Use TrajectoryData plugin's query API instead of manually loading shards
-	// The plugin handles all shard file discovery and loading internally
-	
-	// Check if we're querying a single timestep or a range
-	bool bSingleTimeStep = (StartTimeStep == EndTimeStep);
-	
-	FSpatialHashQueryResult QueryResult;
-	
-	if (bSingleTimeStep)
+	// Get TrajectoryDataLoader
+	UTrajectoryDataLoader* Loader = UTrajectoryDataLoader::Get();
+	if (!Loader)
 	{
-		// Use QuerySingleTimeStepAsync for single timestep queries
-		QueryResult = FTrajectoryDataCppApi::QuerySingleTimeStepAsync(
-			DatasetDirectory,
-			TrajectoryIds,
-			StartTimeStep
-		);
-	}
-	else
-	{
-		// Use QueryTimeRangeAsync for time range queries
-		QueryResult = FTrajectoryDataCppApi::QueryTimeRangeAsync(
-			DatasetDirectory,
-			TrajectoryIds,
-			StartTimeStep,
-			EndTimeStep
-		);
-	}
-	
-	// Check if query was successful
-	if (!QueryResult.bSuccess)
-	{
-		UE_LOG(LogTemp, Error, TEXT("USpatialHashTableManager::LoadTrajectorySamplesForIds: Query failed: %s"),
-			*QueryResult.ErrorMessage);
+		UE_LOG(LogTemp, Error, TEXT("USpatialHashTableManager::LoadTrajectorySamplesForIds: Failed to get TrajectoryDataLoader"));
 		return false;
 	}
 	
-	// Convert query results to our internal format
-	for (const FTrajectoryDataEntry& Entry : QueryResult.TrajectoryData)
+	// Use centralized shard file discovery
+	TArray<FString> ShardFiles;
+	if (!GetShardFiles(DatasetDirectory, ShardFiles))
 	{
-		TArray<FTrajectorySamplePoint>& SamplePoints = OutTrajectoryData.FindOrAdd(Entry.TrajectoryId);
+		UE_LOG(LogTemp, Error, TEXT("USpatialHashTableManager::LoadTrajectorySamplesForIds: Failed to get shard files from %s"),
+			*DatasetDirectory);
+		return false;
+	}
+	
+	// Create a set for fast trajectory ID lookup
+	TSet<uint32> TrajectoryIdSet(TrajectoryIds);
+	
+	// Initialize output arrays for all requested trajectory IDs
+	for (uint32 TrajId : TrajectoryIds)
+	{
+		OutTrajectoryData.Add(TrajId, TArray<FTrajectorySamplePoint>());
+	}
+	
+	// Load data from shards that overlap with the time range
+	for (const FString& ShardFile : ShardFiles)
+	{
+		int32 ShardStartTimeStep = ParseTimestepFromFilename(ShardFile);
 		
-		for (const FTrajectoryPositionSample& Sample : Entry.Samples)
+		// Load the shard using TrajectoryData plugin API
+		FShardFileData ShardData = Loader->LoadShardFile(ShardFile);
+		if (!ShardData.bSuccess)
 		{
-			FTrajectorySamplePoint SamplePoint;
-			SamplePoint.Position = FVector(Sample.Position.X, Sample.Position.Y, Sample.Position.Z);
-			SamplePoint.TimeStep = Sample.TimeStep;
-			SamplePoint.Distance = 0.0f; // Will be calculated later if needed
+			UE_LOG(LogTemp, Warning, TEXT("LoadTrajectorySamplesForIds: Failed to load shard %s: %s"),
+				*ShardFile, *ShardData.ErrorMessage);
+			continue;
+		}
+		
+		int32 ShardEndTimeStep = ShardStartTimeStep + ShardData.Header.TimeStepIntervalSize - 1;
+		
+		// Skip shards that don't overlap with our time range
+		if (ShardEndTimeStep < StartTimeStep || ShardStartTimeStep > EndTimeStep)
+		{
+			continue;
+		}
+		
+		// Process entries in this shard
+		for (const FShardTrajectoryEntry& Entry : ShardData.Entries)
+		{
+			// Skip trajectories we're not interested in
+			if (!TrajectoryIdSet.Contains(Entry.TrajectoryId))
+			{
+				continue;
+			}
 			
-			SamplePoints.Add(SamplePoint);
+			// Get or create the array for this trajectory
+			TArray<FTrajectorySamplePoint>& SamplePoints = OutTrajectoryData.FindOrAdd(Entry.TrajectoryId);
+			
+			// Add samples that fall within the time range
+			for (int32 LocalTimeStep = 0; LocalTimeStep < Entry.Positions.Num(); ++LocalTimeStep)
+			{
+				int32 GlobalTimeStep = ShardStartTimeStep + LocalTimeStep;
+				
+				// Skip samples outside the requested time range
+				if (GlobalTimeStep < StartTimeStep || GlobalTimeStep > EndTimeStep)
+				{
+					continue;
+				}
+				
+				const FVector3f& Pos = Entry.Positions[LocalTimeStep];
+				
+				// Skip invalid positions
+				if (FMath::IsNaN(Pos.X) || FMath::IsNaN(Pos.Y) || FMath::IsNaN(Pos.Z))
+				{
+					continue;
+				}
+				
+				// Add the sample point
+				FTrajectorySamplePoint SamplePoint;
+				SamplePoint.Position = FVector(Pos.X, Pos.Y, Pos.Z);
+				SamplePoint.TimeStep = GlobalTimeStep;
+				SamplePoint.Distance = 0.0f; // Will be calculated later
+				
+				SamplePoints.Add(SamplePoint);
+			}
 		}
 	}
 	
