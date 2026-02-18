@@ -2184,3 +2184,105 @@ void USpatialHashTableManager::QueryTrajectoryRadiusOverTimeRangeAsync(
 		OnComplete.ExecuteIfBound(TArray<FSpatialHashQueryResult>());
 	}
 }
+
+// ============================================================================
+// BLUEPRINT ASYNC QUERY METHOD IMPLEMENTATIONS
+// ============================================================================
+
+void USpatialHashTableManager::QueryRadiusWithDistanceCheckAsyncBP(
+	const FString& DatasetDirectory,
+	FVector QueryPosition,
+	float Radius,
+	float CellSize,
+	int32 TimeStep,
+	const FOnSpatialHashQueryCompleteBlueprint& OnQueryComplete)
+{
+	// Wrap the Blueprint delegate with a C++ delegate that broadcasts the result
+	QueryRadiusWithDistanceCheckAsync(
+		DatasetDirectory,
+		QueryPosition,
+		Radius,
+		CellSize,
+		TimeStep,
+		FOnSpatialHashQueryComplete::CreateLambda([OnQueryComplete](const TArray<FSpatialHashQueryResult>& Results) mutable
+		{
+			// Broadcast to Blueprint event
+			OnQueryComplete.Broadcast(Results);
+		})
+	);
+}
+
+void USpatialHashTableManager::QueryDualRadiusWithDistanceCheckAsyncBP(
+	const FString& DatasetDirectory,
+	FVector QueryPosition,
+	float InnerRadius,
+	float OuterRadius,
+	float CellSize,
+	int32 TimeStep,
+	const FOnSpatialHashDualQueryCompleteBlueprint& OnQueryComplete)
+{
+	// Wrap the Blueprint delegate with a C++ delegate that broadcasts the result
+	QueryDualRadiusWithDistanceCheckAsync(
+		DatasetDirectory,
+		QueryPosition,
+		InnerRadius,
+		OuterRadius,
+		CellSize,
+		TimeStep,
+		FOnSpatialHashDualQueryComplete::CreateLambda([OnQueryComplete](const TArray<FSpatialHashQueryResult>& InnerResults, const TArray<FSpatialHashQueryResult>& OuterResults) mutable
+		{
+			// Broadcast to Blueprint event
+			OnQueryComplete.Broadcast(InnerResults, OuterResults);
+		})
+	);
+}
+
+void USpatialHashTableManager::QueryRadiusOverTimeRangeAsyncBP(
+	const FString& DatasetDirectory,
+	FVector QueryPosition,
+	float Radius,
+	float CellSize,
+	int32 StartTimeStep,
+	int32 EndTimeStep,
+	const FOnSpatialHashQueryCompleteBlueprint& OnQueryComplete)
+{
+	// Wrap the Blueprint delegate with a C++ delegate that broadcasts the result
+	QueryRadiusOverTimeRangeAsync(
+		DatasetDirectory,
+		QueryPosition,
+		Radius,
+		CellSize,
+		StartTimeStep,
+		EndTimeStep,
+		FOnSpatialHashQueryComplete::CreateLambda([OnQueryComplete](const TArray<FSpatialHashQueryResult>& Results) mutable
+		{
+			// Broadcast to Blueprint event
+			OnQueryComplete.Broadcast(Results);
+		})
+	);
+}
+
+void USpatialHashTableManager::QueryTrajectoryRadiusOverTimeRangeAsyncBP(
+	const FString& DatasetDirectory,
+	int32 QueryTrajectoryId,
+	float Radius,
+	float CellSize,
+	int32 StartTimeStep,
+	int32 EndTimeStep,
+	const FOnSpatialHashQueryCompleteBlueprint& OnQueryComplete)
+{
+	// Wrap the Blueprint delegate with a C++ delegate that broadcasts the result
+	QueryTrajectoryRadiusOverTimeRangeAsync(
+		DatasetDirectory,
+		static_cast<uint32>(QueryTrajectoryId),
+		Radius,
+		CellSize,
+		StartTimeStep,
+		EndTimeStep,
+		FOnSpatialHashQueryComplete::CreateLambda([OnQueryComplete](const TArray<FSpatialHashQueryResult>& Results) mutable
+		{
+			// Broadcast to Blueprint event
+			OnQueryComplete.Broadcast(Results);
+		})
+	);
+}
