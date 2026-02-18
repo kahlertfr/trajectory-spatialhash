@@ -7,7 +7,6 @@
 #include "Async/Async.h"
 #include "Async/ParallelFor.h"
 #include "TrajectoryDataLoader.h"
-#include "TrajectoryDataCppApi.h"
 
 USpatialHashTableManager::USpatialHashTableManager()
 {
@@ -1139,148 +1138,94 @@ bool USpatialHashTableManager::LoadTrajectorySamplesForIds(
 		return true; // Nothing to load
 	}
 	
-	// Get the TrajectoryData C++ API
-	FTrajectoryDataCppApi* Api = FTrajectoryDataCppApi::Get();
-	if (!Api)
+	// Get TrajectoryDataLoader
+	UTrajectoryDataLoader* Loader = UTrajectoryDataLoader::Get();
+	if (!Loader)
 	{
-		UE_LOG(LogTemp, Error, TEXT("USpatialHashTableManager::LoadTrajectorySamplesForIds: Failed to get TrajectoryDataCppApi"));
+		UE_LOG(LogTemp, Error, TEXT("USpatialHashTableManager::LoadTrajectorySamplesForIds: Failed to get TrajectoryDataLoader"));
 		return false;
 	}
 	
-	// Convert uint32 trajectory IDs to int64 as required by the API
-	TArray<int64> TrajectoryIdsInt64;
-	TrajectoryIdsInt64.Reserve(TrajectoryIds.Num());
+	// Use centralized shard file discovery
+	TArray<FString> ShardFiles;
+	if (!GetShardFiles(DatasetDirectory, ShardFiles))
+	{
+		UE_LOG(LogTemp, Error, TEXT("USpatialHashTableManager::LoadTrajectorySamplesForIds: Failed to get shard files from %s"),
+			*DatasetDirectory);
+		return false;
+	}
+	
+	// Create a set for fast trajectory ID lookup
+	TSet<uint32> TrajectoryIdSet(TrajectoryIds);
+	
+	// Initialize output arrays for all requested trajectory IDs
 	for (uint32 TrajId : TrajectoryIds)
 	{
-		TrajectoryIdsInt64.Add(static_cast<int64>(TrajId));
+		OutTrajectoryData.Add(TrajId, TArray<FTrajectorySamplePoint>());
 	}
 	
-	// Check if we're querying a single timestep or a range
-	bool bSingleTimeStep = (StartTimeStep == EndTimeStep);
-	
-	// Since the API is async but we need synchronous behavior, we'll use a flag and wait
-	bool bQueryComplete = false;
-	bool bQuerySuccess = false;
-	FString ErrorMessage;
-	
-	if (bSingleTimeStep)
+	// Load data from shards that overlap with the time range
+	for (const FString& ShardFile : ShardFiles)
 	{
-		// Use QuerySingleTimeStepAsync for single timestep queries
-		bool bStarted = Api->QuerySingleTimeStepAsync(
-			DatasetDirectory,
-			TrajectoryIdsInt64,
-			StartTimeStep,
-			FOnTrajectoryQueryComplete::CreateLambda([&](const FTrajectoryQueryResult& Result)
+		int32 ShardStartTimeStep = ParseTimestepFromFilename(ShardFile);
+		
+		// Load the shard using TrajectoryData plugin API
+		FShardFileData ShardData = Loader->LoadShardFile(ShardFile);
+		if (!ShardData.bSuccess)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("LoadTrajectorySamplesForIds: Failed to load shard %s: %s"),
+				*ShardFile, *ShardData.ErrorMessage);
+			continue;
+		}
+		
+		int32 ShardEndTimeStep = ShardStartTimeStep + ShardData.Header.TimeStepIntervalSize - 1;
+		
+		// Skip shards that don't overlap with our time range
+		if (ShardEndTimeStep < StartTimeStep || ShardStartTimeStep > EndTimeStep)
+		{
+			continue;
+		}
+		
+		// Process entries in this shard
+		for (const FShardTrajectoryEntry& Entry : ShardData.Entries)
+		{
+			// Skip trajectories we're not interested in
+			if (!TrajectoryIdSet.Contains(Entry.TrajectoryId))
 			{
-				bQuerySuccess = Result.bSuccess;
-				ErrorMessage = Result.ErrorMessage;
+				continue;
+			}
+			
+			// Get or create the array for this trajectory
+			TArray<FTrajectorySamplePoint>& SamplePoints = OutTrajectoryData.FindOrAdd(Entry.TrajectoryId);
+			
+			// Add samples that fall within the time range
+			for (int32 LocalTimeStep = 0; LocalTimeStep < Entry.Positions.Num(); ++LocalTimeStep)
+			{
+				int32 GlobalTimeStep = ShardStartTimeStep + LocalTimeStep;
 				
-				if (Result.bSuccess)
+				// Skip samples outside the requested time range
+				if (GlobalTimeStep < StartTimeStep || GlobalTimeStep > EndTimeStep)
 				{
-					// Convert query results to our internal format
-					for (const FTrajectorySample& Sample : Result.Samples)
-					{
-						// Convert int64 back to uint32 for our internal use
-						uint32 TrajId = static_cast<uint32>(Sample.TrajectoryId);
-						TArray<FTrajectorySamplePoint>& SamplePoints = OutTrajectoryData.FindOrAdd(TrajId);
-						
-						if (Sample.bIsValid)
-						{
-							FTrajectorySamplePoint SamplePoint;
-							SamplePoint.Position = Sample.Position;
-							SamplePoint.TimeStep = Sample.TimeStep;
-							SamplePoint.Distance = 0.0f; // Will be calculated later if needed
-							
-							SamplePoints.Add(SamplePoint);
-						}
-					}
+					continue;
 				}
 				
-				bQueryComplete = true;
-			})
-		);
-		
-		if (!bStarted)
-		{
-			UE_LOG(LogTemp, Error, TEXT("USpatialHashTableManager::LoadTrajectorySamplesForIds: Failed to start single timestep query"));
-			return false;
-		}
-	}
-	else
-	{
-		// Use QueryTimeRangeAsync for time range queries
-		bool bStarted = Api->QueryTimeRangeAsync(
-			DatasetDirectory,
-			TrajectoryIdsInt64,
-			StartTimeStep,
-			EndTimeStep,
-			FOnTrajectoryTimeRangeComplete::CreateLambda([&](const FTrajectoryTimeRangeResult& Result)
-			{
-				bQuerySuccess = Result.bSuccess;
-				ErrorMessage = Result.ErrorMessage;
+				const FVector3f& Pos = Entry.Positions[LocalTimeStep];
 				
-				if (Result.bSuccess)
+				// Skip invalid positions
+				if (FMath::IsNaN(Pos.X) || FMath::IsNaN(Pos.Y) || FMath::IsNaN(Pos.Z))
 				{
-					// Convert query results to our internal format
-					for (const FTrajectoryTimeSeries& Series : Result.TimeSeries)
-					{
-						// Convert int64 back to uint32 for our internal use
-						uint32 TrajId = static_cast<uint32>(Series.TrajectoryId);
-						TArray<FTrajectorySamplePoint>& SamplePoints = OutTrajectoryData.FindOrAdd(TrajId);
-						
-						// Iterate through the time series samples
-						for (int32 i = 0; i < Series.Samples.Num(); ++i)
-						{
-							const FVector& Position = Series.Samples[i];
-							int32 TimeStep = Series.StartTimeStep + i;
-							
-							// Skip invalid positions (NaN check)
-							if (!FMath::IsNaN(Position.X) && !FMath::IsNaN(Position.Y) && !FMath::IsNaN(Position.Z))
-							{
-								FTrajectorySamplePoint SamplePoint;
-								SamplePoint.Position = Position;
-								SamplePoint.TimeStep = TimeStep;
-								SamplePoint.Distance = 0.0f; // Will be calculated later if needed
-								
-								SamplePoints.Add(SamplePoint);
-							}
-						}
-					}
+					continue;
 				}
 				
-				bQueryComplete = true;
-			})
-		);
-		
-		if (!bStarted)
-		{
-			UE_LOG(LogTemp, Error, TEXT("USpatialHashTableManager::LoadTrajectorySamplesForIds: Failed to start time range query"));
-			return false;
+				// Add the sample point
+				FTrajectorySamplePoint SamplePoint;
+				SamplePoint.Position = FVector(Pos.X, Pos.Y, Pos.Z);
+				SamplePoint.TimeStep = GlobalTimeStep;
+				SamplePoint.Distance = 0.0f; // Will be calculated later
+				
+				SamplePoints.Add(SamplePoint);
+			}
 		}
-	}
-	
-	// Wait for the async query to complete
-	// Note: This is not ideal for game thread, but necessary for synchronous API
-	const double StartTime = FPlatformTime::Seconds();
-	const double TimeoutSeconds = 30.0; // 30 second timeout
-	
-	while (!bQueryComplete)
-	{
-		FPlatformProcess::Sleep(0.01f); // Sleep 10ms between checks
-		
-		// Check for timeout
-		if ((FPlatformTime::Seconds() - StartTime) > TimeoutSeconds)
-		{
-			UE_LOG(LogTemp, Error, TEXT("USpatialHashTableManager::LoadTrajectorySamplesForIds: Query timed out after %.1f seconds"), TimeoutSeconds);
-			return false;
-		}
-	}
-	
-	// Check if query was successful
-	if (!bQuerySuccess)
-	{
-		UE_LOG(LogTemp, Error, TEXT("USpatialHashTableManager::LoadTrajectorySamplesForIds: Query failed: %s"), *ErrorMessage);
-		return false;
 	}
 	
 	return true;

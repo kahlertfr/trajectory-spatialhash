@@ -490,12 +490,12 @@ protected:
 
 	/**
 	 * Load trajectory sample data for specific trajectory IDs and time range
-	 * Uses the TrajectoryData plugin's C++ API (FTrajectoryDataCppApi) to load data asynchronously.
-	 * The plugin handles all shard file discovery and loading internally.
-	 * Note: This method blocks until the async query completes.
+	 * Loads data from shard files using synchronous LoadShardFile calls.
+	 * This method is called from synchronous query methods and uses direct shard loading
+	 * to avoid blocking the game thread with busy-waiting on async callbacks.
 	 * 
 	 * @param DatasetDirectory Base directory containing trajectory data
-	 * @param TrajectoryIds Array of trajectory IDs to load (uint32, converted to int64 internally)
+	 * @param TrajectoryIds Array of trajectory IDs to load
 	 * @param StartTimeStep First time step to load (inclusive)
 	 * @param EndTimeStep Last time step to load (inclusive)
 	 * @param OutTrajectoryData Map from trajectory ID to array of sample points
