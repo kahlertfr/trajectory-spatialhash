@@ -561,4 +561,11 @@ protected:
 		const TMap<uint32, TArray<FTrajectorySamplePoint>>& TrajectoryData,
 		float Radius,
 		TArray<FTrajectoryQueryResult>& OutExtendedResults) const;
+
+	/**
+	 * Helper to parse timestep number from shard filename
+	 * @param FilePath Path to shard file (e.g., "/path/shard-3046.bin")
+	 * @return Timestep number, or 0 if parsing fails
+	 */
+	static int32 ParseTimestepFromFilename(const FString& FilePath);
 };

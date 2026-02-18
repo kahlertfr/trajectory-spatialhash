@@ -1142,6 +1142,22 @@ FVector USpatialHashTableManager::GetTrajectoryPosition(int32 TrajectoryId, int3
 	return FVector::ZeroVector;
 }
 
+int32 USpatialHashTableManager::ParseTimestepFromFilename(const FString& FilePath)
+{
+	FString Filename = FPaths::GetCleanFilename(FilePath);
+	
+	// Expected format: "shard-XXXX.bin"
+	const int32 PrefixLength = 6;  // Length of "shard-"
+	const int32 SuffixLength = 4;  // Length of ".bin"
+	
+	if (Filename.StartsWith(TEXT("shard-")) && Filename.EndsWith(TEXT(".bin")))
+	{
+		FString NumberStr = Filename.Mid(PrefixLength, Filename.Len() - PrefixLength - SuffixLength);
+		return FCString::Atoi(*NumberStr);
+	}
+	return 0;
+}
+
 bool USpatialHashTableManager::LoadTrajectorySamplesForIds(
 	const FString& DatasetDirectory,
 	const TArray<uint32>& TrajectoryIds,
@@ -1201,18 +1217,6 @@ bool USpatialHashTableManager::LoadTrajectorySamplesForIds(
 	}
 	
 	ShardFiles.Sort();
-	
-	// Helper to parse timestep from filename
-	auto ParseTimestepFromFilename = [](const FString& FilePath) -> int32
-	{
-		FString Filename = FPaths::GetCleanFilename(FilePath);
-		if (Filename.StartsWith(TEXT("shard-")) && Filename.EndsWith(TEXT(".bin")))
-		{
-			FString NumberStr = Filename.Mid(6, Filename.Len() - 10);
-			return FCString::Atoi(*NumberStr);
-		}
-		return 0;
-	};
 	
 	// Create a set for fast trajectory ID lookup
 	TSet<uint32> TrajectoryIdSet(TrajectoryIds);
@@ -1326,18 +1330,6 @@ FString USpatialHashTableManager::FindShardFileForTimeStep(const FString& Datase
 	}
 	
 	ShardFiles.Sort();
-	
-	// Helper to parse timestep from filename
-	auto ParseTimestepFromFilename = [](const FString& FilePath) -> int32
-	{
-		FString Filename = FPaths::GetCleanFilename(FilePath);
-		if (Filename.StartsWith(TEXT("shard-")) && Filename.EndsWith(TEXT(".bin")))
-		{
-			FString NumberStr = Filename.Mid(6, Filename.Len() - 10);
-			return FCString::Atoi(*NumberStr);
-		}
-		return 0;
-	};
 	
 	// Get TrajectoryDataLoader to read shard headers
 	UTrajectoryDataLoader* Loader = UTrajectoryDataLoader::Get();
@@ -1493,7 +1485,8 @@ void USpatialHashTableManager::ExtendTrajectorySamples(
 		for (int32 i = 0; i < SamplePoints.Num(); ++i)
 		{
 			const FTrajectorySamplePoint& Sample = SamplePoints[i];
-			bool bWithinRadius = (Sample.Distance * Sample.Distance) <= RadiusSquared;
+			// Sample.Distance is already computed, not squared
+			bool bWithinRadius = Sample.Distance <= Radius;
 			
 			if (bWithinRadius && RangeStart == -1)
 			{
