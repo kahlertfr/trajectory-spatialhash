@@ -8,6 +8,10 @@
 #include "SpatialHashTableBuilder.h"
 #include "SpatialHashTableManager.generated.h"
 
+// Forward declare callback delegate types for async queries
+DECLARE_DELEGATE_OneParam(FOnSpatialHashQueryComplete, const TArray<FSpatialHashQueryResult>&);
+DECLARE_DELEGATE_TwoParams(FOnSpatialHashDualQueryComplete, const TArray<FSpatialHashQueryResult>&, const TArray<FSpatialHashQueryResult>&);
+
 /**
  * Result structure for nearest neighbor queries
  */
@@ -367,6 +371,92 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Spatial Hash")
 	void GetMemoryStats(int32& OutTotalHashTables, int64& OutTotalMemoryBytes) const;
+
+	// ============================================================================
+	// ASYNC QUERY METHODS (Non-blocking with callbacks)
+	// ============================================================================
+
+	/**
+	 * Async version: Query trajectories with actual distance calculation for a single point at a single timestep
+	 * Uses TrajectoryDataCppApi for non-blocking data loading. Results delivered via callback.
+	 * 
+	 * @param DatasetDirectory Path to dataset containing trajectory data
+	 * @param QueryPosition World position to query
+	 * @param Radius Search radius in world units
+	 * @param CellSize Cell size of hash table to use
+	 * @param TimeStep Time step to query
+	 * @param OnComplete Callback invoked with results when query completes
+	 */
+	void QueryRadiusWithDistanceCheckAsync(
+		const FString& DatasetDirectory,
+		FVector QueryPosition,
+		float Radius,
+		float CellSize,
+		int32 TimeStep,
+		FOnSpatialHashQueryComplete OnComplete);
+
+	/**
+	 * Async version: Query trajectories with dual radius for a single point at a single timestep
+	 * Uses TrajectoryDataCppApi for non-blocking data loading. Results delivered via callback.
+	 * 
+	 * @param DatasetDirectory Path to dataset containing trajectory data
+	 * @param QueryPosition World position to query
+	 * @param InnerRadius Inner search radius in world units
+	 * @param OuterRadius Outer search radius in world units (must be >= InnerRadius)
+	 * @param CellSize Cell size of hash table to use
+	 * @param TimeStep Time step to query
+	 * @param OnComplete Callback invoked with inner and outer results when query completes
+	 */
+	void QueryDualRadiusWithDistanceCheckAsync(
+		const FString& DatasetDirectory,
+		FVector QueryPosition,
+		float InnerRadius,
+		float OuterRadius,
+		float CellSize,
+		int32 TimeStep,
+		FOnSpatialHashDualQueryComplete OnComplete);
+
+	/**
+	 * Async version: Query trajectories over a time range for a single point
+	 * Uses TrajectoryDataCppApi for non-blocking data loading. Results delivered via callback.
+	 * 
+	 * @param DatasetDirectory Path to dataset containing trajectory data
+	 * @param QueryPosition World position to query
+	 * @param Radius Search radius in world units
+	 * @param CellSize Cell size of hash table to use
+	 * @param StartTimeStep First time step to query (inclusive)
+	 * @param EndTimeStep Last time step to query (inclusive)
+	 * @param OnComplete Callback invoked with results when query completes
+	 */
+	void QueryRadiusOverTimeRangeAsync(
+		const FString& DatasetDirectory,
+		FVector QueryPosition,
+		float Radius,
+		float CellSize,
+		int32 StartTimeStep,
+		int32 EndTimeStep,
+		FOnSpatialHashQueryComplete OnComplete);
+
+	/**
+	 * Async version: Query trajectories for a query trajectory over a time range
+	 * Uses TrajectoryDataCppApi for non-blocking data loading. Results delivered via callback.
+	 * 
+	 * @param DatasetDirectory Path to dataset containing trajectory data
+	 * @param QueryTrajectoryId ID of the query trajectory
+	 * @param Radius Search radius in world units
+	 * @param CellSize Cell size of hash table to use
+	 * @param StartTimeStep First time step to query (inclusive)
+	 * @param EndTimeStep Last time step to query (inclusive)
+	 * @param OnComplete Callback invoked with results when query completes
+	 */
+	void QueryTrajectoryRadiusOverTimeRangeAsync(
+		const FString& DatasetDirectory,
+		uint32 QueryTrajectoryId,
+		float Radius,
+		float CellSize,
+		int32 StartTimeStep,
+		int32 EndTimeStep,
+		FOnSpatialHashQueryComplete OnComplete);
 
 protected:
 	/** Tolerance for floating-point comparison of cell sizes */
