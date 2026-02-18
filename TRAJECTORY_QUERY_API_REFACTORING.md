@@ -1,5 +1,11 @@
 # Refactoring to Use TrajectoryData Plugin Query API
 
+> **⚠️ STATUS: REVERTED - This refactoring was reverted due to API not being available**
+> 
+> This document describes a **speculative refactoring** that assumed an API from the TrajectoryData plugin that doesn't exist yet. The refactoring was reverted because it caused compilation errors. See [COMPILER_ERROR_FIX.md](COMPILER_ERROR_FIX.md) for details.
+> 
+> The code currently uses manual shard loading with `LoadShardFile()` which is working and stable. This document is preserved as a reference for a potential future improvement when/if the TrajectoryData plugin implements the described query API.
+
 ## Problem
 
 The `SpatialHashTableManager` was directly handling trajectory shard file discovery and loading, which violated separation of concerns. Specifically, `LoadTrajectorySamplesForIds()` was:

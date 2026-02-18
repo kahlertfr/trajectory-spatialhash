@@ -1,5 +1,11 @@
 # Summary: TrajectoryData Query API Integration
 
+> **⚠️ STATUS: REVERTED - This integration was reverted due to API not being available**
+> 
+> This document describes a **speculative integration** that was attempted but reverted because the TrajectoryData plugin doesn't provide the assumed API. The integration caused compilation errors and was reverted back to the working manual shard loading approach. See [COMPILER_ERROR_FIX.md](COMPILER_ERROR_FIX.md) for details.
+> 
+> This document is preserved as a reference for what was attempted and what would be needed for a future implementation.
+
 ## Overview
 
 Successfully refactored `SpatialHashTableManager` to use the TrajectoryData plugin's `FTrajectoryDataCppApi` for querying trajectory data, eliminating the manager's responsibility for shard file discovery and loading.
