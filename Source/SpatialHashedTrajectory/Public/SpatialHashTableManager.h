@@ -76,7 +76,7 @@ struct FTrajectorySamplePoint
  * Result structure containing full trajectory with all sample points
  */
 USTRUCT(BlueprintType)
-struct FTrajectoryQueryResult
+struct FSpatialHashQueryResult
 {
 	GENERATED_BODY()
 
@@ -88,12 +88,12 @@ struct FTrajectoryQueryResult
 	UPROPERTY(BlueprintReadOnly, Category = "Spatial Hash")
 	TArray<FTrajectorySamplePoint> SamplePoints;
 
-	FTrajectoryQueryResult()
+	FSpatialHashQueryResult()
 		: TrajectoryId(0)
 	{
 	}
 
-	FTrajectoryQueryResult(int32 InId)
+	FSpatialHashQueryResult(int32 InId)
 		: TrajectoryId(InId)
 	{
 	}
@@ -243,7 +243,7 @@ public:
 		float Radius,
 		float CellSize,
 		int32 TimeStep,
-		TArray<FTrajectoryQueryResult>& OutResults);
+		TArray<FSpatialHashQueryResult>& OutResults);
 
 	/**
 	 * Query trajectories with dual radius (inner and outer) for a single point at a single timestep
@@ -267,8 +267,8 @@ public:
 		float OuterRadius,
 		float CellSize,
 		int32 TimeStep,
-		TArray<FTrajectoryQueryResult>& OutInnerResults,
-		TArray<FTrajectoryQueryResult>& OutOuterOnlyResults);
+		TArray<FSpatialHashQueryResult>& OutInnerResults,
+		TArray<FSpatialHashQueryResult>& OutOuterOnlyResults);
 
 	/**
 	 * Query trajectories over a time range for a single point (Case B)
@@ -291,7 +291,7 @@ public:
 		float CellSize,
 		int32 StartTimeStep,
 		int32 EndTimeStep,
-		TArray<FTrajectoryQueryResult>& OutResults);
+		TArray<FSpatialHashQueryResult>& OutResults);
 
 	/**
 	 * Query trajectories for a query trajectory over a time range (Case C)
@@ -316,7 +316,7 @@ public:
 		float CellSize,
 		int32 StartTimeStep,
 		int32 EndTimeStep,
-		TArray<FTrajectoryQueryResult>& OutResults);
+		TArray<FSpatialHashQueryResult>& OutResults);
 
 	/**
 	 * Unload hash tables for a specific cell size
@@ -529,7 +529,7 @@ protected:
 		const FVector& QueryPosition,
 		float Radius,
 		const TMap<uint32, TArray<FTrajectorySamplePoint>>& TrajectoryData,
-		TArray<FTrajectoryQueryResult>& OutResults) const;
+		TArray<FSpatialHashQueryResult>& OutResults) const;
 
 	/**
 	 * Compute actual distance for dual radius query
@@ -547,8 +547,8 @@ protected:
 		float InnerRadius,
 		float OuterRadius,
 		const TMap<uint32, TArray<FTrajectorySamplePoint>>& TrajectoryData,
-		TArray<FTrajectoryQueryResult>& OutInnerResults,
-		TArray<FTrajectoryQueryResult>& OutOuterOnlyResults) const;
+		TArray<FSpatialHashQueryResult>& OutInnerResults,
+		TArray<FSpatialHashQueryResult>& OutOuterOnlyResults) const;
 
 	/**
 	 * Extend trajectory samples to include all points from first entry to last exit
@@ -561,7 +561,7 @@ protected:
 	void ExtendTrajectorySamples(
 		const TMap<uint32, TArray<FTrajectorySamplePoint>>& TrajectoryData,
 		float Radius,
-		TArray<FTrajectoryQueryResult>& OutExtendedResults) const;
+		TArray<FSpatialHashQueryResult>& OutExtendedResults) const;
 
 	/**
 	 * Helper to parse timestep number from shard filename

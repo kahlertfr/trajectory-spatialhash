@@ -116,7 +116,7 @@ public:
 	 * Visualize query results in the world
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Visualization")
-	void VisualizeResults(const TArray<FTrajectoryQueryResult>& Results, FLinearColor Color);
+	void VisualizeResults(const TArray<FSpatialHashQueryResult>& Results, FLinearColor Color);
 
 	/**
 	 * Draw a sphere to represent the query radius
@@ -130,7 +130,7 @@ private:
 	USpatialHashTableManager* Manager;
 
 	/** Helper to log query results */
-	void LogQueryResults(const TArray<FTrajectoryQueryResult>& Results, const FString& QueryName);
+	void LogQueryResults(const TArray<FSpatialHashQueryResult>& Results, const FString& QueryName);
 };
 
 // Implementation
@@ -202,7 +202,7 @@ void AFixedRadiusQueryExample::ExampleCaseA_SinglePointSingleTimestep()
 		*QueryPosition.ToString(), QueryRadius, TimeStep);
 
 	// Execute query
-	TArray<FTrajectoryQueryResult> Results;
+	TArray<FSpatialHashQueryResult> Results;
 	int32 NumFound = Manager->QueryRadiusWithDistanceCheck(
 		DatasetDirectory,
 		QueryPosition,
@@ -239,7 +239,7 @@ void AFixedRadiusQueryExample::ExampleCaseB_SinglePointTimeRange()
 		*QueryPosition.ToString(), QueryRadius, StartTimeStep, EndTimeStep);
 
 	// Execute query
-	TArray<FTrajectoryQueryResult> Results;
+	TArray<FSpatialHashQueryResult> Results;
 	int32 NumFound = Manager->QueryRadiusOverTimeRange(
 		DatasetDirectory,
 		QueryPosition,
@@ -275,7 +275,7 @@ void AFixedRadiusQueryExample::ExampleCaseC_TrajectoryTimeRange()
 		QueryTrajectoryId, QueryRadius, StartTimeStep, EndTimeStep);
 
 	// Execute query
-	TArray<FTrajectoryQueryResult> Results;
+	TArray<FSpatialHashQueryResult> Results;
 	int32 NumFound = Manager->QueryTrajectoryRadiusOverTimeRange(
 		DatasetDirectory,
 		QueryTrajectoryId,
@@ -313,8 +313,8 @@ void AFixedRadiusQueryExample::ExampleDualRadius()
 		*QueryPosition.ToString(), InnerRadius, QueryRadius, TimeStep);
 
 	// Execute query
-	TArray<FTrajectoryQueryResult> InnerResults;
-	TArray<FTrajectoryQueryResult> OuterOnlyResults;
+	TArray<FSpatialHashQueryResult> InnerResults;
+	TArray<FSpatialHashQueryResult> OuterOnlyResults;
 	
 	int32 TotalFound = Manager->QueryDualRadiusWithDistanceCheck(
 		DatasetDirectory,
@@ -345,12 +345,12 @@ void AFixedRadiusQueryExample::ExampleDualRadius()
 }
 
 void AFixedRadiusQueryExample::LogQueryResults(
-	const TArray<FTrajectoryQueryResult>& Results,
+	const TArray<FSpatialHashQueryResult>& Results,
 	const FString& QueryName)
 {
 	UE_LOG(LogTemp, Log, TEXT("--- %s Results ---"), *QueryName);
 	
-	for (const FTrajectoryQueryResult& Result : Results)
+	for (const FSpatialHashQueryResult& Result : Results)
 	{
 		UE_LOG(LogTemp, Log, TEXT("Trajectory %d: %d sample points"),
 			Result.TrajectoryId, Result.SamplePoints.Num());
@@ -373,7 +373,7 @@ void AFixedRadiusQueryExample::LogQueryResults(
 }
 
 void AFixedRadiusQueryExample::VisualizeResults(
-	const TArray<FTrajectoryQueryResult>& Results,
+	const TArray<FSpatialHashQueryResult>& Results,
 	FLinearColor Color)
 {
 	if (!GetWorld())
@@ -382,7 +382,7 @@ void AFixedRadiusQueryExample::VisualizeResults(
 	const float SphereRadius = 5.0f;
 	const float LineDuration = 10.0f;
 
-	for (const FTrajectoryQueryResult& Result : Results)
+	for (const FSpatialHashQueryResult& Result : Results)
 	{
 		// Draw trajectory path
 		for (int32 i = 0; i < Result.SamplePoints.Num(); ++i)

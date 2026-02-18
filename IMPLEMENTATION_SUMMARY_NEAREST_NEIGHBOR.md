@@ -14,7 +14,7 @@ Represents a single sample point from a trajectory:
 - `TimeStep`: Time step index (int32)
 - `Distance`: Distance from query point (float)
 
-#### `FTrajectoryQueryResult`
+#### `FSpatialHashQueryResult`
 Contains all sample points for a trajectory that match the query:
 - `TrajectoryId`: Unique trajectory identifier (int32)
 - `SamplePoints`: Array of FTrajectorySamplePoint
@@ -31,7 +31,7 @@ int32 QueryRadiusWithDistanceCheck(
     float Radius,
     float CellSize,
     int32 TimeStep,
-    TArray<FTrajectoryQueryResult>& OutResults);
+    TArray<FSpatialHashQueryResult>& OutResults);
 ```
 Returns one sample per trajectory within the query radius at a specific timestep.
 
@@ -44,7 +44,7 @@ int32 QueryRadiusOverTimeRange(
     float CellSize,
     int32 StartTimeStep,
     int32 EndTimeStep,
-    TArray<FTrajectoryQueryResult>& OutResults);
+    TArray<FSpatialHashQueryResult>& OutResults);
 ```
 Returns trajectories with samples within the query radius over a time range.
 
@@ -57,7 +57,7 @@ int32 QueryTrajectoryRadiusOverTimeRange(
     float CellSize,
     int32 StartTimeStep,
     int32 EndTimeStep,
-    TArray<FTrajectoryQueryResult>& OutResults);
+    TArray<FSpatialHashQueryResult>& OutResults);
 ```
 Returns trajectories that intersect with a moving query trajectory, including all samples from first entry to last exit (accounting for re-entry).
 
@@ -70,8 +70,8 @@ int32 QueryDualRadiusWithDistanceCheck(
     float OuterRadius,
     float CellSize,
     int32 TimeStep,
-    TArray<FTrajectoryQueryResult>& OutInnerResults,
-    TArray<FTrajectoryQueryResult>& OutOuterOnlyResults);
+    TArray<FSpatialHashQueryResult>& OutInnerResults,
+    TArray<FSpatialHashQueryResult>& OutOuterOnlyResults);
 ```
 Queries inner and outer radius simultaneously for memory efficiency. Returns two separate result arrays.
 
@@ -179,7 +179,7 @@ All query methods include comprehensive error handling:
    - Implemented `QueryTrajectoryIdsInRadius` with cell range calculation
 
 3. `Source/SpatialHashedTrajectory/Public/SpatialHashTableManager.h`
-   - Added `FTrajectorySamplePoint` and `FTrajectoryQueryResult` structures
+   - Added `FTrajectorySamplePoint` and `FSpatialHashQueryResult` structures
    - Added four new query methods (Case A, B, C, dual radius)
    - Added helper methods for data loading and filtering
    - Added `ParseTimestepFromFilename` static helper
@@ -234,7 +234,7 @@ USpatialHashTableManager* Manager = NewObject<USpatialHashTableManager>();
 Manager->LoadHashTables(DatasetDirectory, 10.0f, 0, 1000, true);
 
 // Query single point at single timestep (Case A)
-TArray<FTrajectoryQueryResult> Results;
+TArray<FSpatialHashQueryResult> Results;
 int32 NumFound = Manager->QueryRadiusWithDistanceCheck(
     DatasetDirectory,
     FVector(100, 200, 50),
@@ -245,7 +245,7 @@ int32 NumFound = Manager->QueryRadiusWithDistanceCheck(
 );
 
 // Process results
-for (const FTrajectoryQueryResult& Result : Results)
+for (const FSpatialHashQueryResult& Result : Results)
 {
     UE_LOG(LogTemp, Log, TEXT("Trajectory %d: %d samples"),
         Result.TrajectoryId, Result.SamplePoints.Num());

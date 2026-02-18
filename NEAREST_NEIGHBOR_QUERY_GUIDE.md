@@ -31,7 +31,7 @@ float CellSize = 10.0f;
 int32 TimeStep = 100;
 
 // Execute query
-TArray<FTrajectoryQueryResult> Results;
+TArray<FSpatialHashQueryResult> Results;
 int32 NumFound = Manager->QueryRadiusWithDistanceCheck(
     DatasetDirectory,
     QueryPosition,
@@ -41,7 +41,7 @@ int32 NumFound = Manager->QueryRadiusWithDistanceCheck(
     Results);
 
 // Process results
-for (const FTrajectoryQueryResult& Result : Results)
+for (const FSpatialHashQueryResult& Result : Results)
 {
     UE_LOG(LogTemp, Log, TEXT("Trajectory %d has %d samples within radius"),
         Result.TrajectoryId, Result.SamplePoints.Num());
@@ -79,7 +79,7 @@ float CellSize = 10.0f;
 int32 StartTimeStep = 100;
 int32 EndTimeStep = 200;
 
-TArray<FTrajectoryQueryResult> Results;
+TArray<FSpatialHashQueryResult> Results;
 int32 NumFound = Manager->QueryRadiusOverTimeRange(
     DatasetDirectory,
     QueryPosition,
@@ -105,7 +105,7 @@ float CellSize = 10.0f;
 int32 StartTimeStep = 100;
 int32 EndTimeStep = 200;
 
-TArray<FTrajectoryQueryResult> Results;
+TArray<FSpatialHashQueryResult> Results;
 int32 NumFound = Manager->QueryTrajectoryRadiusOverTimeRange(
     DatasetDirectory,
     QueryTrajectoryId,
@@ -133,8 +133,8 @@ float OuterRadius = 50.0f;
 float CellSize = 10.0f;
 int32 TimeStep = 100;
 
-TArray<FTrajectoryQueryResult> InnerResults;
-TArray<FTrajectoryQueryResult> OuterOnlyResults;
+TArray<FSpatialHashQueryResult> InnerResults;
+TArray<FSpatialHashQueryResult> OuterOnlyResults;
 
 int32 TotalFound = Manager->QueryDualRadiusWithDistanceCheck(
     DatasetDirectory,
@@ -165,12 +165,12 @@ struct FTrajectorySamplePoint
 };
 ```
 
-### FTrajectoryQueryResult
+### FSpatialHashQueryResult
 
 Contains all sample points for a trajectory that match the query:
 
 ```cpp
-struct FTrajectoryQueryResult
+struct FSpatialHashQueryResult
 {
     int32 TrajectoryId;                          // Trajectory ID
     TArray<FTrajectorySamplePoint> SamplePoints; // All matching sample points
@@ -272,7 +272,7 @@ FVector QueryPosition = GetActorLocation();
 float Radius = 50.0f;
 int32 QueryTimeStep = 500;
 
-TArray<FTrajectoryQueryResult> Results;
+TArray<FSpatialHashQueryResult> Results;
 int32 NumFound = Manager->QueryRadiusWithDistanceCheck(
     DatasetDirectory,
     QueryPosition,
@@ -282,7 +282,7 @@ int32 NumFound = Manager->QueryRadiusWithDistanceCheck(
     Results);
 
 // 4. Visualize or process results
-for (const FTrajectoryQueryResult& Result : Results)
+for (const FSpatialHashQueryResult& Result : Results)
 {
     for (const FTrajectorySamplePoint& Sample : Result.SamplePoints)
     {

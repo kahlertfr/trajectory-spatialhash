@@ -193,7 +193,7 @@ On Some Event
    ├─ Radius: 50.0
    ├─ Cell Size: 10.0
    ├─ Time Step: Current time step
-   └─ Out Results: Array of FTrajectoryQueryResult
+   └─ Out Results: Array of FSpatialHashQueryResult
       └─ ForEach Loop
          └─ Process trajectory with full sample data
             ├─ Trajectory ID

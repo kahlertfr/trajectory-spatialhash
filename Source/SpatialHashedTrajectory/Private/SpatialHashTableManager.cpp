@@ -1145,7 +1145,7 @@ bool USpatialHashTableManager::LoadTrajectorySamplesForIds(
 	// Check if we're querying a single timestep or a range
 	bool bSingleTimeStep = (StartTimeStep == EndTimeStep);
 	
-	FTrajectoryQueryResult QueryResult;
+	FSpatialHashQueryResult QueryResult;
 	
 	if (bSingleTimeStep)
 	{
@@ -1238,7 +1238,7 @@ void USpatialHashTableManager::FilterByDistance(
 	const FVector& QueryPosition,
 	float Radius,
 	const TMap<uint32, TArray<FTrajectorySamplePoint>>& TrajectoryData,
-	TArray<FTrajectoryQueryResult>& OutResults) const
+	TArray<FSpatialHashQueryResult>& OutResults) const
 {
 	OutResults.Reset();
 	
@@ -1249,7 +1249,7 @@ void USpatialHashTableManager::FilterByDistance(
 		uint32 TrajectoryId = Pair.Key;
 		const TArray<FTrajectorySamplePoint>& SamplePoints = Pair.Value;
 		
-		FTrajectoryQueryResult Result(TrajectoryId);
+		FSpatialHashQueryResult Result(TrajectoryId);
 		
 		for (const FTrajectorySamplePoint& Sample : SamplePoints)
 		{
@@ -1276,8 +1276,8 @@ void USpatialHashTableManager::FilterByDualRadius(
 	float InnerRadius,
 	float OuterRadius,
 	const TMap<uint32, TArray<FTrajectorySamplePoint>>& TrajectoryData,
-	TArray<FTrajectoryQueryResult>& OutInnerResults,
-	TArray<FTrajectoryQueryResult>& OutOuterOnlyResults) const
+	TArray<FSpatialHashQueryResult>& OutInnerResults,
+	TArray<FSpatialHashQueryResult>& OutOuterOnlyResults) const
 {
 	OutInnerResults.Reset();
 	OutOuterOnlyResults.Reset();
@@ -1290,8 +1290,8 @@ void USpatialHashTableManager::FilterByDualRadius(
 		uint32 TrajectoryId = Pair.Key;
 		const TArray<FTrajectorySamplePoint>& SamplePoints = Pair.Value;
 		
-		FTrajectoryQueryResult InnerResult(TrajectoryId);
-		FTrajectoryQueryResult OuterOnlyResult(TrajectoryId);
+		FSpatialHashQueryResult InnerResult(TrajectoryId);
+		FSpatialHashQueryResult OuterOnlyResult(TrajectoryId);
 		
 		for (const FTrajectorySamplePoint& Sample : SamplePoints)
 		{
@@ -1326,7 +1326,7 @@ void USpatialHashTableManager::FilterByDualRadius(
 void USpatialHashTableManager::ExtendTrajectorySamples(
 	const TMap<uint32, TArray<FTrajectorySamplePoint>>& TrajectoryData,
 	float Radius,
-	TArray<FTrajectoryQueryResult>& OutExtendedResults) const
+	TArray<FSpatialHashQueryResult>& OutExtendedResults) const
 {
 	OutExtendedResults.Reset();
 	
@@ -1391,7 +1391,7 @@ void USpatialHashTableManager::ExtendTrajectorySamples(
 		LastExitIndex = WithinRadiusRanges[WithinRadiusRanges.Num() - 1].Value;
 		
 		// Create result with extended range
-		FTrajectoryQueryResult Result(TrajectoryId);
+		FSpatialHashQueryResult Result(TrajectoryId);
 		for (int32 i = FirstEntryIndex; i <= LastExitIndex; ++i)
 		{
 			Result.SamplePoints.Add(SamplePoints[i]);
@@ -1407,7 +1407,7 @@ int32 USpatialHashTableManager::QueryRadiusWithDistanceCheck(
 	float Radius,
 	float CellSize,
 	int32 TimeStep,
-	TArray<FTrajectoryQueryResult>& OutResults)
+	TArray<FSpatialHashQueryResult>& OutResults)
 {
 	OutResults.Reset();
 	
@@ -1450,8 +1450,8 @@ int32 USpatialHashTableManager::QueryDualRadiusWithDistanceCheck(
 	float OuterRadius,
 	float CellSize,
 	int32 TimeStep,
-	TArray<FTrajectoryQueryResult>& OutInnerResults,
-	TArray<FTrajectoryQueryResult>& OutOuterOnlyResults)
+	TArray<FSpatialHashQueryResult>& OutInnerResults,
+	TArray<FSpatialHashQueryResult>& OutOuterOnlyResults)
 {
 	OutInnerResults.Reset();
 	OutOuterOnlyResults.Reset();
@@ -1503,7 +1503,7 @@ int32 USpatialHashTableManager::QueryRadiusOverTimeRange(
 	float CellSize,
 	int32 StartTimeStep,
 	int32 EndTimeStep,
-	TArray<FTrajectoryQueryResult>& OutResults)
+	TArray<FSpatialHashQueryResult>& OutResults)
 {
 	OutResults.Reset();
 	
@@ -1563,7 +1563,7 @@ int32 USpatialHashTableManager::QueryTrajectoryRadiusOverTimeRange(
 	float CellSize,
 	int32 StartTimeStep,
 	int32 EndTimeStep,
-	TArray<FTrajectoryQueryResult>& OutResults)
+	TArray<FSpatialHashQueryResult>& OutResults)
 {
 	OutResults.Reset();
 	
