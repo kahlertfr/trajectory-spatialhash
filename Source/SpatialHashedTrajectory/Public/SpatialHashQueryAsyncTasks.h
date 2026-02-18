@@ -53,10 +53,19 @@ private:
 	UPROPERTY()
 	USpatialHashTableManager* SpatialHashManager;
 	
+	UPROPERTY()
 	FString Dataset;
+	
+	UPROPERTY()
 	FVector Position;
+	
+	UPROPERTY()
 	float QueryRadius;
+	
+	UPROPERTY()
 	float HashCellSize;
+	
+	UPROPERTY()
 	int32 QueryTimeStep;
 };
 
@@ -104,11 +113,22 @@ private:
 	UPROPERTY()
 	USpatialHashTableManager* SpatialHashManager;
 	
+	UPROPERTY()
 	FString Dataset;
+	
+	UPROPERTY()
 	FVector Position;
+	
+	UPROPERTY()
 	float Inner;
+	
+	UPROPERTY()
 	float Outer;
+	
+	UPROPERTY()
 	float HashCellSize;
+	
+	UPROPERTY()
 	int32 QueryTimeStep;
 };
 
@@ -156,11 +176,22 @@ private:
 	UPROPERTY()
 	USpatialHashTableManager* SpatialHashManager;
 	
+	UPROPERTY()
 	FString Dataset;
+	
+	UPROPERTY()
 	FVector Position;
+	
+	UPROPERTY()
 	float QueryRadius;
+	
+	UPROPERTY()
 	float HashCellSize;
+	
+	UPROPERTY()
 	int32 StartTime;
+	
+	UPROPERTY()
 	int32 EndTime;
 };
 
@@ -208,10 +239,21 @@ private:
 	UPROPERTY()
 	USpatialHashTableManager* SpatialHashManager;
 	
+	UPROPERTY()
 	FString Dataset;
+	
+	UPROPERTY()
 	int32 TrajId;
+	
+	UPROPERTY()
 	float QueryRadius;
+	
+	UPROPERTY()
 	float HashCellSize;
+	
+	UPROPERTY()
 	int32 StartTime;
+	
+	UPROPERTY()
 	int32 EndTime;
 };
