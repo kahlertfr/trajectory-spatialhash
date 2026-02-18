@@ -6,7 +6,7 @@ Multiple methods in `SpatialHashTableManager.cpp` were manually iterating throug
 
 1. `BuildHashTablesIncrementallyFromShards()` - lines 576-605
 2. `LoadTrajectoryDataFromDirectory()` - lines 847-886  
-3. `LoadTrajectorySamplesForIds()` - lines 1191-1270
+3. `LoadTrajectorySamplesForIds()` - lines 1191-1270 (**Now refactored - see update below**)
 4. `FindShardFileForTimeStep()` - lines 1297-1354
 
 Each method independently performed:
@@ -39,6 +39,21 @@ bool GetShardFiles(const FString& DatasetDirectory, TArray<FString>& OutShardFil
 - Consistent error handling and logging
 - Returns sorted shard file paths
 - Clear documentation about delegation to TrajectoryData plugin
+
+## Update: LoadTrajectorySamplesForIds Refactored
+
+**Note:** `LoadTrajectorySamplesForIds()` has since been refactored to use the TrajectoryData plugin's `FTrajectoryDataCppApi` query methods (`QuerySingleTimeStepAsync` and `QueryTimeRangeAsync`). It no longer uses `GetShardFiles()` at all.
+
+See [TRAJECTORY_QUERY_API_REFACTORING.md](TRAJECTORY_QUERY_API_REFACTORING.md) for details.
+
+## Current Usage
+
+The `GetShardFiles()` helper is now primarily used by methods that need access to **all trajectory data** for hash table building:
+
+1. ✅ `BuildHashTablesIncrementallyFromShards()` - Uses GetShardFiles() (needs complete dataset)
+2. ✅ `LoadTrajectoryDataFromDirectory()` - Uses GetShardFiles() (needs complete dataset)
+3. ❌ `LoadTrajectorySamplesForIds()` - **No longer uses GetShardFiles()** (uses query API instead)
+4. ✅ `FindShardFileForTimeStep()` - Uses GetShardFiles() (but method appears unused)
 
 ## Implementation
 
