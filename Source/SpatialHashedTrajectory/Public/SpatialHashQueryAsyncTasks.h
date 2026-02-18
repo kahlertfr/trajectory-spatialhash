@@ -120,10 +120,10 @@ private:
 	FVector Position;
 	
 	UPROPERTY()
-	float Inner;
+	float InnerRadius;
 	
 	UPROPERTY()
-	float Outer;
+	float OuterRadius;
 	
 	UPROPERTY()
 	float HashCellSize;

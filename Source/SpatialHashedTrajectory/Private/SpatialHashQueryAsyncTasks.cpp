@@ -78,8 +78,8 @@ USpatialHashQueryDualRadiusAsyncTask* USpatialHashQueryDualRadiusAsyncTask::Quer
 	Task->SpatialHashManager = Manager;
 	Task->Dataset = DatasetDirectory;
 	Task->Position = QueryPosition;
-	Task->Inner = InnerRadius;
-	Task->Outer = OuterRadius;
+	Task->InnerRadius = InnerRadius;
+	Task->OuterRadius = OuterRadius;
 	Task->HashCellSize = CellSize;
 	Task->QueryTimeStep = TimeStep;
 	Task->RegisterWithGameInstance(WorldContextObject);
@@ -103,8 +103,8 @@ void USpatialHashQueryDualRadiusAsyncTask::Activate()
 	SpatialHashManager->QueryDualRadiusWithDistanceCheckAsync(
 		Dataset,
 		Position,
-		Inner,
-		Outer,
+		InnerRadius,
+		OuterRadius,
 		HashCellSize,
 		QueryTimeStep,
 		FOnSpatialHashDualQueryComplete::CreateLambda([WeakThis](const TArray<FSpatialHashQueryResult>& InnerResults, const TArray<FSpatialHashQueryResult>& OuterResults)
