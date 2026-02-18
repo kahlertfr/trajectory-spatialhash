@@ -16,7 +16,7 @@ This plugin implements a spatial hash data structure optimized for fast spatial 
 - **Trajectory Integration**: Designed to work seamlessly with trajectory data
 - **Runtime Module**: Lightweight runtime-only module with minimal overhead
 - **🆕 Async Query Support**: Non-blocking queries using TrajectoryData plugin's async API
-- **🆕 Blueprint Async Queries**: Blueprint-accessible async methods for smooth performance
+- **🆕 Blueprint Async Task Nodes**: Blueprint-accessible async task nodes for smooth performance
 
 ## New: Async Query Methods (C++ and Blueprint)
 
@@ -37,10 +37,10 @@ Manager->QueryRadiusWithDistanceCheckAsync(
 
 **Blueprint Example:**
 ```
-Call "Query Radius With Distance Check Async BP"
-├─ Dataset Directory, Query Position, Radius, Cell Size, Time Step
-└─ On Query Complete: Bind to Custom Event
-    └─ Event fires when results are ready (game thread unblocked)
+Call "Query Radius Async" (Blueprint Async Action)
+├─ Returns async task node with output execution pins
+├─ "On Complete" pin fires when results ready
+└─ Results parameter contains query results
 ```
 
 **Benefits:**
@@ -51,10 +51,8 @@ Call "Query Radius With Distance Check Async BP"
 - ✅ Available in both C++ and Blueprint
 
 **Available Async Methods:**
-- `QueryRadiusWithDistanceCheckAsync()` / `QueryRadiusWithDistanceCheckAsyncBP()` - Single point, single timestep
-- `QueryDualRadiusWithDistanceCheckAsync()` / `QueryDualRadiusWithDistanceCheckAsyncBP()` - Inner/outer radius simultaneously  
-- `QueryRadiusOverTimeRangeAsync()` / `QueryRadiusOverTimeRangeAsyncBP()` - Single point over time range
-- `QueryTrajectoryRadiusOverTimeRangeAsync()` / `QueryTrajectoryRadiusOverTimeRangeAsyncBP()` - Trajectory interaction queries
+- C++: `QueryRadiusWithDistanceCheckAsync()`, `QueryDualRadiusWithDistanceCheckAsync()`, `QueryRadiusOverTimeRangeAsync()`, `QueryTrajectoryRadiusOverTimeRangeAsync()`
+- Blueprint: `QueryRadiusAsync`, `QueryDualRadiusAsync`, `QueryTimeRangeAsync`, `QueryTrajectoryAsync`
 
 📖 **See [ASYNC_QUERY_METHODS.md](ASYNC_QUERY_METHODS.md) for complete C++ documentation and examples!**
 📖 **See README section "Async Queries (Blueprint)" for Blueprint usage examples.**
@@ -262,69 +260,70 @@ On Some Event
 
 **⚠️ IMPORTANT: Use Async Methods to Prevent Game Thread Blocking**
 
-The synchronous query methods (`Query Radius With Distance Check`, etc.) can block the game thread during disk I/O, causing frame rate stutters. For smooth performance, use the async Blueprint methods instead:
+The synchronous query methods (`Query Radius With Distance Check`, etc.) can block the game thread during disk I/O, causing frame rate stutters. For smooth performance, use the async Blueprint task nodes instead:
 
 **Async Query Benefits:**
 - ✅ **Non-blocking** - Game thread continues during data loading
 - ✅ **Smooth frame rate** - No stutters even with large datasets
-- ✅ **Event-driven** - Results delivered via Blueprint events
+- ✅ **Event-driven** - Results delivered via Blueprint output pins
 - ✅ **Production-ready** - Safe for shipping games
 
-**Available Async Blueprint Methods:**
+**Available Async Blueprint Task Nodes:**
 
-1. **Query Radius With Distance Check Async BP** - Single point, single timestep
-2. **Query Dual Radius With Distance Check Async BP** - Inner/outer radius simultaneously
-3. **Query Radius Over Time Range Async BP** - Single point over time range
-4. **Query Trajectory Radius Over Time Range Async BP** - Trajectory interaction queries
+1. **Query Radius Async** - Single point, single timestep
+2. **Query Dual Radius Async** - Inner/outer radius simultaneously
+3. **Query Time Range Async** - Single point over time range
+4. **Query Trajectory Async** - Trajectory interaction queries
 
 **Example - Async Single Point Query:**
 ```
 Event Tick or Custom Event
-├─ Call "Query Radius With Distance Check Async BP" on Manager
+├─ Call "Query Radius Async" (returns Async Task)
+│  ├─ World Context Object: Self
+│  ├─ Manager: Your Spatial Hash Manager
 │  ├─ Dataset Directory: Path to trajectory data
 │  ├─ Query Position: (X, Y, Z)
 │  ├─ Radius: 50.0
 │  ├─ Cell Size: 10.0
-│  ├─ Time Step: Current time step
-│  └─ On Query Complete: Create Event (see below)
-└─ Game continues immediately - no waiting!
-
-Create Custom Event "On Query Results Ready"
-├─ Input: Results (Array of Spatial Hash Query Result)
-└─ Process results when ready:
-   └─ ForEach Loop over Results
-      └─ Process each trajectory:
-         ├─ Trajectory ID
-         └─ Sample Points (positions, distances, timesteps)
+│  └─ Time Step: Current time step
+├─ Bind to "On Complete" output pin
+│  └─ Execution continues when results ready
+│     ├─ Results: Array of Spatial Hash Query Result
+│     └─ ForEach Loop over Results
+│        └─ Process each trajectory:
+│           ├─ Trajectory ID
+│           └─ Sample Points (positions, distances, timesteps)
+└─ Other game logic continues immediately (async node returns right away)
 ```
 
 **Example - Async Dual Radius Query:**
 ```
 On Some Event
-├─ Call "Query Dual Radius With Distance Check Async BP" on Manager
+├─ Call "Query Dual Radius Async" (returns Async Task)
+│  ├─ World Context Object: Self
+│  ├─ Manager: Your Spatial Hash Manager
 │  ├─ Dataset Directory: Path to trajectory data
 │  ├─ Query Position: (X, Y, Z)
 │  ├─ Inner Radius: 20.0
 │  ├─ Outer Radius: 50.0
 │  ├─ Cell Size: 10.0
-│  ├─ Time Step: Current time step
-│  └─ On Query Complete: Create Event (see below)
-└─ Game continues immediately!
-
-Create Custom Event "On Dual Radius Results Ready"
-├─ Input: Inner Results (Array of Spatial Hash Query Result)
-├─ Input: Outer Results (Array of Spatial Hash Query Result)
-└─ Process both result sets when ready
+│  └─ Time Step: Current time step
+├─ Bind to "On Complete" output pin
+│  └─ Execution continues when results ready
+│     ├─ Inner Results: Array of Spatial Hash Query Result
+│     ├─ Outer Results: Array of Spatial Hash Query Result
+│     └─ Process both result sets
+└─ Other game logic continues immediately
 ```
 
 **When to Use Each Query Type:**
-- **Async BP methods** (Recommended): Production use, smooth frame rate required
+- **Async Task Nodes** (Recommended): Production use, smooth frame rate required
 - **Sync methods**: Quick prototyping, editor tools, or when blocking is acceptable
 - **C++ Async methods**: When you need more control over callbacks
 
 **Performance Tips:**
-- Async methods use background threads for I/O - no game thread blocking
-- Results are automatically delivered on the game thread via events
+- Async task nodes use background threads for I/O - no game thread blocking
+- Results are automatically delivered on the game thread via execution pins
 - Multiple async queries can run simultaneously
 - No busy-waiting loops - proper event-driven architecture
 

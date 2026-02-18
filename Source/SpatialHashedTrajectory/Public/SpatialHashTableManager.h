@@ -12,10 +12,6 @@
 DECLARE_DELEGATE_OneParam(FOnSpatialHashQueryComplete, const TArray<FSpatialHashQueryResult>&);
 DECLARE_DELEGATE_TwoParams(FOnSpatialHashDualQueryComplete, const TArray<FSpatialHashQueryResult>&, const TArray<FSpatialHashQueryResult>&);
 
-// Blueprint-compatible dynamic delegates for async queries
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnSpatialHashQueryCompleteBlueprint, const TArray<FSpatialHashQueryResult>&, Results);
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnSpatialHashDualQueryCompleteBlueprint, const TArray<FSpatialHashQueryResult>&, InnerResults, const TArray<FSpatialHashQueryResult>&, OuterResults);
-
 /**
  * Result structure for nearest neighbor queries
  */
@@ -461,100 +457,6 @@ public:
 		int32 StartTimeStep,
 		int32 EndTimeStep,
 		FOnSpatialHashQueryComplete OnComplete);
-
-	// ============================================================================
-	// BLUEPRINT ASYNC QUERY METHODS (Non-blocking with dynamic delegates)
-	// ============================================================================
-
-	/**
-	 * Blueprint-accessible async query for trajectories within a radius at a single timestep.
-	 * This method is non-blocking and returns immediately. The game thread continues without interruption.
-	 * Results are delivered via the OnQueryComplete event when ready.
-	 * 
-	 * @param DatasetDirectory Path to dataset containing trajectory data
-	 * @param QueryPosition World position to query
-	 * @param Radius Search radius in world units
-	 * @param CellSize Cell size of hash table to use
-	 * @param TimeStep Time step to query
-	 * @param OnQueryComplete Event fired when query completes with results
-	 */
-	UFUNCTION(BlueprintCallable, Category = "Spatial Hash|Async")
-	void QueryRadiusWithDistanceCheckAsyncBP(
-		const FString& DatasetDirectory,
-		FVector QueryPosition,
-		float Radius,
-		float CellSize,
-		int32 TimeStep,
-		FOnSpatialHashQueryCompleteBlueprint OnQueryComplete);
-
-	/**
-	 * Blueprint-accessible async query for dual radius at a single timestep.
-	 * This method is non-blocking and returns immediately. The game thread continues without interruption.
-	 * Results are delivered via the OnQueryComplete event when ready.
-	 * 
-	 * @param DatasetDirectory Path to dataset containing trajectory data
-	 * @param QueryPosition World position to query
-	 * @param InnerRadius Inner search radius in world units
-	 * @param OuterRadius Outer search radius in world units (must be >= InnerRadius)
-	 * @param CellSize Cell size of hash table to use
-	 * @param TimeStep Time step to query
-	 * @param OnQueryComplete Event fired when query completes with inner and outer results
-	 */
-	UFUNCTION(BlueprintCallable, Category = "Spatial Hash|Async")
-	void QueryDualRadiusWithDistanceCheckAsyncBP(
-		const FString& DatasetDirectory,
-		FVector QueryPosition,
-		float InnerRadius,
-		float OuterRadius,
-		float CellSize,
-		int32 TimeStep,
-		FOnSpatialHashDualQueryCompleteBlueprint OnQueryComplete);
-
-	/**
-	 * Blueprint-accessible async query for trajectories over a time range.
-	 * This method is non-blocking and returns immediately. The game thread continues without interruption.
-	 * Results are delivered via the OnQueryComplete event when ready.
-	 * 
-	 * @param DatasetDirectory Path to dataset containing trajectory data
-	 * @param QueryPosition World position to query
-	 * @param Radius Search radius in world units
-	 * @param CellSize Cell size of hash table to use
-	 * @param StartTimeStep First time step to query (inclusive)
-	 * @param EndTimeStep Last time step to query (inclusive)
-	 * @param OnQueryComplete Event fired when query completes with results
-	 */
-	UFUNCTION(BlueprintCallable, Category = "Spatial Hash|Async")
-	void QueryRadiusOverTimeRangeAsyncBP(
-		const FString& DatasetDirectory,
-		FVector QueryPosition,
-		float Radius,
-		float CellSize,
-		int32 StartTimeStep,
-		int32 EndTimeStep,
-		FOnSpatialHashQueryCompleteBlueprint OnQueryComplete);
-
-	/**
-	 * Blueprint-accessible async query for a trajectory over a time range.
-	 * This method is non-blocking and returns immediately. The game thread continues without interruption.
-	 * Results are delivered via the OnQueryComplete event when ready.
-	 * 
-	 * @param DatasetDirectory Path to dataset containing trajectory data
-	 * @param QueryTrajectoryId ID of the query trajectory
-	 * @param Radius Search radius in world units
-	 * @param CellSize Cell size of hash table to use
-	 * @param StartTimeStep First time step to query (inclusive)
-	 * @param EndTimeStep Last time step to query (inclusive)
-	 * @param OnQueryComplete Event fired when query completes with results
-	 */
-	UFUNCTION(BlueprintCallable, Category = "Spatial Hash|Async")
-	void QueryTrajectoryRadiusOverTimeRangeAsyncBP(
-		const FString& DatasetDirectory,
-		int32 QueryTrajectoryId,
-		float Radius,
-		float CellSize,
-		int32 StartTimeStep,
-		int32 EndTimeStep,
-		FOnSpatialHashQueryCompleteBlueprint OnQueryComplete);
 
 protected:
 	/** Tolerance for floating-point comparison of cell sizes */

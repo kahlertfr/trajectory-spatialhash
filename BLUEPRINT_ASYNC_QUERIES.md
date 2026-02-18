@@ -1,10 +1,10 @@
-# Blueprint Async Query Methods
+# Blueprint Async Query Task Nodes
 
 ## Overview
 
-This guide explains how to use async query methods in Blueprints to prevent the game thread from being blocked during trajectory queries.
+This guide explains how to use async query task nodes in Blueprints to prevent the game thread from being blocked during trajectory queries.
 
-## Why Use Async Methods?
+## Why Use Async Task Nodes?
 
 **Problem: Synchronous Methods Block the Game Thread**
 
@@ -13,147 +13,152 @@ When you use synchronous query methods like `Query Radius With Distance Check`, 
 - ❌ Game feels unresponsive
 - ❌ Not acceptable for production/shipping
 
-**Solution: Async Methods Run on Background Threads**
+**Solution: Async Task Nodes Run on Background Threads**
 
-Async methods perform I/O on background threads and deliver results via events:
+Async task nodes perform I/O on background threads and deliver results via output execution pins:
 - ✅ Game thread continues uninterrupted
 - ✅ Smooth, consistent frame rate
 - ✅ Professional, production-ready
 - ✅ Multiple queries can run simultaneously
 
-## Available Async Methods
+## Available Async Task Nodes
 
-All async methods follow the same pattern:
-1. Call the async method with query parameters
-2. Bind an event to the completion delegate
-3. Game continues immediately
-4. Your event fires when results are ready
+All async task nodes follow the Blueprint Async Action pattern:
+1. Call the static factory method to create the task
+2. The node has an output execution pin that fires when complete
+3. Results are provided as output parameters
+4. Game continues immediately after calling the node
 
-### 1. Query Radius With Distance Check Async BP
+### 1. Query Radius Async
 
 Query trajectories within a radius at a single timestep.
 
 **Blueprint Usage:**
 ```
 Event Tick (or any event)
-├─ Call "Query Radius With Distance Check Async BP" on Spatial Hash Manager
+├─ Call "Query Radius Async"
+│  ├─ World Context Object: Self
+│  ├─ Manager: Your Spatial Hash Table Manager reference
 │  ├─ Dataset Directory: "C:/Data/MyTrajectories"
 │  ├─ Query Position: Actor Location or custom position
 │  ├─ Radius: 500.0
 │  ├─ Cell Size: 10.0
-│  ├─ Time Step: Current simulation time step
-│  └─ On Query Complete: Bind to "Handle Query Results" event
-└─ Continue with game logic (no waiting!)
-
-Custom Event "Handle Query Results"
-├─ Input: Results (Array of Spatial Hash Query Result)
-└─ ForEach Loop: Results
-   ├─ Get: Trajectory ID
-   ├─ Get: Sample Points
-   └─ Process each trajectory sample:
-      ├─ Position (Vector)
-      ├─ Time Step (Integer)
-      └─ Distance (Float)
+│  └─ Time Step: Current simulation time step
+├─ Other game logic continues immediately here (non-blocking!)
+└─ "On Complete" output pin:
+   ├─ Fires when query finishes
+   └─ Results (Array of Spatial Hash Query Result)
+      └─ ForEach Loop: Results
+         ├─ Get: Trajectory ID
+         ├─ Get: Sample Points
+         └─ Process each trajectory sample:
+            ├─ Position (Vector)
+            ├─ Time Step (Integer)
+            └─ Distance (Float)
 ```
 
 **Use Case:** Find all trajectories near a point at a specific time.
 
-### 2. Query Dual Radius With Distance Check Async BP
+### 2. Query Dual Radius Async
 
 Query with both inner and outer radius simultaneously - more efficient than two separate queries.
 
 **Blueprint Usage:**
 ```
 On Player Action
-├─ Call "Query Dual Radius With Distance Check Async BP"
+├─ Call "Query Dual Radius Async"
+│  ├─ World Context Object: Self
+│  ├─ Manager: Your Spatial Hash Table Manager reference
 │  ├─ Dataset Directory: "C:/Data/MyTrajectories"
 │  ├─ Query Position: Target Location
 │  ├─ Inner Radius: 200.0 (close range)
 │  ├─ Outer Radius: 500.0 (far range)
 │  ├─ Cell Size: 10.0
-│  ├─ Time Step: Current time
-│  └─ On Query Complete: Bind to "Handle Dual Radius Results"
-└─ Game continues immediately
-
-Custom Event "Handle Dual Radius Results"
-├─ Input: Inner Results (Array of Spatial Hash Query Result)
-├─ Input: Outer Results (Array of Spatial Hash Query Result)
-├─ Process Inner Results:
-│  └─ ForEach: High priority handling for close trajectories
-└─ Process Outer Results:
-   └─ ForEach: Lower priority handling for distant trajectories
+│  └─ Time Step: Current time
+├─ Other game logic continues immediately here
+└─ "On Complete" output pin:
+   ├─ Fires when query finishes
+   ├─ Inner Results (Array of Spatial Hash Query Result)
+   ├─ Outer Results (Array of Spatial Hash Query Result)
+   ├─ Process Inner Results:
+   │  └─ ForEach: High priority handling for close trajectories
+   └─ Process Outer Results:
+      └─ ForEach: Lower priority handling for distant trajectories
 ```
 
 **Use Case:** Different behavior for near vs far trajectories (e.g., high detail close, low detail far).
 
-### 3. Query Radius Over Time Range Async BP
+### 3. Query Time Range Async
 
 Query trajectories that pass within radius of a point over multiple timesteps.
 
 **Blueprint Usage:**
 ```
 On Analysis Start
-├─ Call "Query Radius Over Time Range Async BP"
+├─ Call "Query Time Range Async"
+│  ├─ World Context Object: Self
+│  ├─ Manager: Your Spatial Hash Table Manager reference
 │  ├─ Dataset Directory: "C:/Data/MyTrajectories"
 │  ├─ Query Position: Analysis Point
 │  ├─ Radius: 300.0
 │  ├─ Cell Size: 10.0
 │  ├─ Start Time Step: 0
-│  ├─ End Time Step: 1000
-│  └─ On Query Complete: Bind to "Handle Time Range Results"
-└─ Show "Loading..." UI (game still responsive)
-
-Custom Event "Handle Time Range Results"
-├─ Input: Results (Array of Spatial Hash Query Result)
-├─ Hide "Loading..." UI
-└─ ForEach: Results
-   ├─ Get: Trajectory ID
-   └─ Get: Sample Points (all samples in time range)
-      └─ ForEach: Sample Points
-         ├─ Visualize trajectory path
-         └─ Analyze trajectory behavior
+│  └─ End Time Step: 1000
+├─ Show "Loading..." UI (game still responsive)
+└─ "On Complete" output pin:
+   ├─ Fires when query finishes
+   ├─ Results (Array of Spatial Hash Query Result)
+   ├─ Hide "Loading..." UI
+   └─ ForEach: Results
+      ├─ Get: Trajectory ID
+      └─ Get: Sample Points (all samples in time range)
+         └─ ForEach: Sample Points
+            ├─ Visualize trajectory path
+            └─ Analyze trajectory behavior
 ```
 
 **Use Case:** Analyze which trajectories pass through a region over time.
 
-### 4. Query Trajectory Radius Over Time Range Async BP
+### 4. Query Trajectory Async
 
 Query trajectories that interact with a moving query trajectory over time.
 
 **Blueprint Usage:**
 ```
 On Trajectory Analysis
-├─ Call "Query Trajectory Radius Over Time Range Async BP"
+├─ Call "Query Trajectory Async"
+│  ├─ World Context Object: Self
+│  ├─ Manager: Your Spatial Hash Table Manager reference
 │  ├─ Dataset Directory: "C:/Data/MyTrajectories"
 │  ├─ Query Trajectory ID: 42 (the trajectory to follow)
 │  ├─ Radius: 250.0 (interaction radius)
 │  ├─ Cell Size: 10.0
 │  ├─ Start Time Step: 0
-│  ├─ End Time Step: 500
-│  └─ On Query Complete: Bind to "Handle Trajectory Interaction Results"
-└─ Begin visualization setup
-
-Custom Event "Handle Trajectory Interaction Results"
-├─ Input: Results (Array of Spatial Hash Query Result)
-└─ ForEach: Results
-   ├─ Get: Trajectory ID
-   └─ Visualize trajectory interactions:
-      ├─ Draw lines between query trajectory and result
-      └─ Highlight collision/near-miss events
+│  └─ End Time Step: 500
+├─ Begin visualization setup
+└─ "On Complete" output pin:
+   ├─ Fires when query finishes
+   ├─ Results (Array of Spatial Hash Query Result)
+   └─ ForEach: Results
+      ├─ Get: Trajectory ID
+      └─ Visualize trajectory interactions:
+         ├─ Draw lines between query trajectory and result
+         └─ Highlight collision/near-miss events
 ```
 
 **Use Case:** Find trajectories that come close to a specific trajectory (collision analysis, interaction detection).
 
 ## Best Practices
 
-### 1. Use Custom Events for Callbacks
+### 1. Store Manager Reference
 
-Always create a custom event to handle results. This keeps your blueprint organized:
+Create and store your Spatial Hash Table Manager reference:
 
 ```
-Custom Event "On Query Complete"
-├─ Input: Results
-└─ Handle results here
+Event BeginPlay
+├─ Create Object: Spatial Hash Table Manager
+├─ Promote to Variable: "Manager"
+└─ Load Hash Tables on Manager
 ```
 
 ### 2. Check for Empty Results
@@ -161,32 +166,32 @@ Custom Event "On Query Complete"
 Always check if results are empty before processing:
 
 ```
-Event: On Query Complete
+On Complete Execution Pin
 ├─ Array Length: Results
 ├─ Branch: Length > 0
 │  ├─ True: Process results
 │  └─ False: Handle no results case
 ```
 
-### 3. Don't Call Async Methods Every Frame
+### 3. Don't Call Async Task Nodes Every Frame
 
-Async methods are for potentially expensive operations. Don't spam them:
+Async task nodes are for potentially expensive operations. Don't spam them:
 
 **❌ Bad - Calling every frame:**
 ```
 Event Tick
-└─ Query Radius With Distance Check Async BP  // DON'T DO THIS
+└─ Query Radius Async  // DON'T DO THIS
 ```
 
 **✅ Good - Call when needed:**
 ```
 Custom Event "On Player Action"
-└─ Query Radius With Distance Check Async BP  // Only when needed
+└─ Query Radius Async  // Only when needed
 
 Event Tick + Timer
 ├─ Get Time Seconds
 ├─ Modulo: 1.0 (query once per second)
-└─ If == 0: Query Radius With Distance Check Async BP
+└─ If == 0: Query Radius Async
 ```
 
 ### 4. Show Loading Indicators
@@ -196,9 +201,9 @@ For longer queries, show a loading indicator:
 ```
 On Query Start
 ├─ Show "Loading..." widget
-└─ Call async query
+└─ Call async query task node
 
-On Query Complete
+"On Complete" Execution Pin
 └─ Hide "Loading..." widget
 ```
 
@@ -207,8 +212,8 @@ On Query Complete
 Async queries can fail (missing files, etc.). Always handle empty results:
 
 ```
-Event: On Query Complete
-├─ Input: Results
+"On Complete" Execution Pin
+├─ Results parameter
 ├─ Array Length: Results
 ├─ Branch: Length > 0
 │  ├─ True: Process results
@@ -229,7 +234,7 @@ Event: On Query Complete
 
 - Multiple async queries can run simultaneously
 - Each query uses a background thread
-- Results arrive independently
+- Results arrive independently via their output pins
 
 ### Query Frequency
 
@@ -262,21 +267,21 @@ Recommended query patterns:
 - Query result is very large
 
 **Solutions:**
-- Verify you're using `*AsyncBP` methods
+- Verify you're using async task nodes (Query Radius Async, etc.)
 - Process results in smaller batches
 - Reduce query radius or time range
 
-### "Event doesn't fire"
+### "Output pin doesn't fire"
 
 **Possible causes:**
-- Event not properly bound
+- Manager reference is null
 - Query failed silently
-- Wrong delegate signature
+- Task node not properly connected
 
 **Solutions:**
-- Double-check event binding in Blueprint
-- Add logging to verify query is called
+- Verify Manager variable is valid before calling
 - Check Output Log for error messages
+- Ensure task node's output pins are connected
 
 ## Complete Example Blueprint
 
@@ -304,27 +309,27 @@ Custom Event "Query Nearby Trajectories"
 │  └─ Assign to "Query Position"
 ├─ Set "bQueryInProgress" = true
 ├─ Show Loading Widget
-└─ Call "Query Radius With Distance Check Async BP" on Manager
-   ├─ Dataset Directory: "C:/Data/Trajectories"
-   ├─ Query Position: Query Position
-   ├─ Radius: 500.0
-   ├─ Cell Size: 10.0
-   ├─ Time Step: Current Time Step
-   └─ On Query Complete: Bind to "On Trajectories Found"
-
-Custom Event "On Trajectories Found"
-├─ Input: Results (Array of Spatial Hash Query Result)
-├─ Set "bQueryInProgress" = false
-├─ Hide Loading Widget
-├─ Print String: Append("Found ", ToString(Array Length(Results)), " trajectories")
-├─ Branch: Array Length > 0
-│  ├─ True: Process Results
-│  │  └─ ForEach: Results
-│  │     ├─ Get: Trajectory ID
-│  │     └─ Get: Sample Points
-│  │        └─ Visualize trajectory
-│  └─ False: Print "No trajectories in range"
-└─ Continue with game logic
+├─ Call "Query Radius Async"
+│  ├─ World Context Object: Self
+│  ├─ Manager: Manager variable
+│  ├─ Dataset Directory: "C:/Data/Trajectories"
+│  ├─ Query Position: Query Position
+│  ├─ Radius: 500.0
+│  ├─ Cell Size: 10.0
+│  └─ Time Step: Current Time Step
+└─ "On Complete" output pin:
+   ├─ Results parameter
+   ├─ Set "bQueryInProgress" = false
+   ├─ Hide Loading Widget
+   ├─ Print String: Append("Found ", ToString(Array Length(Results)), " trajectories")
+   ├─ Branch: Array Length > 0
+   │  ├─ True: Process Results
+   │  │  └─ ForEach: Results
+   │  │     ├─ Get: Trajectory ID
+   │  │     └─ Get: Sample Points
+   │  │        └─ Visualize trajectory
+   │  └─ False: Print "No trajectories in range"
+   └─ Continue with game logic
 ```
 
 ## Migration from Sync to Async
@@ -342,24 +347,25 @@ Event Tick
 **After (Async - non-blocking):**
 ```
 Event Tick + Timer (every 1 second)
-└─ Call "Query Radius With Distance Check Async BP"  // Returns immediately
-   └─ On Query Complete: Custom Event
-
-Custom Event "On Query Complete"
-├─ Input: Results
-└─ Process Results when ready
+├─ Call "Query Radius Async"  // Returns immediately
+│  ├─ World Context Object: Self
+│  ├─ Manager: Your manager reference
+│  └─ ...other parameters
+└─ "On Complete" output pin:
+   ├─ Results parameter
+   └─ Process Results when ready
 ```
 
 **Key differences:**
-1. Add "Async BP" to method name
-2. Results come via event, not return value
-3. Processing happens in separate event
-4. Game continues while query runs
+1. Use async task node instead of synchronous method
+2. Results come via output execution pin, not return value
+3. Processing happens on the output pin execution path
+4. Game continues while query runs on background thread
 
 ## Summary
 
-- ✅ Always use `*AsyncBP` methods for production
-- ✅ Use custom events for result handling
+- ✅ Always use async task nodes for production
+- ✅ Use output execution pins for result handling
 - ✅ Check for empty results
 - ✅ Show loading indicators for long queries
 - ✅ Don't query every frame
