@@ -112,7 +112,7 @@ int32 QueryDualRadiusWithDistanceCheck(
     float CellSize,
     int32 TimeStep,
     TArray<FSpatialHashQueryResult>& OutInnerResults,
-    TArray<FSpatialHashQueryResult>& OutOuterOnlyResults);
+    TArray<FSpatialHashQueryResult>& OutOuterResults);
 
 // Time range query
 int32 QueryRadiusOverTimeRange(
@@ -149,7 +149,7 @@ void FilterByDualRadius(
     float OuterRadius,
     const TMap<uint32, TArray<FTrajectorySamplePoint>>& TrajectoryData,
     TArray<FSpatialHashQueryResult>& OutInnerResults,
-    TArray<FSpatialHashQueryResult>& OutOuterOnlyResults) const;
+    TArray<FSpatialHashQueryResult>& OutOuterResults) const;
 
 void ExtendTrajectorySamples(
     const TMap<uint32, TArray<FTrajectorySamplePoint>>& TrajectoryData,
