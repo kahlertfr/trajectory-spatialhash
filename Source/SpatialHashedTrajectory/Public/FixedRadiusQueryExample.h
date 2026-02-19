@@ -314,7 +314,7 @@ void AFixedRadiusQueryExample::ExampleDualRadius()
 
 	// Execute query
 	TArray<FSpatialHashQueryResult> InnerResults;
-	TArray<FSpatialHashQueryResult> OuterOnlyResults;
+	TArray<FSpatialHashQueryResult> OuterResults;
 	
 	int32 TotalFound = Manager->QueryDualRadiusWithDistanceCheck(
 		DatasetDirectory,
@@ -324,15 +324,15 @@ void AFixedRadiusQueryExample::ExampleDualRadius()
 		CellSize,
 		TimeStep,
 		InnerResults,
-		OuterOnlyResults
+		OuterResults
 	);
 
-	UE_LOG(LogTemp, Log, TEXT("Found %d trajectories total: %d in inner radius, %d in outer ring"),
-		TotalFound, InnerResults.Num(), OuterOnlyResults.Num());
+	UE_LOG(LogTemp, Log, TEXT("Found %d trajectories in outer radius (%d in inner radius)"),
+		TotalFound, InnerResults.Num());
 	
 	// Log results separately
 	LogQueryResults(InnerResults, TEXT("Inner Radius"));
-	LogQueryResults(OuterOnlyResults, TEXT("Outer Ring"));
+	LogQueryResults(OuterResults, TEXT("Outer Radius (includes inner samples)"));
 	
 	// Visualize with different colors
 	if (bVisualizeResults)
@@ -340,7 +340,7 @@ void AFixedRadiusQueryExample::ExampleDualRadius()
 		DrawQueryRadius(QueryPosition, InnerRadius, InnerRadiusColor);
 		DrawQueryRadius(QueryPosition, QueryRadius, OuterRadiusColor);
 		VisualizeResults(InnerResults, InnerRadiusColor);
-		VisualizeResults(OuterOnlyResults, OuterRadiusColor);
+		VisualizeResults(OuterResults, OuterRadiusColor);
 	}
 }
 

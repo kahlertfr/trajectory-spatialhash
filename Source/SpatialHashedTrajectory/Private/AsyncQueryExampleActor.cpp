@@ -101,13 +101,13 @@ void AAsyncQueryExampleActor::Example2_DualRadiusQuery()
 		100,
 		FOnSpatialHashDualQueryComplete::CreateLambda([InnerRadius, OuterRadius](
 			const TArray<FSpatialHashQueryResult>& InnerResults,
-			const TArray<FSpatialHashQueryResult>& OuterOnlyResults)
+			const TArray<FSpatialHashQueryResult>& OuterResults)
 		{
 			UE_LOG(LogTemp, Log, TEXT("✓ Dual query complete!"));
 			UE_LOG(LogTemp, Log, TEXT("  Inner radius (%.1f): %d trajectories"), 
 				InnerRadius, InnerResults.Num());
-			UE_LOG(LogTemp, Log, TEXT("  Outer radius (%.1f): %d trajectories"), 
-				OuterRadius, OuterOnlyResults.Num());
+			UE_LOG(LogTemp, Log, TEXT("  Outer radius (%.1f): %d trajectories (includes inner samples)"), 
+				OuterRadius, OuterResults.Num());
 			
 			// Process inner results (high priority)
 			UE_LOG(LogTemp, Log, TEXT("  Processing inner results (high priority):"));
@@ -116,9 +116,9 @@ void AAsyncQueryExampleActor::Example2_DualRadiusQuery()
 				UE_LOG(LogTemp, Log, TEXT("    Inner trajectory %d"), Result.TrajectoryId);
 			}
 			
-			// Process outer results (lower priority)
-			UE_LOG(LogTemp, Log, TEXT("  Processing outer results (lower priority):"));
-			for (const FSpatialHashQueryResult& Result : OuterOnlyResults)
+			// Process outer results (includes inner samples for consistent trajectories)
+			UE_LOG(LogTemp, Log, TEXT("  Processing outer results:"));
+			for (const FSpatialHashQueryResult& Result : OuterResults)
 			{
 				UE_LOG(LogTemp, Log, TEXT("    Outer trajectory %d"), Result.TrajectoryId);
 			}

@@ -1324,10 +1324,10 @@ void USpatialHashTableManager::FilterByDualRadius(
 	float OuterRadius,
 	const TMap<uint32, TArray<FTrajectorySamplePoint>>& TrajectoryData,
 	TArray<FSpatialHashQueryResult>& OutInnerResults,
-	TArray<FSpatialHashQueryResult>& OutOuterOnlyResults) const
+	TArray<FSpatialHashQueryResult>& OutOuterResults) const
 {
 	OutInnerResults.Reset();
-	OutOuterOnlyResults.Reset();
+	OutOuterResults.Reset();
 	
 	float InnerRadiusSquared = InnerRadius * InnerRadius;
 	float OuterRadiusSquared = OuterRadius * OuterRadius;
@@ -1338,7 +1338,7 @@ void USpatialHashTableManager::FilterByDualRadius(
 		const TArray<FTrajectorySamplePoint>& SamplePoints = Pair.Value;
 		
 		FSpatialHashQueryResult InnerResult(TrajectoryId);
-		FSpatialHashQueryResult OuterOnlyResult(TrajectoryId);
+		FSpatialHashQueryResult OuterResult(TrajectoryId);
 		
 		for (const FTrajectorySamplePoint& Sample : SamplePoints)
 		{
@@ -1346,15 +1346,18 @@ void USpatialHashTableManager::FilterByDualRadius(
 			
 			if (DistanceSquared <= InnerRadiusSquared)
 			{
+				// Sample is within inner radius - add to both inner and outer results
 				FTrajectorySamplePoint FilteredSample = Sample;
 				FilteredSample.Distance = FMath::Sqrt(DistanceSquared);
 				InnerResult.SamplePoints.Add(FilteredSample);
+				OuterResult.SamplePoints.Add(FilteredSample);
 			}
 			else if (DistanceSquared <= OuterRadiusSquared)
 			{
+				// Sample is between inner and outer radius - add to outer results only
 				FTrajectorySamplePoint FilteredSample = Sample;
 				FilteredSample.Distance = FMath::Sqrt(DistanceSquared);
-				OuterOnlyResult.SamplePoints.Add(FilteredSample);
+				OuterResult.SamplePoints.Add(FilteredSample);
 			}
 		}
 		
@@ -1363,9 +1366,9 @@ void USpatialHashTableManager::FilterByDualRadius(
 		{
 			OutInnerResults.Add(InnerResult);
 		}
-		if (OuterOnlyResult.SamplePoints.Num() > 0)
+		if (OuterResult.SamplePoints.Num() > 0)
 		{
-			OutOuterOnlyResults.Add(OuterOnlyResult);
+			OutOuterResults.Add(OuterResult);
 		}
 	}
 }
@@ -1498,10 +1501,10 @@ int32 USpatialHashTableManager::QueryDualRadiusWithDistanceCheck(
 	float CellSize,
 	int32 TimeStep,
 	TArray<FSpatialHashQueryResult>& OutInnerResults,
-	TArray<FSpatialHashQueryResult>& OutOuterOnlyResults)
+	TArray<FSpatialHashQueryResult>& OutOuterResults)
 {
 	OutInnerResults.Reset();
-	OutOuterOnlyResults.Reset();
+	OutOuterResults.Reset();
 	
 	// Validate radii
 	if (InnerRadius > OuterRadius)
@@ -1538,9 +1541,10 @@ int32 USpatialHashTableManager::QueryDualRadiusWithDistanceCheck(
 	}
 	
 	// Filter by dual radius
-	FilterByDualRadius(QueryPosition, InnerRadius, OuterRadius, TrajectoryData, OutInnerResults, OutOuterOnlyResults);
+	FilterByDualRadius(QueryPosition, InnerRadius, OuterRadius, TrajectoryData, OutInnerResults, OutOuterResults);
 	
-	return OutInnerResults.Num() + OutOuterOnlyResults.Num();
+	// Return count of outer results (which includes all trajectories within outer radius)
+	return OutOuterResults.Num();
 }
 
 int32 USpatialHashTableManager::QueryRadiusOverTimeRange(
@@ -1868,12 +1872,12 @@ void USpatialHashTableManager::QueryDualRadiusWithDistanceCheckAsync(
 		FOnTrajectoryQueryComplete::CreateLambda([this, QueryPosition, InnerRadius, OuterRadius, OnComplete](const FTrajectoryQueryResult& Result)
 		{
 			TArray<FSpatialHashQueryResult> InnerResults;
-			TArray<FSpatialHashQueryResult> OuterOnlyResults;
+			TArray<FSpatialHashQueryResult> OuterResults;
 			
 			if (!Result.bSuccess)
 			{
 				UE_LOG(LogTemp, Error, TEXT("QueryDualRadiusWithDistanceCheckAsync: Query failed: %s"), *Result.ErrorMessage);
-				OnComplete.ExecuteIfBound(InnerResults, OuterOnlyResults);
+				OnComplete.ExecuteIfBound(InnerResults, OuterResults);
 				return;
 			}
 			
@@ -1899,10 +1903,10 @@ void USpatialHashTableManager::QueryDualRadiusWithDistanceCheckAsync(
 			}
 			
 			// Filter by dual radius
-			FilterByDualRadius(QueryPosition, InnerRadius, OuterRadius, TrajectoryData, InnerResults, OuterOnlyResults);
+			FilterByDualRadius(QueryPosition, InnerRadius, OuterRadius, TrajectoryData, InnerResults, OuterResults);
 			
 			// Invoke the completion callback
-			OnComplete.ExecuteIfBound(InnerResults, OuterOnlyResults);
+			OnComplete.ExecuteIfBound(InnerResults, OuterResults);
 		})
 	);
 	

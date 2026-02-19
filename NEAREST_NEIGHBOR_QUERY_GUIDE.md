@@ -121,9 +121,9 @@ int32 NumFound = Manager->QueryTrajectoryRadiusOverTimeRange(
 
 ### Dual Radius Query
 
-Query with both inner and outer radius simultaneously. Returns two separate result arrays for memory efficiency:
+Query with both inner and outer radius simultaneously. Returns two separate result arrays:
 - Inner radius results: trajectories within the inner radius
-- Outer-only results: trajectories between inner and outer radius (excluding inner)
+- Outer radius results: trajectories within the outer radius (includes inner radius samples for consistent trajectories)
 
 **C++ Example:**
 ```cpp
@@ -134,7 +134,7 @@ float CellSize = 10.0f;
 int32 TimeStep = 100;
 
 TArray<FSpatialHashQueryResult> InnerResults;
-TArray<FSpatialHashQueryResult> OuterOnlyResults;
+TArray<FSpatialHashQueryResult> OuterResults;
 
 int32 TotalFound = Manager->QueryDualRadiusWithDistanceCheck(
     DatasetDirectory,
@@ -144,10 +144,10 @@ int32 TotalFound = Manager->QueryDualRadiusWithDistanceCheck(
     CellSize,
     TimeStep,
     InnerResults,
-    OuterOnlyResults);
+    OuterResults);
 
-UE_LOG(LogTemp, Log, TEXT("Found %d in inner radius, %d in outer ring"),
-    InnerResults.Num(), OuterOnlyResults.Num());
+UE_LOG(LogTemp, Log, TEXT("Found %d in inner radius, %d in outer radius"),
+    InnerResults.Num(), OuterResults.Num());
 ```
 
 ## Data Structures
@@ -216,6 +216,7 @@ The implementation uses the TrajectoryData plugin's `LoadShardFile` API to:
 - More efficient than two separate queries
 - Only loads trajectory data once for the outer radius
 - Filters into two result arrays during distance calculation
+- Outer radius results include inner radius samples for consistent trajectories without additional lookups
 
 ## Error Handling
 

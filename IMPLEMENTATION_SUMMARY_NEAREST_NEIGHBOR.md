@@ -71,9 +71,9 @@ int32 QueryDualRadiusWithDistanceCheck(
     float CellSize,
     int32 TimeStep,
     TArray<FSpatialHashQueryResult>& OutInnerResults,
-    TArray<FSpatialHashQueryResult>& OutOuterOnlyResults);
+    TArray<FSpatialHashQueryResult>& OutOuterResults);
 ```
-Queries inner and outer radius simultaneously for memory efficiency. Returns two separate result arrays.
+Queries inner and outer radius simultaneously. Returns two separate result arrays. The outer results include all samples within the outer radius (including inner radius samples) for consistent trajectories.
 
 ### 3. Core Infrastructure
 
@@ -99,7 +99,7 @@ Loads actual trajectory position data from shard files using the TrajectoryData 
 
 #### Distance Filtering Helpers
 - `FilterByDistance`: Filters trajectories by single radius
-- `FilterByDualRadius`: Filters trajectories by inner and outer radius
+- `FilterByDualRadius`: Filters trajectories by inner and outer radius (outer results include inner samples)
 - `ExtendTrajectorySamples`: Extends sample ranges for Case C queries
 
 ### 4. Two-Phase Query Process
@@ -122,8 +122,8 @@ All advanced queries follow a two-phase approach for optimal performance:
 
 - **On-Demand Loading**: Only loads trajectory data for candidates from spatial hash
 - **Streaming**: Processes shard files as needed for time ranges
-- **Dual Radius Optimization**: Loads data once for outer radius, filters twice
-- **Result Separation**: Dual radius queries return separate arrays to avoid redundancy
+- **Dual Radius Optimization**: Loads data once for outer radius; outer results include inner samples for consistent trajectories
+- **Result Separation**: Dual radius queries return separate arrays for convenience
 
 ## Technical Details
 
