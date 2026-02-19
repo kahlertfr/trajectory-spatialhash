@@ -262,7 +262,7 @@ public:
 	 * @param TimeStep Time step to query
 	 * @param OutInnerResults Trajectories within inner radius
 	 * @param OutOuterResults Trajectories within outer radius (includes inner radius samples)
-	 * @return Total number of trajectories found (inner + outer)
+	 * @return Number of trajectories within outer radius (same as OutOuterResults.Num())
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Spatial Hash")
 	int32 QueryDualRadiusWithDistanceCheck(

@@ -1543,7 +1543,8 @@ int32 USpatialHashTableManager::QueryDualRadiusWithDistanceCheck(
 	// Filter by dual radius
 	FilterByDualRadius(QueryPosition, InnerRadius, OuterRadius, TrajectoryData, OutInnerResults, OutOuterResults);
 	
-	return OutInnerResults.Num() + OutOuterResults.Num();
+	// Return count of outer results (which includes all trajectories within outer radius)
+	return OutOuterResults.Num();
 }
 
 int32 USpatialHashTableManager::QueryRadiusOverTimeRange(
