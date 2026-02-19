@@ -81,7 +81,7 @@ UE_LOG(LogTemp, Log, TEXT("Query started - game thread continues..."));
 
 ### 2. QueryDualRadiusWithDistanceCheckAsync
 
-Query trajectories with inner and outer radius simultaneously.
+Query trajectories with inner and outer radius simultaneously. The outer results include all samples within the outer radius (including inner radius samples) for consistent trajectories.
 
 **Signature:**
 ```cpp
@@ -104,10 +104,10 @@ Manager->QueryDualRadiusWithDistanceCheckAsync(
     10.0f, 50,
     FOnSpatialHashDualQueryComplete::CreateLambda([](
         const TArray<FSpatialHashQueryResult>& InnerResults,
-        const TArray<FSpatialHashQueryResult>& OuterOnlyResults) {
+        const TArray<FSpatialHashQueryResult>& OuterResults) {
         
-        UE_LOG(LogTemp, Log, TEXT("Inner: %d, Outer only: %d"), 
-            InnerResults.Num(), OuterOnlyResults.Num());
+        UE_LOG(LogTemp, Log, TEXT("Inner: %d, Outer: %d (includes inner samples)"), 
+            InnerResults.Num(), OuterResults.Num());
     })
 );
 ```

@@ -227,10 +227,10 @@ Manager->QueryDualRadiusWithDistanceCheckAsync(
     10.0f, 50,
     FOnSpatialHashDualQueryComplete::CreateLambda([](
         const TArray<FSpatialHashQueryResult>& InnerResults,
-        const TArray<FSpatialHashQueryResult>& OuterOnlyResults) {
+        const TArray<FSpatialHashQueryResult>& OuterResults) {
         
-        UE_LOG(LogTemp, Log, TEXT("Inner: %d, Outer: %d"), 
-            InnerResults.Num(), OuterOnlyResults.Num());
+        UE_LOG(LogTemp, Log, TEXT("Inner: %d, Outer: %d (includes inner samples)"), 
+            InnerResults.Num(), OuterResults.Num());
     })
 );
 ```

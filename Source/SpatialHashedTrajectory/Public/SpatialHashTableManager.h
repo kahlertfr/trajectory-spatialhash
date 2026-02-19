@@ -251,7 +251,8 @@ public:
 
 	/**
 	 * Query trajectories with dual radius (inner and outer) for a single point at a single timestep
-	 * Returns two separate arrays: one for inner radius, one for outer radius only (excluding inner).
+	 * Returns two separate arrays: one for inner radius, one for outer radius.
+	 * Note: OutOuterResults contains ALL samples within outer radius (including inner radius samples).
 	 * 
 	 * @param DatasetDirectory Path to dataset containing trajectory data
 	 * @param QueryPosition World position to query
@@ -260,7 +261,7 @@ public:
 	 * @param CellSize Cell size of hash table to use
 	 * @param TimeStep Time step to query
 	 * @param OutInnerResults Trajectories within inner radius
-	 * @param OutOuterOnlyResults Trajectories between inner and outer radius
+	 * @param OutOuterResults Trajectories within outer radius (includes inner radius samples)
 	 * @return Total number of trajectories found (inner + outer)
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Spatial Hash")
@@ -272,7 +273,7 @@ public:
 		float CellSize,
 		int32 TimeStep,
 		TArray<FSpatialHashQueryResult>& OutInnerResults,
-		TArray<FSpatialHashQueryResult>& OutOuterOnlyResults);
+		TArray<FSpatialHashQueryResult>& OutOuterResults);
 
 	/**
 	 * Query trajectories over a time range for a single point (Case B)
@@ -625,13 +626,14 @@ protected:
 	/**
 	 * Compute actual distance for dual radius query
 	 * Filters trajectory samples into inner and outer radius results.
+	 * Note: OuterResults contains ALL samples within outer radius (including inner radius samples).
 	 * 
 	 * @param QueryPosition Query point position
 	 * @param InnerRadius Inner search radius
 	 * @param OuterRadius Outer search radius
 	 * @param TrajectoryData Map of trajectory samples
 	 * @param OutInnerResults Results within inner radius
-	 * @param OutOuterOnlyResults Results between inner and outer radius
+	 * @param OutOuterResults Results within outer radius (includes inner radius samples)
 	 */
 	void FilterByDualRadius(
 		const FVector& QueryPosition,
@@ -639,7 +641,7 @@ protected:
 		float OuterRadius,
 		const TMap<uint32, TArray<FTrajectorySamplePoint>>& TrajectoryData,
 		TArray<FSpatialHashQueryResult>& OutInnerResults,
-		TArray<FSpatialHashQueryResult>& OutOuterOnlyResults) const;
+		TArray<FSpatialHashQueryResult>& OutOuterResults) const;
 
 	/**
 	 * Extend trajectory samples to include all points from first entry to last exit
