@@ -327,8 +327,8 @@ void AFixedRadiusQueryExample::ExampleDualRadius()
 		OuterResults
 	);
 
-	UE_LOG(LogTemp, Log, TEXT("Found %d trajectories in outer radius (%d in inner radius, %d total in outer)"),
-		TotalFound, InnerResults.Num(), OuterResults.Num());
+	UE_LOG(LogTemp, Log, TEXT("Found %d trajectories in outer radius (%d in inner radius)"),
+		TotalFound, InnerResults.Num());
 	
 	// Log results separately
 	LogQueryResults(InnerResults, TEXT("Inner Radius"));
