@@ -8,7 +8,7 @@
 #include "SpatialHashTableBuilder.h"
 #include "SpatialHashTableManager.generated.h"
 
-// Forward declare callback delegate types for async queries
+// Forward declare callback delegate types for async queries (C++ only)
 DECLARE_DELEGATE_OneParam(FOnSpatialHashQueryComplete, const TArray<FSpatialHashQueryResult>&);
 DECLARE_DELEGATE_TwoParams(FOnSpatialHashDualQueryComplete, const TArray<FSpatialHashQueryResult>&, const TArray<FSpatialHashQueryResult>&);
 
