@@ -85,9 +85,8 @@ public:
 protected:
 	virtual void BeginPlay() override;
 
-private:
-	/** Niagara component that hosts the effect */
-	UPROPERTY()
+	/** Niagara component that hosts the effect (read-only from Blueprint subclasses) */
+	UPROPERTY(BlueprintReadOnly, Category = "Niagara")
 	UNiagaraComponent* NiagaraComponent;
 
 	/** Spatial hash table manager used for queries */
@@ -97,6 +96,7 @@ private:
 	/** Initialize the spatial hash table manager and load required hash tables */
 	bool InitializeManager();
 
+private:
 	/**
 	 * Convert query results to flat arrays suitable for Niagara and transfer them
 	 * to the Niagara component's user parameters.
