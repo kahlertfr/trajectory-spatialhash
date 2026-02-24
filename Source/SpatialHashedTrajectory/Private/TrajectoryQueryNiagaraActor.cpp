@@ -76,70 +76,69 @@ void ATrajectoryQueryNiagaraActor::RunQueryAndUpdateNiagara()
 		return;
 	}
 
-	TArray<FSpatialHashQueryResult> Results;
-	TArray<FVector> QueryPoints;
-
-	if (QueryTrajectoryId >= 0)
+	if (QueryPositions.IsEmpty())
 	{
-		// Case C: query trajectory over time range
-		const int32 NumFound = Manager->QueryTrajectoryRadiusOverTimeRange(
+		UE_LOG(LogTemp, Warning, TEXT("ATrajectoryQueryNiagaraActor: QueryPositions array is empty – nothing to query."));
+		return;
+	}
+
+	// ── Fan-out: one async query per query position ───────────────────────────
+	// Shared state collects partial results from each callback.
+	// FOnSpatialHashQueryComplete callbacks are delivered on the game thread,
+	// so AccumulatedResults->Append is safe without a mutex.
+	// FThreadSafeCounter is used for the decrement in case the API ever delivers
+	// callbacks from a worker thread in the future.
+
+	const int32 NumQueries = QueryPositions.Num();
+	TSharedRef<FThreadSafeCounter> PendingCount = MakeShared<FThreadSafeCounter>(NumQueries);
+	TSharedRef<TArray<FSpatialHashQueryResult>> AccumulatedResults =
+		MakeShared<TArray<FSpatialHashQueryResult>>();
+
+	// Capture the query positions so the final callback can pass them to Niagara.
+	// Note: the full array is needed – TransferResultsToNiagara uses it as the QueryPoints parameter.
+	TArray<FVector> CapturedQueryPositions = QueryPositions;
+
+	TWeakObjectPtr<ATrajectoryQueryNiagaraActor> WeakThis(this);
+
+	for (const FVector& Position : QueryPositions)
+	{
+		Manager->QueryRadiusOverTimeRangeAsync(
 			DatasetDirectory,
-			QueryTrajectoryId,
+			Position,
 			OuterQueryRadius,
 			CellSize,
 			QueryTimeStart,
 			QueryTimeEnd,
-			Results
-		);
-
-		UE_LOG(LogTemp, Log,
-			TEXT("ATrajectoryQueryNiagaraActor: Case C query found %d trajectories near trajectory %d."),
-			NumFound, QueryTrajectoryId);
-
-		// The query points are the sample positions of the query trajectory itself.
-		// We collect them from the result whose TrajectoryId matches QueryTrajectoryId,
-		// if present, otherwise fall back to the actor location as a single point.
-		bool bFoundQueryTraj = false;
-		for (const FSpatialHashQueryResult& R : Results)
-		{
-			if (R.TrajectoryId == QueryTrajectoryId)
-			{
-				for (const FTrajectorySamplePoint& S : R.SamplePoints)
+			FOnSpatialHashQueryComplete::CreateLambda(
+				[WeakThis, PendingCount, AccumulatedResults, CapturedQueryPositions]
+				(const TArray<FSpatialHashQueryResult>& Results)
 				{
-					QueryPoints.Add(S.Position);
+					// Merge this query's results into the shared accumulator.
+					AccumulatedResults->Append(Results);
+
+					// Fan-in: when all per-position queries have completed,
+					// transfer the merged results to the Niagara component.
+					const int32 Remaining = PendingCount->Decrement();
+					if (Remaining == 0)
+					{
+						if (ATrajectoryQueryNiagaraActor* This = WeakThis.Get())
+						{
+							UE_LOG(LogTemp, Log,
+								TEXT("ATrajectoryQueryNiagaraActor: All %d async queries complete – "
+								     "%d trajectories found in total."),
+								CapturedQueryPositions.Num(), AccumulatedResults->Num());
+
+							This->TransferResultsToNiagara(CapturedQueryPositions, *AccumulatedResults);
+						}
+					}
 				}
-				bFoundQueryTraj = true;
-				break;
-			}
-		}
-
-		if (!bFoundQueryTraj)
-		{
-			QueryPoints.Add(GetActorLocation());
-		}
-	}
-	else
-	{
-		// Case B: single fixed position over time range
-		const FVector QueryPosition = GetActorLocation();
-		QueryPoints.Add(QueryPosition);
-
-		const int32 NumFound = Manager->QueryRadiusOverTimeRange(
-			DatasetDirectory,
-			QueryPosition,
-			OuterQueryRadius,
-			CellSize,
-			QueryTimeStart,
-			QueryTimeEnd,
-			Results
+			)
 		);
-
-		UE_LOG(LogTemp, Log,
-			TEXT("ATrajectoryQueryNiagaraActor: Case B query found %d trajectories at position %s."),
-			NumFound, *QueryPosition.ToString());
 	}
 
-	TransferResultsToNiagara(QueryPoints, Results);
+	UE_LOG(LogTemp, Log,
+		TEXT("ATrajectoryQueryNiagaraActor: Fired %d async queries (outer radius %.2f, t=[%d,%d])."),
+		NumQueries, OuterQueryRadius, QueryTimeStart, QueryTimeEnd);
 }
 
 void ATrajectoryQueryNiagaraActor::TransferResultsToNiagara(

@@ -59,13 +59,12 @@ public:
 	int32 QueryTimeEnd = 100;
 
 	/**
-	 * Query trajectory ID used for Case-C queries.
-	 * When set to a value >= 0 the actor performs a trajectory-radius query (Case C).
-	 * When set to -1 the actor performs a single-point time-range query (Case B) using
-	 * the actor's world location as the query position.
+	 * Positions used as query centres.
+	 * One async radius-over-time-range query is fired per entry.
+	 * Results from all positions are merged before being transferred to Niagara.
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Query Settings")
-	int32 QueryTrajectoryId = -1;
+	TArray<FVector> QueryPositions;
 
 	// ─── Niagara Settings ─────────────────────────────────────────────────────
 
