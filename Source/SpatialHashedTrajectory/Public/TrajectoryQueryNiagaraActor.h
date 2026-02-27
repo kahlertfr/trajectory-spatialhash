@@ -91,6 +91,15 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Trajectory Visualization")
 	void RunQueryAndUpdateNiagara();
 
+	/**
+	 * Core fan-out / fan-in async query dispatch.
+	 * Stores results into CachedQueryPoints / CachedResults / ResultBoundsMin / ResultBoundsMax.
+	 * Calls OnComplete when all queries finish successfully, or OnFailure if startup fails.
+	 * Returns true if queries were started, false if a startup condition was not met.
+	 * Accessible from URunTrajectoryQueryAsyncAction to inject its own callbacks.
+	 */
+	bool FireAsyncQueriesWithCallback(FSimpleDelegate OnComplete, FSimpleDelegate OnFailure = FSimpleDelegate());
+
 protected:
 	virtual void BeginPlay() override;
 
@@ -116,14 +125,6 @@ protected:
 
 	/** Initialize the spatial hash table manager and load required hash tables */
 	bool InitializeManager();
-
-	/**
-	 * Core fan-out / fan-in async query dispatch.
-	 * Stores results into CachedQueryPoints / CachedResults / ResultBoundsMin / ResultBoundsMax.
-	 * Calls OnComplete when all queries finish successfully, or OnFailed if startup fails.
-	 * Returns true if queries were started, false if a startup condition was not met.
-	 */
-	bool FireAsyncQueriesWithCallback(FSimpleDelegate OnComplete, FSimpleDelegate OnFailure = FSimpleDelegate());
 
 private:
 	/** Results cached by the last completed query */
