@@ -139,6 +139,13 @@ private:
 		const TArray<FSpatialHashQueryResult>& Results);
 
 	/**
+	 * Append a single query's results to the accumulated cache, recompute the bounding box,
+	 * and immediately push the updated data to Niagara (deactivate then reactivate).
+	 * Called on the game thread after each individual async query completes.
+	 */
+	void AppendPartialResults(const TArray<FSpatialHashQueryResult>& NewResults);
+
+	/**
 	 * Push the supplied arrays to the Niagara component user parameters.
 	 * Low-level implementation used by TransferDataToNiagara().
 	 */
