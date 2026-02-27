@@ -11,6 +11,8 @@ ATrajectoryQueryNiagaraActor::ATrajectoryQueryNiagaraActor()
 	Manager = nullptr;
 	NiagaraComponent = nullptr;
 	NiagaraSystem = nullptr;
+	ResultBoundsMin = FVector::ZeroVector;
+	ResultBoundsMax = FVector::ZeroVector;
 }
 
 void ATrajectoryQueryNiagaraActor::BeginPlay()
@@ -31,7 +33,7 @@ void ATrajectoryQueryNiagaraActor::BeginPlay()
 		);
 	}
 
-	// Automatically run the query when the actor starts playing.
+	// Automatically run the query and update Niagara when the actor starts playing.
 	if (!DatasetDirectory.IsEmpty())
 	{
 		RunQueryAndUpdateNiagara();
@@ -69,7 +71,32 @@ bool ATrajectoryQueryNiagaraActor::InitializeManager()
 	return true;
 }
 
+// ─── Public BlueprintCallable entry points ────────────────────────────────────
+
+void ATrajectoryQueryNiagaraActor::RunQuery()
+{
+	FireAsyncQueriesInternal(false);
+}
+
+void ATrajectoryQueryNiagaraActor::TransferDataToNiagara()
+{
+	if (CachedQueryPoints.IsEmpty())
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("ATrajectoryQueryNiagaraActor: TransferDataToNiagara called before RunQuery has completed – no data to transfer."));
+		return;
+	}
+	TransferResultsToNiagara(CachedQueryPoints, CachedResults);
+}
+
 void ATrajectoryQueryNiagaraActor::RunQueryAndUpdateNiagara()
+{
+	FireAsyncQueriesInternal(true);
+}
+
+// ─── Private helpers ──────────────────────────────────────────────────────────
+
+void ATrajectoryQueryNiagaraActor::FireAsyncQueriesInternal(bool bTransferOnComplete)
 {
 	if (!InitializeManager())
 	{
@@ -94,8 +121,8 @@ void ATrajectoryQueryNiagaraActor::RunQueryAndUpdateNiagara()
 	TSharedRef<TArray<FSpatialHashQueryResult>> AccumulatedResults =
 		MakeShared<TArray<FSpatialHashQueryResult>>();
 
-	// Capture the query positions so the final callback can pass them to Niagara.
-	// Note: the full array is needed – TransferResultsToNiagara uses it as the QueryPoints parameter.
+	// Capture the query positions so the final callback can pass them to StoreQueryResults.
+	// Note: the full array is needed as the QueryPoints parameter.
 	TArray<FVector> CapturedQueryPositions = QueryPositions;
 
 	TWeakObjectPtr<ATrajectoryQueryNiagaraActor> WeakThis(this);
@@ -110,14 +137,14 @@ void ATrajectoryQueryNiagaraActor::RunQueryAndUpdateNiagara()
 			QueryTimeStart,
 			QueryTimeEnd,
 			FOnSpatialHashQueryComplete::CreateLambda(
-				[WeakThis, PendingCount, AccumulatedResults, CapturedQueryPositions]
+				[WeakThis, PendingCount, AccumulatedResults, CapturedQueryPositions, bTransferOnComplete]
 				(const TArray<FSpatialHashQueryResult>& Results)
 				{
 					// Merge this query's results into the shared accumulator.
 					AccumulatedResults->Append(Results);
 
 					// Fan-in: when all per-position queries have completed,
-					// transfer the merged results to the Niagara component.
+					// store the merged results (and optionally transfer to Niagara).
 					const int32 Remaining = PendingCount->Decrement();
 					if (Remaining == 0)
 					{
@@ -128,7 +155,12 @@ void ATrajectoryQueryNiagaraActor::RunQueryAndUpdateNiagara()
 								     "%d trajectories found in total."),
 								CapturedQueryPositions.Num(), AccumulatedResults->Num());
 
-							This->TransferResultsToNiagara(CapturedQueryPositions, *AccumulatedResults);
+							This->StoreQueryResults(CapturedQueryPositions, *AccumulatedResults);
+
+							if (bTransferOnComplete)
+							{
+								This->TransferDataToNiagara();
+							}
 						}
 					}
 				}
@@ -139,6 +171,35 @@ void ATrajectoryQueryNiagaraActor::RunQueryAndUpdateNiagara()
 	UE_LOG(LogTemp, Log,
 		TEXT("ATrajectoryQueryNiagaraActor: Fired %d async queries (outer radius %.2f, t=[%d,%d])."),
 		NumQueries, OuterQueryRadius, QueryTimeStart, QueryTimeEnd);
+}
+
+void ATrajectoryQueryNiagaraActor::StoreQueryResults(
+	const TArray<FVector>& QueryPoints,
+	const TArray<FSpatialHashQueryResult>& Results)
+{
+	CachedQueryPoints = QueryPoints;
+	CachedResults     = Results;
+
+	// Compute bounding box over all query + result points.
+	FBox Bounds(EForceInit::ForceInit);
+	for (const FVector& QP : QueryPoints)
+	{
+		Bounds += QP;
+	}
+	for (const FSpatialHashQueryResult& Result : Results)
+	{
+		for (const FTrajectorySamplePoint& Sample : Result.SamplePoints)
+		{
+			Bounds += Sample.Position;
+		}
+	}
+
+	ResultBoundsMin = Bounds.IsValid ? Bounds.Min : FVector::ZeroVector;
+	ResultBoundsMax = Bounds.IsValid ? Bounds.Max : FVector::ZeroVector;
+
+	UE_LOG(LogTemp, Log,
+		TEXT("ATrajectoryQueryNiagaraActor: Results stored – %d trajectories, bounds [%s]–[%s]."),
+		Results.Num(), *ResultBoundsMin.ToString(), *ResultBoundsMax.ToString());
 }
 
 void ATrajectoryQueryNiagaraActor::TransferResultsToNiagara(
@@ -179,19 +240,6 @@ void ATrajectoryQueryNiagaraActor::TransferResultsToNiagara(
 		}
 	}
 
-	// ── Compute bounding box over all query + result points ──────────────────
-	FBox Bounds(EForceInit::ForceInit);
-	for (const FVector& QP : QueryPoints)
-	{
-		Bounds += QP;
-	}
-	for (const FVector& RP : ResultPoints)
-	{
-		Bounds += RP;
-	}
-	const FVector BoundsMin = Bounds.IsValid ? Bounds.Min : FVector::ZeroVector;
-	const FVector BoundsMax = Bounds.IsValid ? Bounds.Max : FVector::ZeroVector;
-
 	// ── Transfer to Niagara user parameters ──────────────────────────────────
 
 	// Position arrays (PositionArray type in Niagara)
@@ -217,9 +265,9 @@ void ATrajectoryQueryNiagaraActor::TransferResultsToNiagara(
 	NiagaraComponent->SetVariableInt(FName("QueryTimeStart"), QueryTimeStart);
 	NiagaraComponent->SetVariableInt(FName("QueryTimeEnd"), QueryTimeEnd);
 
-	// Bounding box enclosing all query points and result points
-	NiagaraComponent->SetVariableVec3(FName("BoundsMin"), BoundsMin);
-	NiagaraComponent->SetVariableVec3(FName("BoundsMax"), BoundsMax);
+	// Bounding box – use the stored values computed by StoreQueryResults
+	NiagaraComponent->SetVariableVec3(FName("BoundsMin"), ResultBoundsMin);
+	NiagaraComponent->SetVariableVec3(FName("BoundsMax"), ResultBoundsMax);
 
 	// Activate the system now that all data has been pushed
 	NiagaraComponent->Activate(true);
@@ -229,5 +277,5 @@ void ATrajectoryQueryNiagaraActor::TransferResultsToNiagara(
 		     "%d query points, %d result points across %d trajectories. "
 		     "Bounds: [%s] – [%s]."),
 		QueryPoints.Num(), ResultPoints.Num(), Results.Num(),
-		*BoundsMin.ToString(), *BoundsMax.ToString());
+		*ResultBoundsMin.ToString(), *ResultBoundsMax.ToString());
 }

@@ -77,8 +77,25 @@ public:
 	// ─── Blueprint callable entry points ─────────────────────────────────────
 
 	/**
-	 * Run the spatial hash query and push the results to the attached Niagara component.
-	 * Call this after the actor has been placed and configured in the level.
+	 * Fire the async nearest-neighbour queries for all QueryPositions.
+	 * When all queries complete the results and bounding box are stored on the actor
+	 * (CachedQueryPoints, ResultBoundsMin, ResultBoundsMax) but Niagara is NOT updated.
+	 * Call TransferDataToNiagara() afterwards to push the data to the Niagara system.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Trajectory Visualization")
+	void RunQuery();
+
+	/**
+	 * Push the cached query results to the attached Niagara component.
+	 * Call this after RunQuery() has completed (i.e. after the async callbacks have fired).
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Trajectory Visualization")
+	void TransferDataToNiagara();
+
+	/**
+	 * Convenience wrapper: runs the query and transfers results to Niagara as soon as
+	 * all async callbacks have fired. Equivalent to calling RunQuery() and then
+	 * TransferDataToNiagara() inside the completion callback.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Trajectory Visualization")
 	void RunQueryAndUpdateNiagara();
@@ -94,16 +111,43 @@ protected:
 	UPROPERTY()
 	USpatialHashTableManager* Manager;
 
+	/** Query positions snapshot captured at the time of the last RunQuery() call */
+	UPROPERTY(BlueprintReadOnly, Category = "Query Results")
+	TArray<FVector> CachedQueryPoints;
+
+	/** Minimum corner of the AABB enclosing all query + result points from the last query */
+	UPROPERTY(BlueprintReadOnly, Category = "Query Results")
+	FVector ResultBoundsMin;
+
+	/** Maximum corner of the AABB enclosing all query + result points from the last query */
+	UPROPERTY(BlueprintReadOnly, Category = "Query Results")
+	FVector ResultBoundsMax;
+
 	/** Initialize the spatial hash table manager and load required hash tables */
 	bool InitializeManager();
 
 private:
+	/** Results cached by the last completed RunQuery() call */
+	TArray<FSpatialHashQueryResult> CachedResults;
+
 	/**
-	 * Convert query results to flat arrays suitable for Niagara and transfer them
-	 * to the Niagara component's user parameters.
-	 *
-	 * @param QueryPoints     Positions that were used as query inputs
-	 * @param Results         Query result trajectories with sample points
+	 * Core fan-out / fan-in async query dispatch.
+	 * Stores results into CachedQueryPoints / CachedResults / ResultBoundsMin / ResultBoundsMax.
+	 * If bTransferOnComplete is true, also calls TransferDataToNiagara() automatically.
+	 */
+	void FireAsyncQueriesInternal(bool bTransferOnComplete);
+
+	/**
+	 * Store completed query results and compute the result bounding box.
+	 * Called from the fan-in callback on the game thread.
+	 */
+	void StoreQueryResults(
+		const TArray<FVector>& QueryPoints,
+		const TArray<FSpatialHashQueryResult>& Results);
+
+	/**
+	 * Push the supplied arrays to the Niagara component user parameters.
+	 * Low-level implementation used by TransferDataToNiagara().
 	 */
 	void TransferResultsToNiagara(
 		const TArray<FVector>& QueryPoints,
