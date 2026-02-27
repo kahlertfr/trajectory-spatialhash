@@ -23,6 +23,8 @@ class UNiagaraComponent;
  * - float          OuterQueryRadius
  * - int            QueryTimeStart
  * - int            QueryTimeEnd
+ * - Vector         BoundsMin            – minimum corner of the AABB enclosing all query + result points
+ * - Vector         BoundsMax            – maximum corner of the AABB enclosing all query + result points
  */
 UCLASS(BlueprintType, Blueprintable)
 class SPATIALHASHEDTRAJECTORY_API ATrajectoryQueryNiagaraActor : public AActor

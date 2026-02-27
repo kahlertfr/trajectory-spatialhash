@@ -179,6 +179,19 @@ void ATrajectoryQueryNiagaraActor::TransferResultsToNiagara(
 		}
 	}
 
+	// ── Compute bounding box over all query + result points ──────────────────
+	FBox Bounds(EForceInit::ForceInit);
+	for (const FVector& QP : QueryPoints)
+	{
+		Bounds += QP;
+	}
+	for (const FVector& RP : ResultPoints)
+	{
+		Bounds += RP;
+	}
+	const FVector BoundsMin = Bounds.IsValid ? Bounds.Min : FVector::ZeroVector;
+	const FVector BoundsMax = Bounds.IsValid ? Bounds.Max : FVector::ZeroVector;
+
 	// ── Transfer to Niagara user parameters ──────────────────────────────────
 
 	// Position arrays (PositionArray type in Niagara)
@@ -204,11 +217,17 @@ void ATrajectoryQueryNiagaraActor::TransferResultsToNiagara(
 	NiagaraComponent->SetVariableInt(FName("QueryTimeStart"), QueryTimeStart);
 	NiagaraComponent->SetVariableInt(FName("QueryTimeEnd"), QueryTimeEnd);
 
+	// Bounding box enclosing all query points and result points
+	NiagaraComponent->SetVariableVec3(FName("BoundsMin"), BoundsMin);
+	NiagaraComponent->SetVariableVec3(FName("BoundsMax"), BoundsMax);
+
 	// Activate the system now that all data has been pushed
 	NiagaraComponent->Activate(true);
 
 	UE_LOG(LogTemp, Log,
 		TEXT("ATrajectoryQueryNiagaraActor: Niagara system updated – "
-		     "%d query points, %d result points across %d trajectories."),
-		QueryPoints.Num(), ResultPoints.Num(), Results.Num());
+		     "%d query points, %d result points across %d trajectories. "
+		     "Bounds: [%s] – [%s]."),
+		QueryPoints.Num(), ResultPoints.Num(), Results.Num(),
+		*BoundsMin.ToString(), *BoundsMax.ToString());
 }
