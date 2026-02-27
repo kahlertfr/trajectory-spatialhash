@@ -28,7 +28,9 @@ public class SpatialHashedTrajectory : ModuleRules
 				"Core",
 				"CoreUObject",
 				"Engine",
-				"TrajectoryData"
+				"TrajectoryData",
+				"Niagara",
+				"NiagaraCore"
 			}
 			);
 			
