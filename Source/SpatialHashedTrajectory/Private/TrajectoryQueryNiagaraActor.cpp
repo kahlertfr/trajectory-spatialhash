@@ -109,21 +109,33 @@ bool ATrajectoryQueryNiagaraActor::FireAsyncQueriesWithCallback(
 		return false;
 	}
 
+	// ── Reset cached state so progressive updates start clean ─────────────────
+	CachedQueryPoints  = QueryPositions;   // all positions are known up-front
+	CachedResults.Empty();
+
+	// Pre-compute bounds over all query positions (they are known up-front).
+	// AppendPartialResults will only expand these incrementally with new results.
+	{
+		FBox QBounds(EForceInit::ForceInit);
+		for (const FVector& QP : CachedQueryPoints)
+		{
+			QBounds += QP;
+		}
+		ResultBoundsMin = QBounds.IsValid ? QBounds.Min : FVector::ZeroVector;
+		ResultBoundsMax = QBounds.IsValid ? QBounds.Max : FVector::ZeroVector;
+	}
+
 	// ── Fan-out: one async query per query position ───────────────────────────
-	// Shared state collects partial results from each callback.
+	// Progressive update: each per-position callback immediately appends its
+	// results and refreshes the Niagara system so the user sees them as they
+	// arrive, without waiting for all queries to finish.
 	// FOnSpatialHashQueryComplete callbacks are delivered on the game thread,
-	// so AccumulatedResults->Append is safe without a mutex.
+	// so CachedResults.Append is safe without a mutex.
 	// FThreadSafeCounter is used for the decrement in case the API ever delivers
 	// callbacks from a worker thread in the future.
 
 	const int32 NumQueries = QueryPositions.Num();
 	TSharedRef<FThreadSafeCounter> PendingCount = MakeShared<FThreadSafeCounter>(NumQueries);
-	TSharedRef<TArray<FSpatialHashQueryResult>> AccumulatedResults =
-		MakeShared<TArray<FSpatialHashQueryResult>>();
-
-	// Capture the query positions so the final callback can pass them to StoreQueryResults.
-	// Note: the full array is needed as the QueryPoints parameter.
-	TArray<FVector> CapturedQueryPositions = QueryPositions;
 
 	TWeakObjectPtr<ATrajectoryQueryNiagaraActor> WeakThis(this);
 
@@ -137,27 +149,29 @@ bool ATrajectoryQueryNiagaraActor::FireAsyncQueriesWithCallback(
 			QueryTimeStart,
 			QueryTimeEnd,
 			FOnSpatialHashQueryComplete::CreateLambda(
-				[WeakThis, PendingCount, AccumulatedResults, CapturedQueryPositions, OnComplete]
+				[WeakThis, PendingCount, OnComplete]
 				(const TArray<FSpatialHashQueryResult>& Results)
 				{
-					// Merge this query's results into the shared accumulator.
-					AccumulatedResults->Append(Results);
+					ATrajectoryQueryNiagaraActor* This = WeakThis.Get();
+					if (!This)
+					{
+						return;
+					}
+
+					// Progressive update: push this query's results to Niagara immediately.
+					This->AppendPartialResults(Results);
 
 					// Fan-in: when all per-position queries have completed,
-					// store the merged results and invoke the completion callback.
+					// invoke the completion callback.
 					const int32 Remaining = PendingCount->Decrement();
 					if (Remaining == 0)
 					{
-						if (ATrajectoryQueryNiagaraActor* This = WeakThis.Get())
-						{
-							UE_LOG(LogTemp, Log,
-								TEXT("ATrajectoryQueryNiagaraActor: All %d async queries complete – "
-								     "%d trajectories found in total."),
-								CapturedQueryPositions.Num(), AccumulatedResults->Num());
+						UE_LOG(LogTemp, Log,
+							TEXT("ATrajectoryQueryNiagaraActor: All %d async queries complete – "
+							     "%d trajectories found in total."),
+							This->CachedQueryPoints.Num(), This->CachedResults.Num());
 
-							This->StoreQueryResults(CapturedQueryPositions, *AccumulatedResults);
-							OnComplete.ExecuteIfBound();
-						}
+						OnComplete.ExecuteIfBound();
 					}
 				}
 			)
@@ -198,6 +212,41 @@ void ATrajectoryQueryNiagaraActor::StoreQueryResults(
 	UE_LOG(LogTemp, Log,
 		TEXT("ATrajectoryQueryNiagaraActor: Results stored – %d trajectories, bounds [%s]–[%s]."),
 		Results.Num(), *ResultBoundsMin.ToString(), *ResultBoundsMax.ToString());
+}
+
+void ATrajectoryQueryNiagaraActor::AppendPartialResults(
+	const TArray<FSpatialHashQueryResult>& NewResults)
+{
+	// Extend the accumulated result set.
+	CachedResults.Append(NewResults);
+
+	// Incrementally expand the bounding box with only the new results.
+	// ResultBoundsMin/Max were pre-seeded with the query positions in
+	// FireAsyncQueriesWithCallback, so we only need to process NewResults here.
+	FBox Bounds(ResultBoundsMin, ResultBoundsMax);
+	for (const FSpatialHashQueryResult& Result : NewResults)
+	{
+		for (const FTrajectorySamplePoint& Sample : Result.SamplePoints)
+		{
+			Bounds += Sample.Position;
+		}
+	}
+	ResultBoundsMin = Bounds.Min;
+	ResultBoundsMax = Bounds.Max;
+
+	// Deactivate the system so the next Activate() call performs a clean reset.
+	if (NiagaraComponent)
+	{
+		NiagaraComponent->Deactivate();
+	}
+
+	// Push the enlarged dataset and reactivate Niagara immediately so the user
+	// sees results progressively as each per-position query completes.
+	TransferResultsToNiagara(CachedQueryPoints, CachedResults);
+
+	UE_LOG(LogTemp, Log,
+		TEXT("ATrajectoryQueryNiagaraActor: Progressive update – %d trajectories so far, bounds [%s]–[%s]."),
+		CachedResults.Num(), *ResultBoundsMin.ToString(), *ResultBoundsMax.ToString());
 }
 
 void ATrajectoryQueryNiagaraActor::TransferResultsToNiagara(
