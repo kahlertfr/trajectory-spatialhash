@@ -77,25 +77,16 @@ public:
 	// ─── Blueprint callable entry points ─────────────────────────────────────
 
 	/**
-	 * Fire the async nearest-neighbour queries for all QueryPositions.
-	 * When all queries complete the results and bounding box are stored on the actor
-	 * (CachedQueryPoints, ResultBoundsMin, ResultBoundsMax) but Niagara is NOT updated.
-	 * Call TransferDataToNiagara() afterwards to push the data to the Niagara system.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "Trajectory Visualization")
-	void RunQuery();
-
-	/**
 	 * Push the cached query results to the attached Niagara component.
-	 * Call this after RunQuery() has completed (i.e. after the async callbacks have fired).
+	 * Call this after RunQuery (async) has completed (i.e. after OnSuccess fires).
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Trajectory Visualization")
 	void TransferDataToNiagara();
 
 	/**
 	 * Convenience wrapper: runs the query and transfers results to Niagara as soon as
-	 * all async callbacks have fired. Equivalent to calling RunQuery() and then
-	 * TransferDataToNiagara() inside the completion callback.
+	 * all async callbacks have fired. Equivalent to the async RunQuery node followed by
+	 * TransferDataToNiagara() on the success pin.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Trajectory Visualization")
 	void RunQueryAndUpdateNiagara();
@@ -111,7 +102,7 @@ protected:
 	UPROPERTY()
 	USpatialHashTableManager* Manager;
 
-	/** Query positions snapshot captured at the time of the last RunQuery() call */
+	/** Query positions snapshot captured at the time of the last RunQuery call */
 	UPROPERTY(BlueprintReadOnly, Category = "Query Results")
 	TArray<FVector> CachedQueryPoints;
 
@@ -126,16 +117,17 @@ protected:
 	/** Initialize the spatial hash table manager and load required hash tables */
 	bool InitializeManager();
 
-private:
-	/** Results cached by the last completed RunQuery() call */
-	TArray<FSpatialHashQueryResult> CachedResults;
-
 	/**
 	 * Core fan-out / fan-in async query dispatch.
 	 * Stores results into CachedQueryPoints / CachedResults / ResultBoundsMin / ResultBoundsMax.
-	 * If bTransferOnComplete is true, also calls TransferDataToNiagara() automatically.
+	 * Calls OnComplete when all queries finish successfully, or OnFailed if startup fails.
+	 * Returns true if queries were started, false if a startup condition was not met.
 	 */
-	void FireAsyncQueriesInternal(bool bTransferOnComplete);
+	bool FireAsyncQueriesWithCallback(FSimpleDelegate OnComplete, FSimpleDelegate OnFailure = FSimpleDelegate());
+
+private:
+	/** Results cached by the last completed query */
+	TArray<FSpatialHashQueryResult> CachedResults;
 
 	/**
 	 * Store completed query results and compute the result bounding box.

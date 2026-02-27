@@ -73,11 +73,6 @@ bool ATrajectoryQueryNiagaraActor::InitializeManager()
 
 // ─── Public BlueprintCallable entry points ────────────────────────────────────
 
-void ATrajectoryQueryNiagaraActor::RunQuery()
-{
-	FireAsyncQueriesInternal(false);
-}
-
 void ATrajectoryQueryNiagaraActor::TransferDataToNiagara()
 {
 	if (CachedQueryPoints.IsEmpty())
@@ -91,22 +86,27 @@ void ATrajectoryQueryNiagaraActor::TransferDataToNiagara()
 
 void ATrajectoryQueryNiagaraActor::RunQueryAndUpdateNiagara()
 {
-	FireAsyncQueriesInternal(true);
+	FireAsyncQueriesWithCallback(
+		FSimpleDelegate::CreateUObject(this, &ATrajectoryQueryNiagaraActor::TransferDataToNiagara));
 }
 
-// ─── Private helpers ──────────────────────────────────────────────────────────
+// ─── Protected helper ─────────────────────────────────────────────────────────
 
-void ATrajectoryQueryNiagaraActor::FireAsyncQueriesInternal(bool bTransferOnComplete)
+bool ATrajectoryQueryNiagaraActor::FireAsyncQueriesWithCallback(
+	FSimpleDelegate OnComplete,
+	FSimpleDelegate OnFailure)
 {
 	if (!InitializeManager())
 	{
-		return;
+		OnFailure.ExecuteIfBound();
+		return false;
 	}
 
 	if (QueryPositions.IsEmpty())
 	{
 		UE_LOG(LogTemp, Warning, TEXT("ATrajectoryQueryNiagaraActor: QueryPositions array is empty – nothing to query."));
-		return;
+		OnFailure.ExecuteIfBound();
+		return false;
 	}
 
 	// ── Fan-out: one async query per query position ───────────────────────────
@@ -137,14 +137,14 @@ void ATrajectoryQueryNiagaraActor::FireAsyncQueriesInternal(bool bTransferOnComp
 			QueryTimeStart,
 			QueryTimeEnd,
 			FOnSpatialHashQueryComplete::CreateLambda(
-				[WeakThis, PendingCount, AccumulatedResults, CapturedQueryPositions, bTransferOnComplete]
+				[WeakThis, PendingCount, AccumulatedResults, CapturedQueryPositions, OnComplete]
 				(const TArray<FSpatialHashQueryResult>& Results)
 				{
 					// Merge this query's results into the shared accumulator.
 					AccumulatedResults->Append(Results);
 
 					// Fan-in: when all per-position queries have completed,
-					// store the merged results (and optionally transfer to Niagara).
+					// store the merged results and invoke the completion callback.
 					const int32 Remaining = PendingCount->Decrement();
 					if (Remaining == 0)
 					{
@@ -156,11 +156,7 @@ void ATrajectoryQueryNiagaraActor::FireAsyncQueriesInternal(bool bTransferOnComp
 								CapturedQueryPositions.Num(), AccumulatedResults->Num());
 
 							This->StoreQueryResults(CapturedQueryPositions, *AccumulatedResults);
-
-							if (bTransferOnComplete)
-							{
-								This->TransferDataToNiagara();
-							}
+							OnComplete.ExecuteIfBound();
 						}
 					}
 				}
@@ -171,6 +167,8 @@ void ATrajectoryQueryNiagaraActor::FireAsyncQueriesInternal(bool bTransferOnComp
 	UE_LOG(LogTemp, Log,
 		TEXT("ATrajectoryQueryNiagaraActor: Fired %d async queries (outer radius %.2f, t=[%d,%d])."),
 		NumQueries, OuterQueryRadius, QueryTimeStart, QueryTimeEnd);
+
+	return true;
 }
 
 void ATrajectoryQueryNiagaraActor::StoreQueryResults(
