@@ -148,8 +148,11 @@ private:
 	/**
 	 * Push the supplied arrays to the Niagara component user parameters.
 	 * Low-level implementation used by TransferDataToNiagara().
+	 * @param bReactivate  When true (default) the component is activated after the transfer.
+	 *                     Pass false for progressive updates where the emitter polls the arrays itself.
 	 */
 	void TransferResultsToNiagara(
 		const TArray<FVector>& QueryPoints,
-		const TArray<FSpatialHashQueryResult>& Results);
+		const TArray<FSpatialHashQueryResult>& Results,
+		bool bReactivate = true);
 };

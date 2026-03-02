@@ -234,15 +234,10 @@ void ATrajectoryQueryNiagaraActor::AppendPartialResults(
 	ResultBoundsMin = Bounds.Min;
 	ResultBoundsMax = Bounds.Max;
 
-	// Deactivate the system so the next Activate() call performs a clean reset.
-	if (NiagaraComponent)
-	{
-		NiagaraComponent->Deactivate();
-	}
-
-	// Push the enlarged dataset and reactivate Niagara immediately so the user
-	// sees results progressively as each per-position query completes.
-	TransferResultsToNiagara(CachedQueryPoints, CachedResults);
+	// Push only the updated arrays – do not deactivate/reactivate the system.
+	// The Niagara emitter polls the array data interfaces directly and will pick
+	// up the new data on its next tick without needing a full system restart.
+	TransferResultsToNiagara(CachedQueryPoints, CachedResults, false);
 
 	UE_LOG(LogTemp, Log,
 		TEXT("ATrajectoryQueryNiagaraActor: Progressive update – %d trajectories so far, bounds [%s]–[%s]."),
@@ -251,7 +246,8 @@ void ATrajectoryQueryNiagaraActor::AppendPartialResults(
 
 void ATrajectoryQueryNiagaraActor::TransferResultsToNiagara(
 	const TArray<FVector>& QueryPoints,
-	const TArray<FSpatialHashQueryResult>& Results)
+	const TArray<FSpatialHashQueryResult>& Results,
+	bool bReactivate)
 {
 	if (!NiagaraComponent)
 	{
@@ -316,8 +312,12 @@ void ATrajectoryQueryNiagaraActor::TransferResultsToNiagara(
 	NiagaraComponent->SetVariableVec3(FName("BoundsMin"), ResultBoundsMin);
 	NiagaraComponent->SetVariableVec3(FName("BoundsMax"), ResultBoundsMax);
 
-	// Activate the system now that all data has been pushed
-	NiagaraComponent->Activate(true);
+	// Activate the system now that all data has been pushed.
+	// Skipped for progressive updates – the emitter polls the arrays itself.
+	if (bReactivate)
+	{
+		NiagaraComponent->Activate(true);
+	}
 
 	UE_LOG(LogTemp, Log,
 		TEXT("ATrajectoryQueryNiagaraActor: Niagara system updated – "
