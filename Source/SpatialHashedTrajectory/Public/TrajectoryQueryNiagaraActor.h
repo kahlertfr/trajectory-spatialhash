@@ -62,8 +62,8 @@ public:
 
 	/**
 	 * Positions used as query centres.
-	 * One async radius-over-time-range query is fired per entry.
-	 * Results from all positions are merged before being transferred to Niagara.
+	 * One async single-timestep radius query is fired per (position × timestep) pair,
+	 * so results arrive progressively as each timestep query completes.
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Query Settings")
 	TArray<FVector> QueryPositions;
@@ -133,7 +133,7 @@ private:
 	/**
 	 * Lookup table: TrajectoryId → index into CachedResults.
 	 * Kept in sync with CachedResults during FireAsyncQueriesWithCallback
-	 * so AppendPartialResults can merge duplicate trajectory IDs in O(1).
+	 * so AppendTimestepResults can locate existing trajectories in O(1).
 	 */
 	TMap<int32, int32> CachedResultsIndex;
 
@@ -146,11 +146,18 @@ private:
 		const TArray<FSpatialHashQueryResult>& Results);
 
 	/**
-	 * Merge a single query's results into the accumulated cache by trajectory ID,
-	 * recompute the bounding box, and push the updated arrays to Niagara.
+	 * Incorporate the results from a single per-timestep async query into the
+	 * accumulated cache, then push the updated arrays to Niagara.
+	 *
+	 * Because each query covers exactly one timestep, each element of Results
+	 * carries sample points only at TimeStep.  When a trajectory is already
+	 * present in CachedResults (found by an earlier timestep query or from a
+	 * different query position) the new sample is inserted at the correct sorted
+	 * position using binary search — no duplicate-timestep check is required.
+	 *
 	 * Called on the game thread after each individual async query completes.
 	 */
-	void AppendPartialResults(const TArray<FSpatialHashQueryResult>& NewResults);
+	void AppendTimestepResults(int32 TimeStep, const TArray<FSpatialHashQueryResult>& Results);
 
 	/**
 	 * Push the supplied arrays to the Niagara component user parameters.
