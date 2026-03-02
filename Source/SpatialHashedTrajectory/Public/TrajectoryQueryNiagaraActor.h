@@ -131,6 +131,13 @@ private:
 	TArray<FSpatialHashQueryResult> CachedResults;
 
 	/**
+	 * Lookup table: TrajectoryId → index into CachedResults.
+	 * Kept in sync with CachedResults during FireAsyncQueriesWithCallback
+	 * so AppendPartialResults can merge duplicate trajectory IDs in O(1).
+	 */
+	TMap<int32, int32> CachedResultsIndex;
+
+	/**
 	 * Store completed query results and compute the result bounding box.
 	 * Called from the fan-in callback on the game thread.
 	 */
@@ -139,8 +146,8 @@ private:
 		const TArray<FSpatialHashQueryResult>& Results);
 
 	/**
-	 * Append a single query's results to the accumulated cache, recompute the bounding box,
-	 * and immediately push the updated data to Niagara (deactivate then reactivate).
+	 * Merge a single query's results into the accumulated cache by trajectory ID,
+	 * recompute the bounding box, and push the updated arrays to Niagara.
 	 * Called on the game thread after each individual async query completes.
 	 */
 	void AppendPartialResults(const TArray<FSpatialHashQueryResult>& NewResults);

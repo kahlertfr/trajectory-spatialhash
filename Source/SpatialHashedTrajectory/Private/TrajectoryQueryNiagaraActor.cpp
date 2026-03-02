@@ -112,6 +112,7 @@ bool ATrajectoryQueryNiagaraActor::FireAsyncQueriesWithCallback(
 	// ── Reset cached state so progressive updates start clean ─────────────────
 	CachedQueryPoints  = QueryPositions;   // all positions are known up-front
 	CachedResults.Empty();
+	CachedResultsIndex.Empty();
 
 	// Pre-compute bounds over all query positions (they are known up-front).
 	// AppendPartialResults will only expand these incrementally with new results.
@@ -217,8 +218,53 @@ void ATrajectoryQueryNiagaraActor::StoreQueryResults(
 void ATrajectoryQueryNiagaraActor::AppendPartialResults(
 	const TArray<FSpatialHashQueryResult>& NewResults)
 {
-	// Extend the accumulated result set.
-	CachedResults.Append(NewResults);
+	// Merge each incoming result into CachedResults by trajectory ID.
+	// The Niagara flat-array layout requires that:
+	//   - each trajectory appears exactly once in CachedResults, and
+	//   - its SamplePoints are ordered by TimeStep.
+	// When the same trajectory is found by multiple query positions its
+	// sample sets must be merged (sorted union by TimeStep) rather than
+	// being appended as duplicate entries.
+	for (const FSpatialHashQueryResult& NewResult : NewResults)
+	{
+		if (const int32* ExistingIdx = CachedResultsIndex.Find(NewResult.TrajectoryId))
+		{
+			// Trajectory already known: merge the incoming samples in TimeStep order
+			// using a standard two-pointer sorted merge.
+			TArray<FTrajectorySamplePoint>& Existing = CachedResults[*ExistingIdx].SamplePoints;
+			const TArray<FTrajectorySamplePoint>& Incoming = NewResult.SamplePoints;
+
+			TArray<FTrajectorySamplePoint> Merged;
+			Merged.Reserve(Existing.Num() + Incoming.Num());
+
+			int32 ExistingIt = 0, IncomingIt = 0;
+			while (ExistingIt < Existing.Num() && IncomingIt < Incoming.Num())
+			{
+				const int32 ExistTS = Existing[ExistingIt].TimeStep;
+				const int32 NewTS   = Incoming[IncomingIt].TimeStep;
+				if      (ExistTS < NewTS) { Merged.Add(Existing[ExistingIt++]); }
+				else if (ExistTS > NewTS) { Merged.Add(Incoming[IncomingIt++]); }
+				else
+				{
+					// Duplicate timestep: keep the existing sample because it was
+					// retrieved first and may carry a more precise distance value
+					// (closer query position). Discard the incoming duplicate.
+					Merged.Add(Existing[ExistingIt++]);
+					++IncomingIt;
+				}
+			}
+			while (ExistingIt < Existing.Num()) { Merged.Add(Existing[ExistingIt++]); }
+			while (IncomingIt < Incoming.Num()) { Merged.Add(Incoming[IncomingIt++]); }
+
+			Existing = MoveTemp(Merged);
+		}
+		else
+		{
+			// New trajectory: record its index and append.
+			CachedResultsIndex.Add(NewResult.TrajectoryId, CachedResults.Num());
+			CachedResults.Add(NewResult);
+		}
+	}
 
 	// Incrementally expand the bounding box with only the new results.
 	// ResultBoundsMin/Max were pre-seeded with the query positions in
