@@ -62,8 +62,9 @@ public:
 
 	/**
 	 * Positions used as query centres.
-	 * One async single-timestep radius query is fired per (position × timestep) pair,
-	 * so results arrive progressively as each timestep query completes.
+	 * One async single-timestep radius query is fired per position: position[i] is
+	 * queried at timestep QueryTimeStart + i.  Queries run sequentially to avoid
+	 * exhausting the async thread pool with too many concurrent requests.
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Query Settings")
 	TArray<FVector> QueryPositions;
@@ -92,7 +93,7 @@ public:
 	void RunQueryAndUpdateNiagara();
 
 	/**
-	 * Core fan-out / fan-in async query dispatch.
+	 * Core sequential async query dispatch.
 	 * Stores results into CachedQueryPoints / CachedResults / ResultBoundsMin / ResultBoundsMax.
 	 * Calls OnComplete when all queries finish successfully, or OnFailure if startup fails.
 	 * Returns true if queries were started, false if a startup condition was not met.
@@ -153,21 +154,21 @@ private:
 
 	/**
 	 * Store completed query results and compute the result bounding box.
-	 * Called from the fan-in callback on the game thread.
+	 * Called from the completion callback on the game thread.
 	 */
 	void StoreQueryResults(
 		const TArray<FVector>& QueryPoints,
 		const TArray<FSpatialHashQueryResult>& Results);
 
 	/**
-	 * Incorporate the results from a single per-position async time-range query
+	 * Incorporate the results from a single-timestep async query for one position
 	 * into the accumulated cache, then push the updated arrays to Niagara.
 	 *
-	 * Each element of Results may carry sample points across all queried timesteps.
+	 * Each element of Results carries sample points for the queried timestep.
 	 * When a trajectory is already present in CachedResults (found by an earlier
 	 * position query) new samples are inserted at the correct sorted positions
 	 * using binary search — no duplicate-timestep check is required because
-	 * each (position × timestep) pair is queried only once.
+	 * each position is queried at exactly one timestep.
 	 *
 	 * Called on the game thread after each individual async query completes.
 	 */
@@ -175,6 +176,15 @@ private:
 		const FVector& QueryPosition,
 		int32 PositionIndex,
 		const TArray<FSpatialHashQueryResult>& Results);
+
+	/**
+	 * Fire a single-timestep async query for QueryPositions[PositionIndex] at
+	 * timestep QueryTimeStart + PositionIndex, then chain to the next position in
+	 * the callback.  When PositionIndex >= NumPositions all queries have completed
+	 * and OnComplete is invoked.  Sequential chaining prevents too many concurrent
+	 * async requests from being dispatched at once.
+	 */
+	void FireQueryForPosition(int32 PositionIndex, int32 NumPositions, FSimpleDelegate OnComplete);
 
 	/**
 	 * Push the supplied arrays to the Niagara component user parameters.
