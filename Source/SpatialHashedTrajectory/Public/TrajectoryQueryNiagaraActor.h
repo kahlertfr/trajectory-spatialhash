@@ -111,7 +111,11 @@ protected:
 	UPROPERTY()
 	USpatialHashTableManager* Manager;
 
-	/** Query positions snapshot captured at the time of the last RunQuery call */
+	/**
+	 * Query positions for which at least one result has been received.
+	 * Populated progressively during FireAsyncQueriesWithCallback; maintains
+	 * the original QueryPositions order.
+	 */
 	UPROPERTY(BlueprintReadOnly, Category = "Query Results")
 	TArray<FVector> CachedQueryPoints;
 
@@ -138,6 +142,16 @@ private:
 	TMap<int32, int32> CachedResultsIndex;
 
 	/**
+	 * Sorted list of QueryPositions indices that have produced at least one result.
+	 * Maintained in ascending index order so that CachedQueryPoints can be updated
+	 * with a single sorted insertion rather than a full rebuild.
+	 */
+	TArray<int32> CachedQueryPositionIndices;
+
+	/** True once the first result has been incorporated into ResultBoundsMin/Max. */
+	bool bBoundsValid = false;
+
+	/**
 	 * Store completed query results and compute the result bounding box.
 	 * Called from the fan-in callback on the game thread.
 	 */
@@ -157,7 +171,11 @@ private:
 	 *
 	 * Called on the game thread after each individual async query completes.
 	 */
-	void AppendTimestepResults(int32 TimeStep, const TArray<FSpatialHashQueryResult>& Results);
+	void AppendTimestepResults(
+		const FVector& QueryPosition,
+		int32 PositionIndex,
+		int32 TimeStep,
+		const TArray<FSpatialHashQueryResult>& Results);
 
 	/**
 	 * Push the supplied arrays to the Niagara component user parameters.

@@ -111,21 +111,15 @@ bool ATrajectoryQueryNiagaraActor::FireAsyncQueriesWithCallback(
 	}
 
 	// ── Reset cached state so progressive updates start clean ─────────────────
-	CachedQueryPoints  = QueryPositions;   // all positions are known up-front
+	// CachedQueryPoints is built progressively: a position is only added when
+	// at least one of its timestep queries returns non-empty results.
+	CachedQueryPoints.Empty();
 	CachedResults.Empty();
 	CachedResultsIndex.Empty();
-
-	// Pre-compute bounds over all query positions (they are known up-front).
-	// AppendTimestepResults will only expand these incrementally with new results.
-	{
-		FBox QBounds(EForceInit::ForceInit);
-		for (const FVector& QP : CachedQueryPoints)
-		{
-			QBounds += QP;
-		}
-		ResultBoundsMin = QBounds.IsValid ? QBounds.Min : FVector::ZeroVector;
-		ResultBoundsMax = QBounds.IsValid ? QBounds.Max : FVector::ZeroVector;
-	}
+	CachedQueryPositionIndices.Empty();
+	bBoundsValid = false;
+	ResultBoundsMin = FVector::ZeroVector;
+	ResultBoundsMax = FVector::ZeroVector;
 
 	// ── Fan-out: one async query per (query position × timestep) ─────────────
 	// Each query covers a single timestep so callbacks deliver exactly the
@@ -140,47 +134,48 @@ bool ATrajectoryQueryNiagaraActor::FireAsyncQueriesWithCallback(
 
 	TWeakObjectPtr<ATrajectoryQueryNiagaraActor> WeakThis(this);
 
-	int32 currentIndex = 0;
-	for (const FVector& Position : QueryPositions)
+	for (int32 PositionIndex = 0; PositionIndex < QueryPositions.Num(); ++PositionIndex)
 	{
-		int32 TimeStep = QueryTimeStart + currentIndex;
-
-		Manager->QueryRadiusWithDistanceCheckAsync(
-			DatasetDirectory,
-			Position,
-			OuterQueryRadius,
-			CellSize,
-			TimeStep,
-			FOnSpatialHashQueryComplete::CreateLambda(
-				[WeakThis, PendingCount, OnComplete, TimeStep]
-				(const TArray<FSpatialHashQueryResult>& Results)
-				{
-					ATrajectoryQueryNiagaraActor* This = WeakThis.Get();
-					if (!This)
+		const FVector Position = QueryPositions[PositionIndex];
+		for (int32 TimeStep = QueryTimeStart; TimeStep <= QueryTimeEnd; ++TimeStep)
+		{
+			Manager->QueryRadiusWithDistanceCheckAsync(
+				DatasetDirectory,
+				Position,
+				OuterQueryRadius,
+				CellSize,
+				TimeStep,
+				FOnSpatialHashQueryComplete::CreateLambda(
+					[WeakThis, PendingCount, OnComplete, Position, PositionIndex, TimeStep]
+					(const TArray<FSpatialHashQueryResult>& Results)
 					{
-						return;
+						ATrajectoryQueryNiagaraActor* This = WeakThis.Get();
+						if (!This)
+						{
+							return;
+						}
+
+						// Progressive update: incorporate this timestep's samples
+						// at the correct sorted position in each trajectory.
+						// The query position is only added to CachedQueryPoints
+						// when Results is non-empty.
+						This->AppendTimestepResults(Position, PositionIndex, TimeStep, Results);
+
+						// Fan-in: when all queries have completed, fire OnComplete.
+						const int32 Remaining = PendingCount->Decrement();
+						if (Remaining == 0)
+						{
+							UE_LOG(LogTemp, Log,
+								TEXT("ATrajectoryQueryNiagaraActor: All %d async queries complete – "
+								     "%d trajectories found in total."),
+								This->CachedQueryPoints.Num(), This->CachedResults.Num());
+
+							OnComplete.ExecuteIfBound();
+						}
 					}
-
-					// Progressive update: incorporate this timestep's samples
-					// at the correct sorted position in each trajectory.
-					This->AppendTimestepResults(TimeStep, Results);
-
-					// Fan-in: when all queries have completed, fire OnComplete.
-					const int32 Remaining = PendingCount->Decrement();
-					if (Remaining == 0)
-					{
-						UE_LOG(LogTemp, Log,
-							TEXT("ATrajectoryQueryNiagaraActor: All %d async queries complete – "
-								    "%d trajectories found in total."),
-							This->CachedQueryPoints.Num(), This->CachedResults.Num());
-
-						OnComplete.ExecuteIfBound();
-					}
-				}
-			)
-		);
-
-		currentIndex++;	
+				)
+			);
+		}
 	}
 
 	UE_LOG(LogTemp, Log,
@@ -220,19 +215,37 @@ void ATrajectoryQueryNiagaraActor::StoreQueryResults(
 }
 
 void ATrajectoryQueryNiagaraActor::AppendTimestepResults(
+	const FVector& QueryPosition,
+	int32 PositionIndex,
 	int32 TimeStep,
 	const TArray<FSpatialHashQueryResult>& Results)
 {
+	// Nothing to do if this timestep query returned no trajectories.
+	// The query position is NOT added to CachedQueryPoints in this case.
+	if (Results.IsEmpty())
+	{
+		return;
+	}
+
+	// If this is the first result for this query position, insert it into
+	// CachedQueryPoints at the position that maintains the original QueryPositions
+	// order (ascending by PositionIndex).
+	if (Algo::BinarySearch(CachedQueryPositionIndices, PositionIndex) == INDEX_NONE)
+	{
+		// Find the insertion point in the sorted index list.
+		const int32 InsertAt = Algo::LowerBound(CachedQueryPositionIndices, PositionIndex);
+		CachedQueryPositionIndices.Insert(PositionIndex, InsertAt);
+		// Mirror the insertion in CachedQueryPoints so both arrays stay in sync.
+		CachedQueryPoints.Insert(QueryPosition, InsertAt);
+	}
+
+	// Merge each incoming result into CachedResults by trajectory ID.
 	// Each element of Results corresponds to one trajectory found within the
 	// query radius at TimeStep.  Because this is a single-timestep query each
 	// result carries exactly one sample point (at TimeStep).
-	// For each trajectory result:
-	//   - If the trajectory is already in CachedResults (seen at another timestep
-	//     or from a different query position), insert the new sample at the
-	//     correct sorted position using binary search.
-	//   - If the trajectory is new, append it and register its index.
-	// No duplicate-timestep checks are required because each async query covers
-	// only a single timestep.
+	// For trajectories already in CachedResults (seen at another timestep
+	// or from a different query position), insert the new sample at the
+	// correct sorted position using binary search.
 	for (const FSpatialHashQueryResult& NewResult : Results)
 	{
 		if (const int32* ExistingIdx = CachedResultsIndex.Find(NewResult.TrajectoryId))
@@ -261,8 +274,11 @@ void ATrajectoryQueryNiagaraActor::AppendTimestepResults(
 		}
 	}
 
-	// Incrementally expand the bounding box with only the new results.
-	FBox Bounds(ResultBoundsMin, ResultBoundsMax);
+	// Incrementally expand the bounding box.  Only positions that produced
+	// results (tracked via CachedQueryPositionIndices) are included — along
+	// with the sample positions from those results.
+	FBox Bounds(bBoundsValid ? FBox(ResultBoundsMin, ResultBoundsMax) : FBox(EForceInit::ForceInit));
+	Bounds += QueryPosition;
 	for (const FSpatialHashQueryResult& Result : Results)
 	{
 		for (const FTrajectorySamplePoint& Sample : Result.SamplePoints)
@@ -270,8 +286,12 @@ void ATrajectoryQueryNiagaraActor::AppendTimestepResults(
 			Bounds += Sample.Position;
 		}
 	}
-	ResultBoundsMin = Bounds.Min;
-	ResultBoundsMax = Bounds.Max;
+	if (Bounds.IsValid)
+	{
+		bBoundsValid    = true;
+		ResultBoundsMin = Bounds.Min;
+		ResultBoundsMax = Bounds.Max;
+	}
 
 	// Push only the updated arrays – do not deactivate/reactivate the system.
 	// The Niagara emitter polls the array data interfaces directly and will pick
@@ -279,8 +299,8 @@ void ATrajectoryQueryNiagaraActor::AppendTimestepResults(
 	TransferResultsToNiagara(CachedQueryPoints, CachedResults, false);
 
 	UE_LOG(LogTemp, Log,
-		TEXT("ATrajectoryQueryNiagaraActor: Progressive update (t=%d) – %d trajectories so far, bounds [%s]–[%s]."),
-		TimeStep, CachedResults.Num(), *ResultBoundsMin.ToString(), *ResultBoundsMax.ToString());
+		TEXT("ATrajectoryQueryNiagaraActor: Progressive update (t=%d) – %d query points, %d trajectories so far, bounds [%s]–[%s]."),
+		TimeStep, CachedQueryPoints.Num(), CachedResults.Num(), *ResultBoundsMin.ToString(), *ResultBoundsMax.ToString());
 }
 
 void ATrajectoryQueryNiagaraActor::TransferResultsToNiagara(
