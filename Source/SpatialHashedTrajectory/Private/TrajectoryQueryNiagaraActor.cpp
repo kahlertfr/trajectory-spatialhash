@@ -33,12 +33,6 @@ void ATrajectoryQueryNiagaraActor::BeginPlay()
 			false  // do not auto-activate – we push data first
 		);
 	}
-
-	// Automatically run the query and update Niagara when the actor starts playing.
-	if (!DatasetDirectory.IsEmpty())
-	{
-		RunQueryAndUpdateNiagara();
-	}
 }
 
 bool ATrajectoryQueryNiagaraActor::InitializeManager()
@@ -129,7 +123,7 @@ bool ATrajectoryQueryNiagaraActor::FireAsyncQueriesWithCallback(
 	// mutation is safe without a mutex.
 
 	const int32 NumTimeSteps = QueryTimeEnd - QueryTimeStart + 1;
-	const int32 NumQueries   = QueryPositions.Num() * NumTimeSteps;
+	const int32 NumQueries   = QueryPositions.Num();
 	TSharedRef<FThreadSafeCounter> PendingCount = MakeShared<FThreadSafeCounter>(NumQueries);
 
 	TWeakObjectPtr<ATrajectoryQueryNiagaraActor> WeakThis(this);
@@ -137,8 +131,7 @@ bool ATrajectoryQueryNiagaraActor::FireAsyncQueriesWithCallback(
 	for (int32 PositionIndex = 0; PositionIndex < QueryPositions.Num(); ++PositionIndex)
 	{
 		const FVector Position = QueryPositions[PositionIndex];
-		for (int32 TimeStep = QueryTimeStart; TimeStep <= QueryTimeEnd; ++TimeStep)
-		{
+		int32 TimeStep = QueryTimeStart + PositionIndex;
 			Manager->QueryRadiusWithDistanceCheckAsync(
 				DatasetDirectory,
 				Position,
@@ -175,12 +168,11 @@ bool ATrajectoryQueryNiagaraActor::FireAsyncQueriesWithCallback(
 					}
 				)
 			);
-		}
 	}
 
 	UE_LOG(LogTemp, Log,
-		TEXT("ATrajectoryQueryNiagaraActor: Fired %d async queries (%d positions × %d timesteps, outer radius %.2f, t=[%d,%d])."),
-		NumQueries, QueryPositions.Num(), NumTimeSteps, OuterQueryRadius, QueryTimeStart, QueryTimeEnd);
+		TEXT("ATrajectoryQueryNiagaraActor: Fired %d async queries (%d positions, outer radius %.2f, t=[%d,%d])."),
+		NumQueries, QueryPositions.Num(), OuterQueryRadius, QueryTimeStart, QueryTimeEnd);
 
 	return true;
 }
@@ -293,10 +285,7 @@ void ATrajectoryQueryNiagaraActor::AppendTimestepResults(
 		ResultBoundsMax = Bounds.Max;
 	}
 
-	// Push only the updated arrays – do not deactivate/reactivate the system.
-	// The Niagara emitter polls the array data interfaces directly and will pick
-	// up the new data on its next tick without needing a full system restart.
-	TransferResultsToNiagara(CachedQueryPoints, CachedResults, false);
+	TransferResultsToNiagara(CachedQueryPoints, CachedResults, true);
 
 	UE_LOG(LogTemp, Log,
 		TEXT("ATrajectoryQueryNiagaraActor: Progressive update (t=%d) – %d query points, %d trajectories so far, bounds [%s]–[%s]."),
