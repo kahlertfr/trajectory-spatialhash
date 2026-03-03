@@ -93,7 +93,10 @@ public:
 	void RunQueryAndUpdateNiagara();
 
 	/**
-	 * Core sequential async query dispatch.
+	 * Bounded-concurrency async query dispatch.
+	 * Seeds up to MaxConcurrentQueries parallel queries; each callback claims
+	 * the next pending position and fires a new query, keeping the pool full
+	 * until all positions have been processed.
 	 * Stores results into CachedQueryPoints / CachedResults / ResultBoundsMin / ResultBoundsMax.
 	 * Calls OnComplete when all queries finish successfully, or OnFailure if startup fails.
 	 * Returns true if queries were started, false if a startup condition was not met.
@@ -179,12 +182,26 @@ private:
 
 	/**
 	 * Fire a single-timestep async query for QueryPositions[PositionIndex] at
-	 * timestep QueryTimeStart + PositionIndex, then chain to the next position in
-	 * the callback.  When PositionIndex >= NumPositions all queries have completed
-	 * and OnComplete is invoked.  Sequential chaining prevents too many concurrent
-	 * async requests from being dispatched at once.
+	 * timestep QueryTimeStart + PositionIndex.
+	 *
+	 * The callback atomically increments NextIndex to claim the next pending
+	 * slot (if any) and immediately fires another query for it, keeping the
+	 * concurrency pool full.  PendingCount tracks how many positions are still
+	 * outstanding; when it reaches zero OnComplete is invoked.
+	 *
+	 * @param NextIndex    Shared atomic counter: next position slot to dispatch.
+	 *                     Seeded to InitialWorkers so seed callbacks claim slots
+	 *                     InitialWorkers, InitialWorkers+1, …
+	 * @param PendingCount Shared atomic counter starting at NumPositions.
+	 *                     Decremented once per completed callback; OnComplete
+	 *                     fires when it reaches zero.
 	 */
-	void FireQueryForPosition(int32 PositionIndex, int32 NumPositions, FSimpleDelegate OnComplete);
+	void FireQueryForPosition(
+		int32 PositionIndex,
+		TSharedRef<FThreadSafeCounter> NextIndex,
+		TSharedRef<FThreadSafeCounter> PendingCount,
+		int32 NumPositions,
+		FSimpleDelegate OnComplete);
 
 	/**
 	 * Push the supplied arrays to the Niagara component user parameters.

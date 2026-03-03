@@ -6,6 +6,11 @@
 #include "NiagaraDataInterfaceArrayFunctionLibrary.h"
 #include "Algo/BinarySearch.h"
 
+// Maximum number of async queries in-flight simultaneously.
+// Keeps the async API from being overwhelmed while still making good use of
+// the available worker threads.  Must be at least 1.
+static constexpr int32 MaxConcurrentQueries = 8;
+
 ATrajectoryQueryNiagaraActor::ATrajectoryQueryNiagaraActor()
 {
 	PrimaryActorTick.bCanEverTick = false;
@@ -104,7 +109,7 @@ bool ATrajectoryQueryNiagaraActor::FireAsyncQueriesWithCallback(
 		return false;
 	}
 
-	// ── Reset cached state so sequential updates start clean ──────────────────
+	// ── Reset cached state so progressive updates start clean ────────────────
 	// CachedQueryPoints is built progressively: a position is only added when
 	// at least one of its timestep queries returns non-empty results.
 	CachedQueryPoints.Empty();
@@ -115,12 +120,13 @@ bool ATrajectoryQueryNiagaraActor::FireAsyncQueriesWithCallback(
 	ResultBoundsMin = FVector::ZeroVector;
 	ResultBoundsMax = FVector::ZeroVector;
 
-	// ── Sequential dispatch: one single-timestep query per position ──────────
-	// Each position[i] is queried at timestep QueryTimeStart + i.  Queries are
-	// chained so that the next query is fired only after the previous callback
-	// has returned — this prevents exhausting the async thread pool with too
-	// many concurrent requests (which caused all results to collapse onto the
-	// last timestep).
+	// ── Bounded-concurrency dispatch ─────────────────────────────────────────
+	// Seed up to MaxConcurrentQueries parallel queries (positions 0..N-1).
+	// As each query completes its callback atomically claims the next pending
+	// position slot and fires a new query, keeping the pool full until every
+	// position has been processed.  This prevents flooding the async API with
+	// hundreds of simultaneous requests (which caused all callbacks to resolve
+	// at the same—wrong—timestep) while still achieving real parallelism.
 	// Callbacks arrive on the game thread, so shared state mutation is safe
 	// without a mutex.
 
@@ -135,32 +141,32 @@ bool ATrajectoryQueryNiagaraActor::FireAsyncQueriesWithCallback(
 			NumPositions, QueryTimeStart, QueryTimeEnd, TimeRangeSize, TimeRangeSize - 1);
 	}
 
-	UE_LOG(LogTemp, Log,
-		TEXT("ATrajectoryQueryNiagaraActor: Starting sequential queries for %d positions, outer radius %.2f, t=[%d,%d]."),
-		NumPositions, OuterQueryRadius, QueryTimeStart, QueryTimeEnd);
+	// Seed workers take slots 0..InitialWorkers-1 statically.
+	// NextIndex is pre-advanced to InitialWorkers so the first callback that
+	// fires claims slot InitialWorkers, the second claims InitialWorkers+1, etc.
+	const int32 InitialWorkers = FMath::Min(MaxConcurrentQueries, NumPositions);
+	TSharedRef<FThreadSafeCounter> NextIndex    = MakeShared<FThreadSafeCounter>(InitialWorkers);
+	TSharedRef<FThreadSafeCounter> PendingCount = MakeShared<FThreadSafeCounter>(NumPositions);
 
-	// Kick off the chain; each callback fires the next position query.
-	FireQueryForPosition(0, NumPositions, OnComplete);
+	UE_LOG(LogTemp, Log,
+		TEXT("ATrajectoryQueryNiagaraActor: Seeding %d/%d concurrent queries (max %d), outer radius %.2f, t=[%d,%d]."),
+		InitialWorkers, NumPositions, MaxConcurrentQueries, OuterQueryRadius, QueryTimeStart, QueryTimeEnd);
+
+	for (int32 i = 0; i < InitialWorkers; ++i)
+	{
+		FireQueryForPosition(i, NextIndex, PendingCount, NumPositions, OnComplete);
+	}
 
 	return true;
 }
 
 void ATrajectoryQueryNiagaraActor::FireQueryForPosition(
 	int32 PositionIndex,
+	TSharedRef<FThreadSafeCounter> NextIndex,
+	TSharedRef<FThreadSafeCounter> PendingCount,
 	int32 NumPositions,
 	FSimpleDelegate OnComplete)
 {
-	// Base case: all positions have been queried.
-	if (PositionIndex >= NumPositions)
-	{
-		UE_LOG(LogTemp, Log,
-			TEXT("ATrajectoryQueryNiagaraActor: All %d sequential queries complete – "
-			     "%d positions with results, %d trajectories found in total."),
-			NumPositions, CachedQueryPoints.Num(), CachedResults.Num());
-		OnComplete.ExecuteIfBound();
-		return;
-	}
-
 	const FVector Position = QueryPositions[PositionIndex];
 	// Each position corresponds to exactly one timestep in the queried range.
 	// Clamp to QueryTimeEnd so queries are never fired outside the loaded range.
@@ -168,11 +174,6 @@ void ATrajectoryQueryNiagaraActor::FireQueryForPosition(
 
 	TWeakObjectPtr<ATrajectoryQueryNiagaraActor> WeakThis(this);
 
-	// NOTE: QueryRadiusWithDistanceCheckAsync normally defers its callback to the
-	// game thread (truly async), so the lambda below does not deepen the call
-	// stack.  The only synchronous-callback paths are early-exit error cases
-	// (hash table not loaded, no candidates, API unavailable).  In practice all
-	// hash tables are pre-loaded by InitializeManager, so those paths are rare.
 	Manager->QueryRadiusWithDistanceCheckAsync(
 		DatasetDirectory,
 		Position,
@@ -180,7 +181,7 @@ void ATrajectoryQueryNiagaraActor::FireQueryForPosition(
 		CellSize,
 		TimeStep,
 		FOnSpatialHashQueryComplete::CreateLambda(
-			[WeakThis, PositionIndex, NumPositions, Position, OnComplete]
+			[WeakThis, PositionIndex, Position, NextIndex, PendingCount, NumPositions, OnComplete]
 			(const TArray<FSpatialHashQueryResult>& Results)
 			{
 				ATrajectoryQueryNiagaraActor* This = WeakThis.Get();
@@ -192,8 +193,25 @@ void ATrajectoryQueryNiagaraActor::FireQueryForPosition(
 				// Progressive update: incorporate this timestep's samples.
 				This->AppendTimestepResults(Position, PositionIndex, Results);
 
-				// Chain: fire the query for the next position.
-				This->FireQueryForPosition(PositionIndex + 1, NumPositions, OnComplete);
+				// Refuel the pool: atomically claim the next pending slot.
+				// Increment() returns the new value; subtract 1 to get the slot.
+				const int32 NextSlot = NextIndex->Increment() - 1;
+				if (NextSlot < NumPositions)
+				{
+					This->FireQueryForPosition(NextSlot, NextIndex, PendingCount, NumPositions, OnComplete);
+				}
+
+				// Fan-in: fire OnComplete when every position has been processed.
+				// Decrement() returns the new value; 0 means we are the last.
+				const int32 Remaining = PendingCount->Decrement();
+				if (Remaining == 0)
+				{
+					UE_LOG(LogTemp, Log,
+						TEXT("ATrajectoryQueryNiagaraActor: All %d queries complete – "
+						     "%d positions with results, %d trajectories found in total."),
+						NumPositions, This->CachedQueryPoints.Num(), This->CachedResults.Num());
+					OnComplete.ExecuteIfBound();
+				}
 			}
 		)
 	);
