@@ -140,45 +140,47 @@ bool ATrajectoryQueryNiagaraActor::FireAsyncQueriesWithCallback(
 
 	TWeakObjectPtr<ATrajectoryQueryNiagaraActor> WeakThis(this);
 
+	int32 currentIndex = 0;
 	for (const FVector& Position : QueryPositions)
 	{
-		for (int32 TimeStep = QueryTimeStart; TimeStep <= QueryTimeEnd; ++TimeStep)
-		{
-			Manager->QueryRadiusWithDistanceCheckAsync(
-				DatasetDirectory,
-				Position,
-				OuterQueryRadius,
-				CellSize,
-				TimeStep,
-				FOnSpatialHashQueryComplete::CreateLambda(
-					[WeakThis, PendingCount, OnComplete, TimeStep]
-					(const TArray<FSpatialHashQueryResult>& Results)
+		int32 TimeStep = QueryTimeStart + currentIndex;
+
+		Manager->QueryRadiusWithDistanceCheckAsync(
+			DatasetDirectory,
+			Position,
+			OuterQueryRadius,
+			CellSize,
+			TimeStep,
+			FOnSpatialHashQueryComplete::CreateLambda(
+				[WeakThis, PendingCount, OnComplete, TimeStep]
+				(const TArray<FSpatialHashQueryResult>& Results)
+				{
+					ATrajectoryQueryNiagaraActor* This = WeakThis.Get();
+					if (!This)
 					{
-						ATrajectoryQueryNiagaraActor* This = WeakThis.Get();
-						if (!This)
-						{
-							return;
-						}
-
-						// Progressive update: incorporate this timestep's samples
-						// at the correct sorted position in each trajectory.
-						This->AppendTimestepResults(TimeStep, Results);
-
-						// Fan-in: when all queries have completed, fire OnComplete.
-						const int32 Remaining = PendingCount->Decrement();
-						if (Remaining == 0)
-						{
-							UE_LOG(LogTemp, Log,
-								TEXT("ATrajectoryQueryNiagaraActor: All %d async queries complete – "
-								     "%d trajectories found in total."),
-								This->CachedQueryPoints.Num(), This->CachedResults.Num());
-
-							OnComplete.ExecuteIfBound();
-						}
+						return;
 					}
-				)
-			);
-		}
+
+					// Progressive update: incorporate this timestep's samples
+					// at the correct sorted position in each trajectory.
+					This->AppendTimestepResults(TimeStep, Results);
+
+					// Fan-in: when all queries have completed, fire OnComplete.
+					const int32 Remaining = PendingCount->Decrement();
+					if (Remaining == 0)
+					{
+						UE_LOG(LogTemp, Log,
+							TEXT("ATrajectoryQueryNiagaraActor: All %d async queries complete – "
+								    "%d trajectories found in total."),
+							This->CachedQueryPoints.Num(), This->CachedResults.Num());
+
+						OnComplete.ExecuteIfBound();
+					}
+				}
+			)
+		);
+
+		currentIndex++;	
 	}
 
 	UE_LOG(LogTemp, Log,
