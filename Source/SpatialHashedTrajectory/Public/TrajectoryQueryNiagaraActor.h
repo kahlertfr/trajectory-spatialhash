@@ -160,21 +160,20 @@ private:
 		const TArray<FSpatialHashQueryResult>& Results);
 
 	/**
-	 * Incorporate the results from a single per-timestep async query into the
-	 * accumulated cache, then push the updated arrays to Niagara.
+	 * Incorporate the results from a single per-position async time-range query
+	 * into the accumulated cache, then push the updated arrays to Niagara.
 	 *
-	 * Because each query covers exactly one timestep, each element of Results
-	 * carries sample points only at TimeStep.  When a trajectory is already
-	 * present in CachedResults (found by an earlier timestep query or from a
-	 * different query position) the new sample is inserted at the correct sorted
-	 * position using binary search — no duplicate-timestep check is required.
+	 * Each element of Results may carry sample points across all queried timesteps.
+	 * When a trajectory is already present in CachedResults (found by an earlier
+	 * position query) new samples are inserted at the correct sorted positions
+	 * using binary search — no duplicate-timestep check is required because
+	 * each (position × timestep) pair is queried only once.
 	 *
 	 * Called on the game thread after each individual async query completes.
 	 */
 	void AppendTimestepResults(
 		const FVector& QueryPosition,
 		int32 PositionIndex,
-		int32 TimeStep,
 		const TArray<FSpatialHashQueryResult>& Results);
 
 	/**
