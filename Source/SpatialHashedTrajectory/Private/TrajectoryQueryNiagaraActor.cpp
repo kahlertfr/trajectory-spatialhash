@@ -9,7 +9,7 @@
 // Maximum number of async queries in-flight simultaneously.
 // Keeps the async API from being overwhelmed while still making good use of
 // the available worker threads.  Must be at least 1.
-static constexpr int32 MaxConcurrentQueries = 8;
+static constexpr int32 MaxConcurrentQueries = 1;
 
 ATrajectoryQueryNiagaraActor::ATrajectoryQueryNiagaraActor()
 {
@@ -37,6 +37,7 @@ void ATrajectoryQueryNiagaraActor::BeginPlay()
 			EAttachLocation::KeepRelativeOffset,
 			false  // do not auto-activate – we push data first
 		);
+		NiagaraComponent->Deactivate();
 	}
 }
 
@@ -322,7 +323,7 @@ void ATrajectoryQueryNiagaraActor::AppendTimestepResults(
 	// Push only the updated arrays – do not deactivate/reactivate the system.
 	// The Niagara emitter polls the array data interfaces directly and will pick
 	// up the new data on its next tick without needing a full system restart.
-	TransferResultsToNiagara(CachedQueryPoints, CachedResults, false);
+	TransferResultsToNiagara(CachedQueryPoints, CachedResults, true);
 
 	UE_LOG(LogTemp, Log,
 		TEXT("ATrajectoryQueryNiagaraActor: Progressive update (position %d) – %d query points, %d trajectories so far, bounds [%s]–[%s]."),
@@ -401,6 +402,9 @@ void ATrajectoryQueryNiagaraActor::TransferResultsToNiagara(
 	// Skipped for progressive updates – the emitter polls the arrays itself.
 	if (bReactivate)
 	{
+		// removed old particles immediately
+		NiagaraComponent->DeactivateImmediate();
+		// NiagaraComponent->ResetSystem();
 		NiagaraComponent->Activate(true);
 	}
 
