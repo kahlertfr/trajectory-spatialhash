@@ -206,7 +206,7 @@ namespace SpatialHashTableExample
 		CreateExampleHashTable(HashTable);
 
 		// Query at position in cell (0, 0, 0) - should find trajectories 1, 2
-		TArray<uint32> TrajectoryIds;
+		TArray<int64> TrajectoryIds;
 		FVector QueryPos(5.0f, 5.0f, 5.0f);
 		
 		if (!HashTable.QueryAtPosition(QueryPos, TrajectoryIds))

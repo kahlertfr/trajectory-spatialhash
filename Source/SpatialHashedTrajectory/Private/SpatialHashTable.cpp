@@ -101,7 +101,7 @@ int32 FSpatialHashTable::FindEntry(uint64 Key) const
 	return -1; // Not found
 }
 
-bool FSpatialHashTable::GetTrajectoryIdsForCell(int32 EntryIndex, TArray<uint32>& OutTrajectoryIds) const
+bool FSpatialHashTable::GetTrajectoryIdsForCell(int32 EntryIndex, TArray<int64>& OutTrajectoryIds) const
 {
 	OutTrajectoryIds.Reset();
 	
@@ -122,7 +122,7 @@ bool FSpatialHashTable::GetTrajectoryIdsForCell(int32 EntryIndex, TArray<uint32>
 			OutTrajectoryIds.Reserve(Entry.TrajectoryCount);
 			for (uint32 i = 0; i < Entry.TrajectoryCount; ++i)
 			{
-				OutTrajectoryIds.Add(TrajectoryIds[Entry.StartIndex + i]);
+				OutTrajectoryIds.Add(static_cast<int64>(TrajectoryIds[Entry.StartIndex + i]));
 			}
 			return true;
 		}
@@ -133,7 +133,7 @@ bool FSpatialHashTable::GetTrajectoryIdsForCell(int32 EntryIndex, TArray<uint32>
 	return ReadTrajectoryIdsFromDisk(Entry.StartIndex, Entry.TrajectoryCount, OutTrajectoryIds);
 }
 
-bool FSpatialHashTable::QueryAtPosition(const FVector& WorldPos, TArray<uint32>& OutTrajectoryIds) const
+bool FSpatialHashTable::QueryAtPosition(const FVector& WorldPos, TArray<int64>& OutTrajectoryIds) const
 {
 	OutTrajectoryIds.Reset();
 	
@@ -154,7 +154,7 @@ bool FSpatialHashTable::QueryAtPosition(const FVector& WorldPos, TArray<uint32>&
 	return false;
 }
 
-int32 FSpatialHashTable::QueryTrajectoryIdsInRadius(const FVector& WorldPos, float Radius, TArray<uint32>& OutTrajectoryIds) const
+int32 FSpatialHashTable::QueryTrajectoryIdsInRadius(const FVector& WorldPos, float Radius, TArray<int64>& OutTrajectoryIds) const
 {
 	OutTrajectoryIds.Reset();
 	
@@ -171,7 +171,7 @@ int32 FSpatialHashTable::QueryTrajectoryIdsInRadius(const FVector& WorldPos, flo
 	int32 CellRadius = FMath::CeilToInt(Radius / CellSize) + 1;
 	
 	// Use a set to collect unique trajectory IDs
-	TSet<uint32> UniqueTrajectoryIds;
+	TSet<int64> UniqueTrajectoryIds;
 	
 	// Iterate over all cells within the bounding box
 	for (int32 dx = -CellRadius; dx <= CellRadius; ++dx)
@@ -196,11 +196,11 @@ int32 FSpatialHashTable::QueryTrajectoryIdsInRadius(const FVector& WorldPos, flo
 				if (EntryIndex >= 0)
 				{
 					// Get trajectory IDs for this cell
-					TArray<uint32> CellTrajectoryIds;
+					TArray<int64> CellTrajectoryIds;
 					if (GetTrajectoryIdsForCell(EntryIndex, CellTrajectoryIds))
 					{
 						// Add to unique set
-						for (uint32 TrajId : CellTrajectoryIds)
+						for (int64 TrajId : CellTrajectoryIds)
 						{
 							UniqueTrajectoryIds.Add(TrajId);
 						}
@@ -446,7 +446,7 @@ bool FSpatialHashTable::Validate() const
 	return true;
 }
 
-bool FSpatialHashTable::ReadTrajectoryIdsFromDisk(uint32 StartIndex, uint32 Count, TArray<uint32>& OutTrajectoryIds) const
+bool FSpatialHashTable::ReadTrajectoryIdsFromDisk(uint32 StartIndex, uint32 Count, TArray<int64>& OutTrajectoryIds) const
 {
 	OutTrajectoryIds.Reset();
 
@@ -493,14 +493,23 @@ bool FSpatialHashTable::ReadTrajectoryIdsFromDisk(uint32 StartIndex, uint32 Coun
 		bSuccess = false;
 	}
 
-	// Read the trajectory IDs
+	// Read the trajectory IDs as uint32 (binary format) and convert to int64
 	if (bSuccess)
 	{
-		OutTrajectoryIds.SetNum(Count);
-		if (!FileHandle->Read(reinterpret_cast<uint8*>(OutTrajectoryIds.GetData()), Count * sizeof(uint32)))
+		TArray<uint32> RawIds;
+		RawIds.SetNum(Count);
+		if (!FileHandle->Read(reinterpret_cast<uint8*>(RawIds.GetData()), Count * sizeof(uint32)))
 		{
 			UE_LOG(LogTemp, Error, TEXT("FSpatialHashTable::ReadTrajectoryIdsFromDisk: Failed to read %u trajectory IDs"), Count);
 			bSuccess = false;
+		}
+		else
+		{
+			OutTrajectoryIds.Reserve(Count);
+			for (uint32 RawId : RawIds)
+			{
+				OutTrajectoryIds.Add(static_cast<int64>(RawId));
+			}
 		}
 	}
 
