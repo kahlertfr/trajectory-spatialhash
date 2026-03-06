@@ -1763,7 +1763,7 @@ void USpatialHashTableManager::QueryRadiusWithDistanceCheckAsync(
 		DatasetDirectory,
 		CandidateTrajectoryIds,
 		TimeStep,
-		FOnTrajectoryQueryComplete::CreateLambda([this, QueryPosition, Radius, OnComplete](const FTrajectoryQueryResult& Result)
+		FOnTrajectoryQueryComplete::CreateLambda([QueryPosition, Radius, OnComplete](const FTrajectoryQueryResult& Result)
 		{
 			TArray<FSpatialHashQueryResult> Results;
 			
@@ -1774,8 +1774,10 @@ void USpatialHashTableManager::QueryRadiusWithDistanceCheckAsync(
 				return;
 			}
 			
-			// Convert query results to internal format and filter by actual distance
-			TMap<int64, TArray<FTrajectorySamplePoint>> TrajectoryData;
+			// At a single timestep each trajectory appears at most once — filter directly
+			// without building an intermediate TMap
+			const float RadiusSquared = Radius * Radius;
+			Results.Reserve(Result.Samples.Num());
 			
 			for (const FTrajectorySample& Sample : Result.Samples)
 			{
@@ -1784,18 +1786,18 @@ void USpatialHashTableManager::QueryRadiusWithDistanceCheckAsync(
 					continue;
 				}
 				
-				TArray<FTrajectorySamplePoint>& SamplePoints = TrajectoryData.FindOrAdd(Sample.TrajectoryId);
-				
-				FTrajectorySamplePoint SamplePoint;
-				SamplePoint.Position = Sample.Position;
-				SamplePoint.TimeStep = Sample.TimeStep;
-				SamplePoint.Distance = 0.0f;
-				
-				SamplePoints.Add(SamplePoint);
+				const float DistanceSquared = FVector::DistSquared(QueryPosition, Sample.Position);
+				if (DistanceSquared <= RadiusSquared)
+				{
+					FSpatialHashQueryResult ResultEntry(static_cast<int32>(Sample.TrajectoryId));
+					FTrajectorySamplePoint SamplePoint;
+					SamplePoint.Position = Sample.Position;
+					SamplePoint.TimeStep = Sample.TimeStep;
+					SamplePoint.Distance = FMath::Sqrt(DistanceSquared);
+					ResultEntry.SamplePoints.Add(MoveTemp(SamplePoint));
+					Results.Add(MoveTemp(ResultEntry));
+				}
 			}
-			
-			// Filter by actual distance
-			FilterByDistance(QueryPosition, Radius, TrajectoryData, Results);
 			
 			// Invoke the completion callback with results
 			OnComplete.ExecuteIfBound(Results);
@@ -1851,7 +1853,7 @@ void USpatialHashTableManager::QueryDualRadiusWithDistanceCheckAsync(
 		DatasetDirectory,
 		CandidateTrajectoryIds,
 		TimeStep,
-		FOnTrajectoryQueryComplete::CreateLambda([this, QueryPosition, InnerRadius, OuterRadius, OnComplete](const FTrajectoryQueryResult& Result)
+		FOnTrajectoryQueryComplete::CreateLambda([QueryPosition, InnerRadius, OuterRadius, OnComplete](const FTrajectoryQueryResult& Result)
 		{
 			TArray<FSpatialHashQueryResult> InnerResults;
 			TArray<FSpatialHashQueryResult> OuterResults;
@@ -1863,8 +1865,12 @@ void USpatialHashTableManager::QueryDualRadiusWithDistanceCheckAsync(
 				return;
 			}
 			
-			// Convert query results and filter by dual radius
-			TMap<int64, TArray<FTrajectorySamplePoint>> TrajectoryData;
+			// At a single timestep each trajectory appears at most once — filter directly
+			// without building an intermediate TMap
+			const float InnerRadiusSq = InnerRadius * InnerRadius;
+			const float OuterRadiusSq = OuterRadius * OuterRadius;
+			InnerResults.Reserve(Result.Samples.Num());
+			OuterResults.Reserve(Result.Samples.Num());
 			
 			for (const FTrajectorySample& Sample : Result.Samples)
 			{
@@ -1873,18 +1879,29 @@ void USpatialHashTableManager::QueryDualRadiusWithDistanceCheckAsync(
 					continue;
 				}
 				
-				TArray<FTrajectorySamplePoint>& SamplePoints = TrajectoryData.FindOrAdd(Sample.TrajectoryId);
+				const float DistanceSq = FVector::DistSquared(QueryPosition, Sample.Position);
+				if (DistanceSq > OuterRadiusSq)
+				{
+					continue;
+				}
 				
+				const float Distance = FMath::Sqrt(DistanceSq);
 				FTrajectorySamplePoint SamplePoint;
 				SamplePoint.Position = Sample.Position;
 				SamplePoint.TimeStep = Sample.TimeStep;
-				SamplePoint.Distance = 0.0f;
+				SamplePoint.Distance = Distance;
 				
-				SamplePoints.Add(SamplePoint);
+				if (DistanceSq <= InnerRadiusSq)
+				{
+					FSpatialHashQueryResult InnerEntry(static_cast<int32>(Sample.TrajectoryId));
+					InnerEntry.SamplePoints.Add(SamplePoint); // copy needed — SamplePoint also goes to OuterEntry
+					InnerResults.Add(MoveTemp(InnerEntry));
+				}
+				
+				FSpatialHashQueryResult OuterEntry(static_cast<int32>(Sample.TrajectoryId));
+				OuterEntry.SamplePoints.Add(MoveTemp(SamplePoint));
+				OuterResults.Add(MoveTemp(OuterEntry));
 			}
-			
-			// Filter by dual radius
-			FilterByDualRadius(QueryPosition, InnerRadius, OuterRadius, TrajectoryData, InnerResults, OuterResults);
 			
 			// Invoke the completion callback
 			OnComplete.ExecuteIfBound(InnerResults, OuterResults);
@@ -1944,7 +1961,7 @@ void USpatialHashTableManager::QueryRadiusOverTimeRangeAsync(
 		AllCandidateIdsArray,
 		StartTimeStep,
 		EndTimeStep,
-		FOnTrajectoryTimeRangeComplete::CreateLambda([this, QueryPosition, Radius, OnComplete](const FTrajectoryTimeRangeResult& Result)
+		FOnTrajectoryTimeRangeComplete::CreateLambda([QueryPosition, Radius, OnComplete](const FTrajectoryTimeRangeResult& Result)
 		{
 			TArray<FSpatialHashQueryResult> Results;
 			
@@ -1955,35 +1972,40 @@ void USpatialHashTableManager::QueryRadiusOverTimeRangeAsync(
 				return;
 			}
 			
-			// Convert time series results to internal format
-			TMap<int64, TArray<FTrajectorySamplePoint>> TrajectoryData;
+			// FTrajectoryTimeSeries already groups data per trajectory — process directly
+			// without building an intermediate TMap
+			const float RadiusSquared = Radius * Radius;
+			Results.Reserve(Result.TimeSeries.Num());
 			
 			for (const FTrajectoryTimeSeries& Series : Result.TimeSeries)
 			{
-				TArray<FTrajectorySamplePoint>& SamplePoints = TrajectoryData.FindOrAdd(Series.TrajectoryId);
+				FSpatialHashQueryResult ResultEntry(static_cast<int32>(Series.TrajectoryId));
+				ResultEntry.SamplePoints.Reserve(Series.Samples.Num());
 				
 				for (int32 i = 0; i < Series.Samples.Num(); ++i)
 				{
 					const FVector& Position = Series.Samples[i];
-					int32 TimeStep = Series.StartTimeStep + i;
-					
-					// Skip invalid positions
 					if (FMath::IsNaN(Position.X) || FMath::IsNaN(Position.Y) || FMath::IsNaN(Position.Z))
 					{
 						continue;
 					}
 					
-					FTrajectorySamplePoint SamplePoint;
-					SamplePoint.Position = Position;
-					SamplePoint.TimeStep = TimeStep;
-					SamplePoint.Distance = 0.0f;
-					
-					SamplePoints.Add(SamplePoint);
+					const float DistanceSq = FVector::DistSquared(QueryPosition, Position);
+					if (DistanceSq <= RadiusSquared)
+					{
+						FTrajectorySamplePoint SamplePoint;
+						SamplePoint.Position = Position;
+						SamplePoint.TimeStep = Series.StartTimeStep + i;
+						SamplePoint.Distance = FMath::Sqrt(DistanceSq);
+						ResultEntry.SamplePoints.Add(MoveTemp(SamplePoint));
+					}
+				}
+				
+				if (ResultEntry.SamplePoints.Num() > 0)
+				{
+					Results.Add(MoveTemp(ResultEntry));
 				}
 			}
-			
-			// Filter trajectories that have samples within radius
-			FilterByDistance(QueryPosition, Radius, TrajectoryData, Results);
 			
 			// Invoke completion callback
 			OnComplete.ExecuteIfBound(Results);
@@ -2082,7 +2104,7 @@ void USpatialHashTableManager::QueryTrajectoryRadiusOverTimeRangeAsync(
 				AllCandidateIdsArray,
 				StartTimeStep,
 				EndTimeStep,
-				FOnTrajectoryTimeRangeComplete::CreateLambda([this, QuerySamples, Radius, OnComplete](const FTrajectoryTimeRangeResult& CandidateResult)
+				FOnTrajectoryTimeRangeComplete::CreateLambda([QuerySamples, Radius, OnComplete](const FTrajectoryTimeRangeResult& CandidateResult)
 				{
 					TArray<FSpatialHashQueryResult> Results;
 					
@@ -2093,49 +2115,93 @@ void USpatialHashTableManager::QueryTrajectoryRadiusOverTimeRangeAsync(
 						return;
 					}
 					
-					// Convert candidate results
-					TMap<int64, TArray<FTrajectorySamplePoint>> TrajectoryData;
+					// FTrajectoryTimeSeries already groups data per trajectory — process directly
+					// without building an intermediate TMap.
+					// Compute per-sample distances to the query trajectory and find the
+					// extended range (first entry to last exit) in a single pass.
+					Results.Reserve(CandidateResult.TimeSeries.Num());
+					
 					for (const FTrajectoryTimeSeries& Series : CandidateResult.TimeSeries)
 					{
-						TArray<FTrajectorySamplePoint>& SamplePoints = TrajectoryData.FindOrAdd(Series.TrajectoryId);
+						// Build sample points with distance to query trajectory
+						TArray<FTrajectorySamplePoint> SamplePoints;
+						SamplePoints.Reserve(Series.Samples.Num());
 						
 						for (int32 i = 0; i < Series.Samples.Num(); ++i)
 						{
 							const FVector& Position = Series.Samples[i];
-							if (!FMath::IsNaN(Position.X) && !FMath::IsNaN(Position.Y) && !FMath::IsNaN(Position.Z))
+							if (FMath::IsNaN(Position.X) || FMath::IsNaN(Position.Y) || FMath::IsNaN(Position.Z))
 							{
-								FTrajectorySamplePoint SamplePoint;
-								SamplePoint.Position = Position;
-								SamplePoint.TimeStep = Series.StartTimeStep + i;
-								SamplePoint.Distance = 0.0f;
-								SamplePoints.Add(SamplePoint);
+								continue;
 							}
-						}
-					}
-					
-					// Calculate minimum distance to query trajectory for each sample
-					for (auto& Pair : TrajectoryData)
-					{
-						for (FTrajectorySamplePoint& Sample : Pair.Value)
-						{
+							
+							const int32 SampleTimeStep = Series.StartTimeStep + i;
+							
+							// Find minimum distance to query trajectory at the same timestep
 							float MinDistance = FLT_MAX;
 							for (const FTrajectorySamplePoint& QuerySample : QuerySamples)
 							{
-								if (QuerySample.TimeStep == Sample.TimeStep)
+								if (QuerySample.TimeStep == SampleTimeStep)
 								{
-									float Distance = FVector::Dist(QuerySample.Position, Sample.Position);
+									const float Distance = FVector::Dist(QuerySample.Position, Position);
 									if (Distance < MinDistance)
 									{
 										MinDistance = Distance;
 									}
 								}
 							}
-							Sample.Distance = MinDistance;
+							
+							FTrajectorySamplePoint SamplePoint;
+							SamplePoint.Position = Position;
+							SamplePoint.TimeStep = SampleTimeStep;
+							SamplePoint.Distance = MinDistance;
+							SamplePoints.Add(MoveTemp(SamplePoint));
 						}
+						
+						if (SamplePoints.Num() == 0)
+						{
+							continue;
+						}
+						
+						// Find all time ranges where the trajectory is within radius
+						TArray<TPair<int32, int32>> WithinRadiusRanges;
+						int32 RangeStart = -1;
+						
+						for (int32 i = 0; i < SamplePoints.Num(); ++i)
+						{
+							const bool bWithinRadius = SamplePoints[i].Distance <= Radius;
+							if (bWithinRadius && RangeStart == -1)
+							{
+								RangeStart = i;
+							}
+							else if (!bWithinRadius && RangeStart != -1)
+							{
+								WithinRadiusRanges.Add(TPair<int32, int32>(RangeStart, i - 1));
+								RangeStart = -1;
+							}
+						}
+						if (RangeStart != -1)
+						{
+							WithinRadiusRanges.Add(TPair<int32, int32>(RangeStart, SamplePoints.Num() - 1));
+						}
+						
+						if (WithinRadiusRanges.Num() == 0)
+						{
+							continue;
+						}
+						
+						// Extended range: from first entry to last exit
+						const int32 FirstEntryIndex = WithinRadiusRanges[0].Key;
+						const int32 LastExitIndex = WithinRadiusRanges.Last().Value;
+						
+						FSpatialHashQueryResult Result(static_cast<int32>(Series.TrajectoryId));
+						Result.SamplePoints.Reserve(LastExitIndex - FirstEntryIndex + 1);
+						for (int32 i = FirstEntryIndex; i <= LastExitIndex; ++i)
+						{
+							Result.SamplePoints.Add(MoveTemp(SamplePoints[i]));
+						}
+						Results.Add(MoveTemp(Result));
 					}
-					
-					// Extend samples and filter
-					ExtendTrajectorySamples(TrajectoryData, Radius, Results);
 					
 					// Invoke completion callback
 					OnComplete.ExecuteIfBound(Results);
