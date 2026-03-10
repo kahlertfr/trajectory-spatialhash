@@ -4,6 +4,7 @@
 #include "Misc/FileHelper.h"
 #include "HAL/PlatformFileManager.h"
 #include "Misc/Paths.h"
+#include "Algo/Unique.h"
 
 // ============================================================================
 // Z-Order Curve (Morton Code) Implementation
@@ -170,8 +171,8 @@ int32 FSpatialHashTable::QueryTrajectoryIdsInRadius(const FVector& WorldPos, flo
 	// Add 1 to ensure we cover the full radius even at cell boundaries
 	int32 CellRadius = FMath::CeilToInt(Radius / CellSize) + 1;
 	
-	// Use a set to collect unique trajectory IDs
-	TSet<int64> UniqueTrajectoryIds;
+	// Collect all candidate trajectory IDs into a flat array; dedup in one pass after
+	TArray<int64> AllTrajectoryIds;
 	
 	// Iterate over all cells within the bounding box
 	for (int32 dx = -CellRadius; dx <= CellRadius; ++dx)
@@ -195,23 +196,21 @@ int32 FSpatialHashTable::QueryTrajectoryIdsInRadius(const FVector& WorldPos, flo
 				int32 EntryIndex = FindEntry(Key);
 				if (EntryIndex >= 0)
 				{
-					// Get trajectory IDs for this cell
+					// Bulk-append all IDs from this cell without per-element hashing
 					TArray<int64> CellTrajectoryIds;
 					if (GetTrajectoryIdsForCell(EntryIndex, CellTrajectoryIds))
 					{
-						// Add to unique set
-						for (int64 TrajId : CellTrajectoryIds)
-						{
-							UniqueTrajectoryIds.Add(TrajId);
-						}
+						AllTrajectoryIds.Append(MoveTemp(CellTrajectoryIds));
 					}
 				}
 			}
 		}
 	}
 	
-	// Convert set to array
-	OutTrajectoryIds = UniqueTrajectoryIds.Array();
+	// Sort then remove consecutive duplicates — O(n log n) instead of O(n) hash insertions
+	AllTrajectoryIds.Sort();
+	AllTrajectoryIds.SetNum(Algo::Unique(AllTrajectoryIds));
+	OutTrajectoryIds = MoveTemp(AllTrajectoryIds);
 	
 	return OutTrajectoryIds.Num();
 }
