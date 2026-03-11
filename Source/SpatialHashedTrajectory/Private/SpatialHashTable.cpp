@@ -209,7 +209,7 @@ int32 FSpatialHashTable::QueryTrajectoryIdsInRadius(const FVector& WorldPos, flo
 	
 	// Sort then remove consecutive duplicates — O(n log n) instead of O(n) hash insertions
 	AllTrajectoryIds.Sort();
-	AllTrajectoryIds.SetNum(Algo::Unique(AllTrajectoryIds));
+	// AllTrajectoryIds.SetNum(Algo::Unique(AllTrajectoryIds));
 	OutTrajectoryIds = MoveTemp(AllTrajectoryIds);
 	
 	return OutTrajectoryIds.Num();
