@@ -184,7 +184,7 @@ public:
 	 * @param OutTrajectoryIds Output array of trajectory IDs
 	 * @return true if successful, false otherwise
 	 */
-	bool GetTrajectoryIdsForCell(int32 EntryIndex, TArray<uint32>& OutTrajectoryIds) const;
+	bool GetTrajectoryIdsForCell(int32 EntryIndex, TArray<int64>& OutTrajectoryIds) const;
 
 	/**
 	 * Query trajectory IDs at a specific world position (reads from disk on-demand)
@@ -192,7 +192,7 @@ public:
 	 * @param OutTrajectoryIds Output array of trajectory IDs
 	 * @return true if cell was found, false otherwise
 	 */
-	bool QueryAtPosition(const FVector& WorldPos, TArray<uint32>& OutTrajectoryIds) const;
+	bool QueryAtPosition(const FVector& WorldPos, TArray<int64>& OutTrajectoryIds) const;
 
 	/**
 	 * Query trajectory IDs within a radius around a world position
@@ -204,7 +204,7 @@ public:
 	 * @param OutTrajectoryIds Output array of unique trajectory IDs
 	 * @return Number of trajectories found
 	 */
-	int32 QueryTrajectoryIdsInRadius(const FVector& WorldPos, float Radius, TArray<uint32>& OutTrajectoryIds) const;
+	int32 QueryTrajectoryIdsInRadius(const FVector& WorldPos, float Radius, TArray<int64>& OutTrajectoryIds) const;
 
 	/**
 	 * Save hash table to binary file
@@ -234,5 +234,5 @@ private:
 	 * @param OutTrajectoryIds Output array of trajectory IDs
 	 * @return true if successful, false otherwise
 	 */
-	bool ReadTrajectoryIdsFromDisk(uint32 StartIndex, uint32 Count, TArray<uint32>& OutTrajectoryIds) const;
+	bool ReadTrajectoryIdsFromDisk(uint32 StartIndex, uint32 Count, TArray<int64>& OutTrajectoryIds) const;
 };

@@ -577,7 +577,7 @@ protected:
 	 * @param TimeStep Time step
 	 * @return Position of trajectory at time step
 	 */
-	FVector GetTrajectoryPosition(int32 TrajectoryId, int32 TimeStep) const;
+	FVector GetTrajectoryPosition(int64 TrajectoryId, int32 TimeStep) const;
 
 	/**
 	 * Load trajectory sample data for specific trajectory IDs and time range
@@ -594,10 +594,10 @@ protected:
 	 */
 	bool LoadTrajectorySamplesForIds(
 		const FString& DatasetDirectory,
-		const TArray<uint32>& TrajectoryIds,
+		const TArray<int64>& TrajectoryIds,
 		int32 StartTimeStep,
 		int32 EndTimeStep,
-		TMap<uint32, TArray<FTrajectorySamplePoint>>& OutTrajectoryData) const;
+		TMap<int64, TArray<FTrajectorySamplePoint>>& OutTrajectoryData) const;
 
 	/**
 	 * Find which shard file contains a specific time step
@@ -620,7 +620,7 @@ protected:
 	void FilterByDistance(
 		const FVector& QueryPosition,
 		float Radius,
-		const TMap<uint32, TArray<FTrajectorySamplePoint>>& TrajectoryData,
+		const TMap<int64, TArray<FTrajectorySamplePoint>>& TrajectoryData,
 		TArray<FSpatialHashQueryResult>& OutResults) const;
 
 	/**
@@ -639,7 +639,7 @@ protected:
 		const FVector& QueryPosition,
 		float InnerRadius,
 		float OuterRadius,
-		const TMap<uint32, TArray<FTrajectorySamplePoint>>& TrajectoryData,
+		const TMap<int64, TArray<FTrajectorySamplePoint>>& TrajectoryData,
 		TArray<FSpatialHashQueryResult>& OutInnerResults,
 		TArray<FSpatialHashQueryResult>& OutOuterResults) const;
 
@@ -652,7 +652,7 @@ protected:
 	 * @param OutExtendedResults Results with extended sample ranges
 	 */
 	void ExtendTrajectorySamples(
-		const TMap<uint32, TArray<FTrajectorySamplePoint>>& TrajectoryData,
+		const TMap<int64, TArray<FTrajectorySamplePoint>>& TrajectoryData,
 		float Radius,
 		TArray<FSpatialHashQueryResult>& OutExtendedResults) const;
 
