@@ -28,7 +28,8 @@ public class SpatialHashedTrajectory : ModuleRules
 				"Core",
 				"CoreUObject",
 				"Engine",
-				"TrajectoryData",
+                "VRInteraction",
+                "TrajectoryData",
 				"Niagara",
 				"NiagaraCore"
 			}

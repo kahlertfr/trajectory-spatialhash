@@ -5,6 +5,8 @@
 #include "NiagaraFunctionLibrary.h"
 #include "NiagaraDataInterfaceArrayFunctionLibrary.h"
 #include "Algo/BinarySearch.h"
+#include "VRLogManager.h"
+
 
 // Maximum number of async queries in-flight simultaneously.
 // Keeps the async API from being overwhelmed while still making good use of
@@ -54,6 +56,8 @@ bool ATrajectoryQueryNiagaraActor::InitializeManager()
 		Manager = NewObject<USpatialHashTableManager>(this);
 	}
 
+	GetGameInstance()->GetSubsystem<UVRLogManager>()->AddMessageF(TEXT("Initialized spatial query with cell size %f for time step %i to %i."), CellSize, QueryTimeStart, QueryTimeEnd);
+
 	const int32 LoadedCount = Manager->LoadHashTables(
 		DatasetDirectory,
 		CellSize,
@@ -61,6 +65,8 @@ bool ATrajectoryQueryNiagaraActor::InitializeManager()
 		QueryTimeEnd,
 		true  // auto-create if missing
 	);
+
+	GetGameInstance()->GetSubsystem<UVRLogManager>()->AddMessageF(TEXT("Loaded %i hash tables."), LoadedCount);
 
 	if (LoadedCount == 0)
 	{
@@ -153,8 +159,13 @@ bool ATrajectoryQueryNiagaraActor::FireAsyncQueriesWithCallback(
 		TEXT("ATrajectoryQueryNiagaraActor: Seeding %d/%d concurrent queries (max %d), outer radius %.2f, t=[%d,%d]."),
 		InitialWorkers, NumPositions, MaxConcurrentQueries, OuterQueryRadius, QueryTimeStart, QueryTimeEnd);
 
+	GetGameInstance()->GetSubsystem<UVRLogManager>()->AddMessageF(TEXT("Seeding %d/%d concurrent queries (max %d), outer radius %.2f, t=[%d,%d]."),
+		InitialWorkers, NumPositions, MaxConcurrentQueries, OuterQueryRadius, QueryTimeStart, QueryTimeEnd);
+
 	for (int32 i = 0; i < InitialWorkers; ++i)
 	{
+		GetGameInstance()->GetSubsystem<UVRLogManager>()->AddMessageF(TEXT("ATrajectoryQueryNiagaraActor: Start query %i."),
+			i);
 		FireQueryForPosition(i, NextIndex, PendingCount, NumPositions, OnComplete);
 	}
 
@@ -199,6 +210,8 @@ void ATrajectoryQueryNiagaraActor::FireQueryForPosition(
 				const int32 NextSlot = NextIndex->Increment() - 1;
 				if (NextSlot < NumPositions)
 				{
+					This->GetGameInstance()->GetSubsystem<UVRLogManager>()->AddMessageF(TEXT("ATrajectoryQueryNiagaraActor: Start query %i."),
+						NextSlot);
 					This->FireQueryForPosition(NextSlot, NextIndex, PendingCount, NumPositions, OnComplete);
 				}
 
@@ -212,6 +225,10 @@ void ATrajectoryQueryNiagaraActor::FireQueryForPosition(
 						     "%d positions with results, %d trajectories found in total."),
 						NumPositions, This->CachedQueryPoints.Num(), This->CachedResults.Num());
 					OnComplete.ExecuteIfBound();
+
+					This->GetGameInstance()->GetSubsystem<UVRLogManager>()->AddMessageF(TEXT("ATrajectoryQueryNiagaraActor: All %d queries complete – "
+						"%d positions with results, %d trajectories found in total."),
+						NumPositions, This->CachedQueryPoints.Num(), This->CachedResults.Num());
 				}
 			}
 		)
