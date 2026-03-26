@@ -152,12 +152,13 @@ bool ATrajectoryQueryNiagaraActor::FireAsyncQueriesWithCallback(
 		NumPositions, OuterQueryRadius, QueryTimeStart, QueryTimeEnd, BatchSize);
 
 	TWeakObjectPtr<ATrajectoryQueryNiagaraActor> WeakThis(this);
+	TSharedRef<int32> BatchCounter = MakeShared<int32>(0);
 
 	// Delegate called on the game thread after each batch of candidates is
 	// processed.  Progressively merges results into the cache and pushes them
 	// to Niagara so the user sees updates as they arrive.
 	FOnSpatialHashBatchResult BatchCallback = FOnSpatialHashBatchResult::CreateLambda(
-		[WeakThis, OnComplete](const TArray<FSpatialHashQueryResult>& BatchResults, bool bIsFinalBatch)
+		[WeakThis, OnComplete, BatchCounter](const TArray<FSpatialHashQueryResult>& BatchResults, bool bIsFinalBatch)
 		{
 			ATrajectoryQueryNiagaraActor* This = WeakThis.Get();
 			if (!This)
@@ -165,7 +166,16 @@ bool ATrajectoryQueryNiagaraActor::FireAsyncQueriesWithCallback(
 				return;
 			}
 
+			const int32 CurrentBatch = ++(*BatchCounter);
+
 			This->AppendBatchResults(BatchResults);
+
+			UE_LOG(LogTemp, Log, TEXT("QueryPositionsBatchedAsync: Batch %d – %d trajectories in results (bFinal=%d)"),
+				CurrentBatch, BatchResults.Num(), bIsFinalBatch ? 1 : 0);
+
+			This->GetGameInstance()->GetSubsystem<UVRLogManager>()->AddMessageF(
+				TEXT("QueryPositionsBatchedAsync: Batch %d – %d trajectories in results (bFinal=%d)"),
+				CurrentBatch, BatchResults.Num(), bIsFinalBatch ? 1 : 0);
 
 			if (bIsFinalBatch)
 			{
