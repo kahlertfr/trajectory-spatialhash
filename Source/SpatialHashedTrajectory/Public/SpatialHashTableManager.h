@@ -13,6 +13,15 @@ DECLARE_DELEGATE_OneParam(FOnSpatialHashQueryComplete, const TArray<FSpatialHash
 DECLARE_DELEGATE_TwoParams(FOnSpatialHashDualQueryComplete, const TArray<FSpatialHashQueryResult>&, const TArray<FSpatialHashQueryResult>&);
 
 /**
+ * Delegate called on the game thread with a batch of trajectory query results.
+ * @param Results     Trajectories found in this batch.
+ * @param bFinalBatch True when this is the last (or only) batch.
+ */
+DECLARE_DELEGATE_TwoParams(FOnSpatialHashBatchResult,
+	const TArray<FSpatialHashQueryResult>& /*Results*/,
+	bool /*bFinalBatch*/);
+
+/**
  * Result structure for nearest neighbor queries
  */
 USTRUCT(BlueprintType)
@@ -458,6 +467,44 @@ public:
 		int32 StartTimeStep,
 		int32 EndTimeStep,
 		FOnSpatialHashQueryComplete OnComplete);
+
+	/**
+	 * High-performance batched query for a moving query trajectory represented as an
+	 * array of sample positions (one per timestep).
+	 *
+	 * Algorithm:
+	 *  1. Parallel NN phase: each sample point fires its own spatial-hash lookup on a
+	 *     worker thread.  Candidate trajectory IDs are collected thread-safely together
+	 *     with the earliest and latest timestep at which each candidate was found.
+	 *  2. Batch loading phase: candidates are split into batches of at most BatchSize.
+	 *     For each batch, only shard files whose time range intersects the batch's time
+	 *     range are loaded.  Shard loading is done in parallel (one task per shard file);
+	 *     each task writes the loaded positions into a pre-allocated per-trajectory array
+	 *     at the correct timestep offset – this is inherently thread-safe because
+	 *     non-overlapping shards write to non-overlapping array positions.
+	 *  3. Parallel filtering: worker threads each check a subset of the batch
+	 *     trajectories against the query radius at each timestep.
+	 *  4. BatchCallback is dispatched on the game thread after every batch so the caller
+	 *     can push progressive updates to Niagara without waiting for all batches.
+	 *
+	 * @param DatasetDirectory     Path to the dataset directory.
+	 * @param QueryPositions       World-space positions of the query trajectory (one per timestep).
+	 * @param QueryTimeSteps       Timestep index corresponding to each query position.
+	 * @param Radius               Search radius in world units.
+	 * @param CellSize             Spatial-hash cell size (must match loaded hash tables).
+	 * @param BatchSize            Maximum number of candidate trajectories per batch (e.g. 10000).
+	 * @param ExcludeTrajectoryId  Trajectory ID to exclude from results (-1 to disable).
+	 * @param BatchCallback        Invoked on the game thread after each batch completes.
+	 */
+	void QueryPositionsBatchedAsync(
+		const FString& DatasetDirectory,
+		const TArray<FVector>& QueryPositions,
+		const TArray<int32>& QueryTimeSteps,
+		float Radius,
+		float CellSize,
+		int32 BatchSize,
+		int64 ExcludeTrajectoryId,
+		FOnSpatialHashBatchResult BatchCallback);
 
 protected:
 	/** Tolerance for floating-point comparison of cell sizes */
