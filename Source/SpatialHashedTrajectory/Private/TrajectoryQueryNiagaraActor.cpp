@@ -174,8 +174,8 @@ bool ATrajectoryQueryNiagaraActor::FireAsyncQueriesWithCallback(
 				CurrentBatch, BatchResults.Num(), bIsFinalBatch ? 1 : 0);
 
 			This->GetGameInstance()->GetSubsystem<UVRLogManager>()->AddMessageF(
-				TEXT("QueryPositionsBatchedAsync: Batch %d – %d trajectories in results (bFinal=%d)"),
-				CurrentBatch, BatchResults.Num(), bIsFinalBatch ? 1 : 0);
+				TEXT("QueryPositionsBatchedAsync: Batch %d - %d new trajectories found"),
+				CurrentBatch, BatchResults.Num());
 
 			if (bIsFinalBatch)
 			{
