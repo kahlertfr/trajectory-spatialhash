@@ -426,6 +426,10 @@ void ATrajectoryQueryNiagaraActor::TransferResultsToNiagara(
 		{
 			const FVector CurForward = GetForwardAt(i);
 			QueryTranslations.Add(QueryPoints[0] - QueryPoints[i]);
+			if (i >0)
+				UE_LOG(LogTemp, Log,
+				TEXT("%d with %f"), i,  QueryTranslations[i].Length() - QueryTranslations[i-1].Length());
+
 			QueryRotations.Add(FQuat::FindBetweenNormals(CurForward, FirstForward));
 		}
 	}
