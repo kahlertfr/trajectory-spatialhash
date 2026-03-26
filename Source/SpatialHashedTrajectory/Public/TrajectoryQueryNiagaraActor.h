@@ -64,12 +64,24 @@ public:
 
 	/**
 	 * Positions used as query centres.
-	 * One async single-timestep radius query is fired per position: position[i] is
-	 * queried at timestep QueryTimeStart + i.  Queries run sequentially to avoid
-	 * exhausting the async thread pool with too many concurrent requests.
+	 * QueryPositions[i] is queried at timestep min(QueryTimeStart + i, QueryTimeEnd).
+	 * All positions are queried in parallel in the first phase of the pipeline,
+	 * and results are processed in batches of BatchSize trajectories to allow
+	 * progressive updates to the Niagara system.
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Query Settings")
 	TArray<FVector> QueryPositions;
+
+	/**
+	 * Maximum number of candidate trajectories processed per batch.
+	 * After all query positions have been searched in parallel, the found
+	 * candidate trajectories are split into batches of this size.  Each batch
+	 * loads its data and filters it before updating Niagara, providing
+	 * progressive visual feedback.  A value of 10000 is a reasonable default.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Query Settings",
+		meta = (ClampMin = "1", UIMin = "100"))
+	int32 BatchSize = 10000;
 
 	// ─── Niagara Settings ─────────────────────────────────────────────────────
 
@@ -95,14 +107,17 @@ public:
 	void RunQueryAndUpdateNiagara();
 
 	/**
-	 * Bounded-concurrency async query dispatch.
-	 * Seeds up to MaxConcurrentQueries parallel queries; each callback claims
-	 * the next pending position and fires a new query, keeping the pool full
-	 * until all positions have been processed.
-	 * Stores results into CachedQueryPoints / CachedResults / ResultBoundsMin / ResultBoundsMax.
-	 * Calls OnComplete when all queries finish successfully, or OnFailure if startup fails.
-	 * Returns true if queries were started, false if a startup condition was not met.
-	 * Accessible from URunTrajectoryQueryAsyncAction to inject its own callbacks.
+	 * High-performance parallel/batched async query dispatch.
+	 *
+	 * Phase 1 – all query positions are searched simultaneously on worker threads
+	 * to collect candidate trajectory IDs and their earliest/latest timesteps.
+	 * Phase 2 – candidates are processed in batches of BatchSize; each batch
+	 * loads shard data in parallel, filters against the query radius in parallel,
+	 * and pushes the results to Niagara for progressive visual updates.
+	 *
+	 * Calls OnComplete when all batches have been processed, or OnFailure if a
+	 * startup condition is not met (empty DatasetDirectory, empty QueryPositions).
+	 * Returns true if the pipeline was successfully started.
 	 */
 	bool FireAsyncQueriesWithCallback(FSimpleDelegate OnComplete, FSimpleDelegate OnFailure = FSimpleDelegate());
 
@@ -118,9 +133,9 @@ protected:
 	USpatialHashTableManager* Manager;
 
 	/**
-	 * Query positions for which at least one result has been received.
-	 * Populated progressively during FireAsyncQueriesWithCallback; maintains
-	 * the original QueryPositions order.
+	 * All query positions (mirrors QueryPositions).  Set at the start of each
+	 * FireAsyncQueriesWithCallback call so Niagara always sees the full query
+	 * trajectory for transform computations.
 	 */
 	UPROPERTY(BlueprintReadOnly, Category = "Query Results")
 	TArray<FVector> CachedQueryPoints;
@@ -142,15 +157,14 @@ private:
 
 	/**
 	 * Lookup table: TrajectoryId → index into CachedResults.
-	 * Kept in sync with CachedResults during FireAsyncQueriesWithCallback
-	 * so AppendTimestepResults can locate existing trajectories in O(1).
+	 * Kept in sync with CachedResults so AppendBatchResults can detect
+	 * (and skip) any duplicate trajectory IDs in O(1).
 	 */
 	TMap<int32, int32> CachedResultsIndex;
 
 	/**
 	 * Sorted list of QueryPositions indices that have produced at least one result.
-	 * Maintained in ascending index order so that CachedQueryPoints can be updated
-	 * with a single sorted insertion rather than a full rebuild.
+	 * Retained for API compatibility; not actively populated in the new batched pipeline.
 	 */
 	TArray<int32> CachedQueryPositionIndices;
 
@@ -166,44 +180,14 @@ private:
 		const TArray<FSpatialHashQueryResult>& Results);
 
 	/**
-	 * Incorporate the results from a single-timestep async query for one position
-	 * into the accumulated cache, then push the updated arrays to Niagara.
+	 * Append a batch of trajectory results delivered by QueryPositionsBatchedAsync.
+	 * Trajectories already present in CachedResults (from an earlier batch) are
+	 * skipped.  After merging, the bounding box is expanded and Niagara is updated
+	 * with the full accumulated result set for a progressive visual update.
 	 *
-	 * Each element of Results carries sample points for the queried timestep.
-	 * When a trajectory is already present in CachedResults (found by an earlier
-	 * position query) new samples are inserted at the correct sorted positions
-	 * using binary search — no duplicate-timestep check is required because
-	 * each position is queried at exactly one timestep.
-	 *
-	 * Called on the game thread after each individual async query completes.
+	 * Must be called on the game thread.
 	 */
-	void AppendTimestepResults(
-		const FVector& QueryPosition,
-		int32 PositionIndex,
-		const TArray<FSpatialHashQueryResult>& Results);
-
-	/**
-	 * Fire a single-timestep async query for QueryPositions[PositionIndex] at
-	 * timestep QueryTimeStart + PositionIndex.
-	 *
-	 * The callback atomically increments NextIndex to claim the next pending
-	 * slot (if any) and immediately fires another query for it, keeping the
-	 * concurrency pool full.  PendingCount tracks how many positions are still
-	 * outstanding; when it reaches zero OnComplete is invoked.
-	 *
-	 * @param NextIndex    Shared atomic counter: next position slot to dispatch.
-	 *                     Seeded to InitialWorkers so seed callbacks claim slots
-	 *                     InitialWorkers, InitialWorkers+1, …
-	 * @param PendingCount Shared atomic counter starting at NumPositions.
-	 *                     Decremented once per completed callback; OnComplete
-	 *                     fires when it reaches zero.
-	 */
-	void FireQueryForPosition(
-		int32 PositionIndex,
-		TSharedRef<FThreadSafeCounter> NextIndex,
-		TSharedRef<FThreadSafeCounter> PendingCount,
-		int32 NumPositions,
-		FSimpleDelegate OnComplete);
+	void AppendBatchResults(const TArray<FSpatialHashQueryResult>& BatchResults);
 
 	/**
 	 * Push the supplied arrays to the Niagara component user parameters.

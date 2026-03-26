@@ -2216,3 +2216,370 @@ void USpatialHashTableManager::QueryTrajectoryRadiusOverTimeRangeAsync(
 		OnComplete.ExecuteIfBound(TArray<FSpatialHashQueryResult>());
 	}
 }
+
+// ============================================================================
+// QueryPositionsBatchedAsync – high-performance parallel/batched pipeline
+// ============================================================================
+
+void USpatialHashTableManager::QueryPositionsBatchedAsync(
+	const FString& DatasetDirectory,
+	const TArray<FVector>& QueryPositions,
+	const TArray<int32>& QueryTimeSteps,
+	float Radius,
+	float CellSize,
+	int32 BatchSize,
+	int64 ExcludeTrajectoryId,
+	FOnSpatialHashBatchResult BatchCallback)
+{
+	if (QueryPositions.IsEmpty() || QueryTimeSteps.Num() != QueryPositions.Num())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("USpatialHashTableManager::QueryPositionsBatchedAsync: QueryPositions is empty or mismatched with QueryTimeSteps"));
+		AsyncTask(ENamedThreads::GameThread, [BatchCallback]()
+		{
+			BatchCallback.ExecuteIfBound(TArray<FSpatialHashQueryResult>(), true);
+		});
+		return;
+	}
+
+	const int32 EffectiveBatchSize = FMath::Max(1, BatchSize);
+
+	// ── Gather game-thread resources before dispatching to the thread pool ────
+	//
+	// UTrajectoryDataLoader::Get() and GetOrLoadHashTable() must be called on
+	// the game thread.  Pre-build the per-sample hash-table pointer array so the
+	// background thread never needs to touch UObject/GC state.
+
+	UTrajectoryDataLoader* Loader = UTrajectoryDataLoader::Get();
+	if (!Loader)
+	{
+		UE_LOG(LogTemp, Error, TEXT("USpatialHashTableManager::QueryPositionsBatchedAsync: Failed to get TrajectoryDataLoader"));
+		AsyncTask(ENamedThreads::GameThread, [BatchCallback]()
+		{
+			BatchCallback.ExecuteIfBound(TArray<FSpatialHashQueryResult>(), true);
+		});
+		return;
+	}
+
+	// One hash-table pointer per query sample (null if the timestep is not loaded).
+	TArray<FSpatialHashTable*> HashTables;
+	HashTables.Reserve(QueryPositions.Num());
+	for (int32 i = 0; i < QueryPositions.Num(); ++i)
+	{
+		HashTables.Add(GetOrLoadHashTable(DatasetDirectory, CellSize, QueryTimeSteps[i]));
+	}
+
+	// Shard file list – GetShardFiles is not necessarily thread-safe.
+	TArray<FString> ShardFiles;
+	if (!GetShardFiles(DatasetDirectory, ShardFiles))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("USpatialHashTableManager::QueryPositionsBatchedAsync: No shard files found in %s"), *DatasetDirectory);
+		AsyncTask(ENamedThreads::GameThread, [BatchCallback]()
+		{
+			BatchCallback.ExecuteIfBound(TArray<FSpatialHashQueryResult>(), true);
+		});
+		return;
+	}
+
+	// Parse shard start-timesteps from filenames (fast, no I/O).
+	TArray<int32> ShardStartTimes;
+	ShardStartTimes.Reserve(ShardFiles.Num());
+	for (const FString& ShardFile : ShardFiles)
+	{
+		ShardStartTimes.Add(ParseTimestepFromFilename(ShardFile));
+	}
+
+	// ── Dispatch the full pipeline to a worker thread ─────────────────────────
+	Async(EAsyncExecution::ThreadPool,
+		[Loader, HashTables, ShardFiles, ShardStartTimes,
+		 QueryPositions, QueryTimeSteps, Radius, EffectiveBatchSize,
+		 ExcludeTrajectoryId, BatchCallback]()
+	{
+		// ── PHASE 1: Parallel nearest-neighbour queries ───────────────────────
+		//
+		// Each sample point of the query trajectory runs its own spatial-hash
+		// lookup on a worker thread.  The only shared write is into AllCandidates,
+		// protected by CandidateMutex.  Spatial-hash reads use per-call file
+		// handles (see ReadTrajectoryIdsFromDisk) and are therefore thread-safe.
+
+		FCriticalSection CandidateMutex;
+		// candidateId → { earliest timestep, latest timestep }
+		TMap<int64, TPair<int32, int32>> AllCandidates;
+
+		ParallelFor(QueryPositions.Num(), [&](int32 i)
+		{
+			FSpatialHashTable* HashTable = HashTables[i];
+			if (!HashTable)
+			{
+				return;
+			}
+
+			TArray<int64> FoundIds;
+			HashTable->QueryTrajectoryIdsInRadius(QueryPositions[i], Radius, FoundIds);
+
+			if (FoundIds.IsEmpty())
+			{
+				return;
+			}
+
+			const int32 TimeStep = QueryTimeSteps[i];
+			FScopeLock Lock(&CandidateMutex);
+			for (const int64 Id : FoundIds)
+			{
+				if (Id == ExcludeTrajectoryId)
+				{
+					continue;
+				}
+				TPair<int32, int32>* Existing = AllCandidates.Find(Id);
+				if (Existing)
+				{
+					Existing->Key   = FMath::Min(Existing->Key,   TimeStep);
+					Existing->Value = FMath::Max(Existing->Value, TimeStep);
+				}
+				else
+				{
+					AllCandidates.Add(Id, TPair<int32, int32>(TimeStep, TimeStep));
+				}
+			}
+		});
+
+		UE_LOG(LogTemp, Log, TEXT("QueryPositionsBatchedAsync: Phase 1 complete – %d candidate trajectories found"), AllCandidates.Num());
+
+		if (AllCandidates.IsEmpty())
+		{
+			AsyncTask(ENamedThreads::GameThread, [BatchCallback]()
+			{
+				BatchCallback.ExecuteIfBound(TArray<FSpatialHashQueryResult>(), true);
+			});
+			return;
+		}
+
+		// ── Flatten candidates and build query-position lookup ────────────────
+
+		struct FCandidateInfo
+		{
+			int64 TrajectoryId;
+			int32 StartTimeStep;
+			int32 EndTimeStep;
+		};
+
+		TArray<FCandidateInfo> CandidateList;
+		CandidateList.Reserve(AllCandidates.Num());
+		for (const auto& Pair : AllCandidates)
+		{
+			CandidateList.Add({Pair.Key, Pair.Value.Key, Pair.Value.Value});
+		}
+
+		// Build timestep → query position lookup (read-only from all threads).
+		TMap<int32, FVector> QueryPosAtTimeStep;
+		QueryPosAtTimeStep.Reserve(QueryPositions.Num());
+		for (int32 i = 0; i < QueryPositions.Num(); ++i)
+		{
+			QueryPosAtTimeStep.Add(QueryTimeSteps[i], QueryPositions[i]);
+		}
+
+		// ── PHASE 2: Batch processing ─────────────────────────────────────────
+
+		const int32 NumCandidates = CandidateList.Num();
+		const int32 NumBatches    = FMath::DivideAndRoundUp(NumCandidates, EffectiveBatchSize);
+
+		UE_LOG(LogTemp, Log, TEXT("QueryPositionsBatchedAsync: Processing %d candidates in %d batch(es) of up to %d"),
+			NumCandidates, NumBatches, EffectiveBatchSize);
+
+		for (int32 BatchIdx = 0; BatchIdx < NumBatches; ++BatchIdx)
+		{
+			const int32 BatchStart  = BatchIdx * EffectiveBatchSize;
+			const int32 BatchEnd    = FMath::Min(BatchStart + EffectiveBatchSize, NumCandidates);
+			const int32 BatchCount  = BatchEnd - BatchStart;
+			const bool  bFinalBatch = (BatchIdx == NumBatches - 1);
+
+			// Determine the time range spanned by candidates in this batch.
+			int32 BatchMinTime = INT32_MAX;
+			int32 BatchMaxTime = INT32_MIN;
+			for (int32 i = BatchStart; i < BatchEnd; ++i)
+			{
+				BatchMinTime = FMath::Min(BatchMinTime, CandidateList[i].StartTimeStep);
+				BatchMaxTime = FMath::Max(BatchMaxTime, CandidateList[i].EndTimeStep);
+			}
+
+			// ── Pre-allocate per-trajectory position arrays ───────────────────
+			//
+			// Each trajectory in the batch gets an array sized to cover its full
+			// time range.  Positions default to NaN so invalid/unloaded slots can
+			// be detected during filtering.  Different shard threads write to
+			// non-overlapping timestep positions in these arrays – no locking
+			// required.
+
+			struct FTrajectoryData
+			{
+				int64          TrajectoryId;
+				int32          StartTimeStep;
+				TArray<FVector> Positions;   // index = globalTimeStep - StartTimeStep
+			};
+
+			TArray<FTrajectoryData> BatchData;
+			BatchData.SetNum(BatchCount);
+			// FLT_MAX is used as a sentinel to mark positions not yet written by any shard thread.
+			// The filtering phase skips any slot where Pos.X >= FLT_MAX.
+			for (int32 i = 0; i < BatchCount; ++i)
+			{
+				const FCandidateInfo& C = CandidateList[BatchStart + i];
+				const int32 NumSamples  = C.EndTimeStep - C.StartTimeStep + 1;
+				BatchData[i].TrajectoryId  = C.TrajectoryId;
+				BatchData[i].StartTimeStep = C.StartTimeStep;
+				BatchData[i].Positions.SetNum(NumSamples);
+				for (FVector& V : BatchData[i].Positions)
+				{
+					V = FVector(FLT_MAX, FLT_MAX, FLT_MAX);
+				}
+			}
+
+			// O(1) lookup: trajectoryId → index in BatchData.
+			TMap<int64, int32> TrajIdToIndex;
+			TrajIdToIndex.Reserve(BatchCount);
+			for (int32 i = 0; i < BatchCount; ++i)
+			{
+				TrajIdToIndex.Add(BatchData[i].TrajectoryId, i);
+			}
+
+			// ── Find relevant shard files ─────────────────────────────────────
+			//
+			// We use the filename-parsed start time as a rough lower bound.
+			// Shards whose start time exceeds BatchMaxTime can never overlap and
+			// are excluded without loading.  Shards that start ≤ BatchMaxTime are
+			// loaded in parallel; after loading their precise end time is checked.
+
+			TArray<int32> CandidateShardIndices;
+			for (int32 s = 0; s < ShardFiles.Num(); ++s)
+			{
+				if (ShardStartTimes[s] <= BatchMaxTime)
+				{
+					CandidateShardIndices.Add(s);
+				}
+			}
+
+			// ── Per-shard parallel loading + writing ──────────────────────────
+			//
+			// Each task loads one shard file and writes positions into the
+			// pre-allocated BatchData arrays.  Because shard time ranges are
+			// non-overlapping, different tasks write to different array indices
+			// for each trajectory, making this section inherently thread-safe.
+			//
+			// Note: LoadShardFile is assumed to be safe for concurrent calls from
+			// different threads (it opens its own file handle and has no shared
+			// mutable state beyond what is protected by the OS file I/O layer).
+
+			ParallelFor(CandidateShardIndices.Num(), [&](int32 RelIdx)
+			{
+				const int32   ShardIdx   = CandidateShardIndices[RelIdx];
+				const int32   ShardStart = ShardStartTimes[ShardIdx];
+
+				FShardFileData ShardData = Loader->LoadShardFile(ShardFiles[ShardIdx]);
+				if (!ShardData.bSuccess)
+				{
+					return;
+				}
+
+				const int32 ShardEnd = ShardStart + ShardData.Header.TimeStepIntervalSize - 1;
+
+				// Precise overlap check – skip shards that don't intersect the batch range.
+				if (ShardEnd < BatchMinTime || ShardStart > BatchMaxTime)
+				{
+					return;
+				}
+
+				for (const FShardTrajectoryEntry& Entry : ShardData.Entries)
+				{
+					const int32* IndexPtr = TrajIdToIndex.Find(Entry.TrajectoryId);
+					if (!IndexPtr)
+					{
+						continue;
+					}
+
+					FTrajectoryData& TrajData = BatchData[*IndexPtr];
+
+					for (int32 lt = 0; lt < Entry.Positions.Num(); ++lt)
+					{
+						const int32 GlobalTimeStep = ShardStart + lt;
+						const int32 ArrayIdx       = GlobalTimeStep - TrajData.StartTimeStep;
+
+						if (ArrayIdx < 0 || ArrayIdx >= TrajData.Positions.Num())
+						{
+							continue;
+						}
+
+						const FVector3f& Pos = Entry.Positions[lt];
+						if (!FMath::IsNaN(Pos.X))
+						{
+							// Write to the pre-allocated slot.
+							// Thread-safe: different shards cover different timesteps,
+							// so no two tasks ever write to the same ArrayIdx here.
+							TrajData.Positions[ArrayIdx] = FVector(Pos.X, Pos.Y, Pos.Z);
+						}
+					}
+				}
+			});
+
+			// ── Parallel filtering ────────────────────────────────────────────
+			//
+			// Multiple tasks each process a subset of the loaded batch and build
+			// a partial result list.  Partial lists are merged under ResultMutex.
+
+			TArray<FSpatialHashQueryResult> BatchResults;
+			FCriticalSection               ResultMutex;
+			const float                    RadiusSq = Radius * Radius;
+
+			ParallelFor(BatchCount, [&](int32 LocalIdx)
+			{
+				const FTrajectoryData& TrajData = BatchData[LocalIdx];
+
+				// Note: FSpatialHashQueryResult stores trajectory IDs as int32 (matching the uint32
+				// binary format), which is sufficient for all valid shard data values.
+				FSpatialHashQueryResult Result(static_cast<int32>(TrajData.TrajectoryId));
+				Result.SamplePoints.Reserve(TrajData.Positions.Num());
+
+				for (int32 i = 0; i < TrajData.Positions.Num(); ++i)
+				{
+					const FVector& Pos = TrajData.Positions[i];
+					if (Pos.X >= FLT_MAX)
+					{
+						continue; // slot was never written – no data for this timestep
+					}
+
+					const int32    GlobalTimeStep = TrajData.StartTimeStep + i;
+					const FVector* QueryPos       = QueryPosAtTimeStep.Find(GlobalTimeStep);
+					if (!QueryPos)
+					{
+						continue; // no query position for this timestep
+					}
+
+					const float DistSq = FVector::DistSquared(*QueryPos, Pos);
+					if (DistSq <= RadiusSq)
+					{
+						FTrajectorySamplePoint Sample;
+						Sample.Position = Pos;
+						Sample.TimeStep = GlobalTimeStep;
+						Sample.Distance = FMath::Sqrt(DistSq);
+						Result.SamplePoints.Add(Sample);
+					}
+				}
+
+				if (Result.SamplePoints.Num() > 0)
+				{
+					FScopeLock Lock(&ResultMutex);
+					BatchResults.Add(MoveTemp(Result));
+				}
+			});
+
+			UE_LOG(LogTemp, Log, TEXT("QueryPositionsBatchedAsync: Batch %d/%d – %d trajectories in results (bFinal=%d)"),
+				BatchIdx + 1, NumBatches, BatchResults.Num(), bFinalBatch ? 1 : 0);
+
+			// ── Deliver batch results to the game thread ──────────────────────
+			AsyncTask(ENamedThreads::GameThread,
+				[BatchCallback, MovedResults = MoveTemp(BatchResults), bFinalBatch]()
+				{
+					BatchCallback.ExecuteIfBound(MovedResults, bFinalBatch);
+				});
+		}
+	});
+}
+
