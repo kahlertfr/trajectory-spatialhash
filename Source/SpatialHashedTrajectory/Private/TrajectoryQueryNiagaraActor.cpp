@@ -386,6 +386,54 @@ void ATrajectoryQueryNiagaraActor::TransferResultsToNiagara(
 		}
 	}
 
+	// ── Build query-relative transform arrays ────────────────────────────────
+	//
+	// For each query sample point i:
+	//   QueryTranslations[i] = QueryPoints[0] - QueryPoints[i]
+	//   QueryRotations[i]    = rotation that aligns the forward vector at i to
+	//                          the forward vector at 0.
+	//
+	// The forward vector at point i is the normalised direction from
+	// QueryPoints[i] to QueryPoints[i+1].  For the last point the direction
+	// from the penultimate point is reused.  When only one point is present
+	// FVector::ForwardVector is used as a neutral fallback.
+
+	TArray<FVector> QueryTranslations;
+	TArray<FQuat>   QueryRotations;
+
+	if (QueryPoints.Num() > 0)
+	{
+		QueryTranslations.Reserve(QueryPoints.Num());
+		QueryRotations.Reserve(QueryPoints.Num());
+
+		// Returns the normalised forward vector for sample index i.
+		auto GetForwardAt = [&QueryPoints](int32 i) -> FVector
+		{
+			if (QueryPoints.Num() == 1)
+			{
+				return FVector::ForwardVector;
+			}
+			// Clamp so the last point reuses the direction of the penultimate one.
+			const int32 From = FMath::Min(i,     QueryPoints.Num() - 2);
+			const int32 To   = FMath::Min(i + 1, QueryPoints.Num() - 1);
+			const FVector Dir = (QueryPoints[To] - QueryPoints[From]).GetSafeNormal();
+			return Dir.IsNearlyZero() ? FVector::ForwardVector : Dir;
+		};
+
+		const FVector FirstForward = GetForwardAt(0);
+
+		for (int32 i = 0; i < QueryPoints.Num(); ++i)
+		{
+			const FVector CurForward = GetForwardAt(i);
+			QueryTranslations.Add(QueryPoints[0] - QueryPoints[i]);
+			if (i >0)
+				UE_LOG(LogTemp, Log,
+				TEXT("%d with %f"), i,  QueryTranslations[i].Length() - QueryTranslations[i-1].Length());
+
+			QueryRotations.Add(FQuat::FindBetweenNormals(CurForward, FirstForward));
+		}
+	}
+
 	// ── Transfer to Niagara user parameters ──────────────────────────────────
 
 	// Position arrays (PositionArray type in Niagara)
@@ -394,6 +442,13 @@ void ATrajectoryQueryNiagaraActor::TransferResultsToNiagara(
 
 	UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayVector(
 		NiagaraComponent, FName("ResultPoints"), ResultPoints);
+
+	// Query-relative transform arrays
+	UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayVector(
+		NiagaraComponent, FName("QueryTranslations"), QueryTranslations);
+
+	UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayQuat(
+		NiagaraComponent, FName("QueryRotations"), QueryRotations);
 
 	// Integer arrays (Int Array type in Niagara)
 	UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayInt32(

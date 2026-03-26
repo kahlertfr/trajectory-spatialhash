@@ -16,6 +16,8 @@ class UNiagaraComponent;
  * The following Niagara user parameters are populated:
  * - PositionArray  QueryPoints          – query sample positions (length = number of query points)
  * - PositionArray  ResultPoints         – result sample positions ordered by trajectory (length = all result samples)
+ * - PositionArray  QueryTranslations    – per query point: translation from that point to the first query point (QueryPoints[0] - QueryPoints[i])
+ * - QuatArray      QueryRotations       – per query point: rotation that aligns its forward vector to the first query point's forward vector
  * - Int Array      ResultTrajectoryIds  – original trajectory ID per result trajectory
  * - Int Array      ResultTrajStartIndex – start index into ResultPoints for each result trajectory
  * - Int Array      ResultStartTime      – starting timestep for each result trajectory
