@@ -83,6 +83,22 @@ public:
 		meta = (ClampMin = "1", UIMin = "100"))
 	int32 BatchSize = 10000;
 
+	/**
+	 * Periodic boundary conditions for the dataset.
+	 *
+	 * Enable this when the trajectory dataset was generated inside a periodic
+	 * simulation box (e.g. a molecular dynamics simulation).  The manager will
+	 * then wrap cell lookups at the boundary, apply the minimum-image distance
+	 * convention, and shift reported neighbour positions to the image closest
+	 * to the (unwrapped) query trajectory so that visualised paths are
+	 * continuous even when they cross a periodic boundary.
+	 *
+	 * Set bIsPeriodic to true and leave Extent as ZeroVector to infer the box
+	 * size automatically from the loaded hash tables.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Query Settings")
+	FPeriodicVolume PeriodicVolume;
+
 	// ─── Niagara Settings ─────────────────────────────────────────────────────
 
 	/** Niagara System asset to spawn / configure */

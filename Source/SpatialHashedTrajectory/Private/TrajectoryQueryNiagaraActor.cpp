@@ -103,6 +103,10 @@ bool ATrajectoryQueryNiagaraActor::FireAsyncQueriesWithCallback(
 		return false;
 	}
 
+	// Apply the periodic volume setting from this actor to the manager so
+	// that all subsequent queries use the correct boundary conditions.
+	Manager->SetPeriodicVolume(PeriodicVolume.bIsPeriodic, PeriodicVolume.Extent);
+
 	if (QueryPositions.IsEmpty())
 	{
 		UE_LOG(LogTemp, Warning, TEXT("ATrajectoryQueryNiagaraActor: QueryPositions array is empty – nothing to query."));
@@ -113,8 +117,11 @@ bool ATrajectoryQueryNiagaraActor::FireAsyncQueriesWithCallback(
 	// ── Reset cached state so progressive updates start clean ─────────────────
 	// CachedQueryPoints is set to the full query trajectory up-front so that
 	// Niagara receives the correct query-point transforms from the very first
-	// progressive update.
-	CachedQueryPoints              = QueryPositions;
+	// progressive update.  When periodic, use the unwrapped positions so that
+	// they match the corrected result sample positions.
+	CachedQueryPoints = PeriodicVolume.bIsPeriodic
+		? Manager->GetUnwrappedPositions(QueryPositions, CellSize)
+		: QueryPositions;
 	CachedResults.Empty();
 	CachedResultsIndex.Empty();
 	CachedQueryPositionIndices.Empty();
@@ -151,14 +158,21 @@ bool ATrajectoryQueryNiagaraActor::FireAsyncQueriesWithCallback(
 		TEXT("Starting batched query – %d positions, radius %.2f, t=[%d,%d], batch=%d."),
 		NumPositions, OuterQueryRadius, QueryTimeStart, QueryTimeEnd, BatchSize);
 
+	GetGameInstance()->GetSubsystem<UVRLogManager>()->AddMessageF(
+		TEXT("Checking %d query samples for nearest neighbours."),
+		NumPositions);
+
 	TWeakObjectPtr<ATrajectoryQueryNiagaraActor> WeakThis(this);
-	TSharedRef<int32> BatchCounter = MakeShared<int32>(0);
+	TSharedRef<int32> BatchCounter             = MakeShared<int32>(0);
+	TSharedRef<int32> TotalCandidatesProcessed = MakeShared<int32>(0);
 
 	// Delegate called on the game thread after each batch of candidates is
 	// processed.  Progressively merges results into the cache and pushes them
 	// to Niagara so the user sees updates as they arrive.
 	FOnSpatialHashBatchResult BatchCallback = FOnSpatialHashBatchResult::CreateLambda(
-		[WeakThis, OnComplete, BatchCounter](const TArray<FSpatialHashQueryResult>& BatchResults, bool bIsFinalBatch)
+		[WeakThis, OnComplete, BatchCounter, TotalCandidatesProcessed, NumPositions]
+		(const TArray<FSpatialHashQueryResult>& BatchResults, bool bIsFinalBatch,
+		 int32 TotalCandidatesPhase1, int32 HandledQuerySamples)
 		{
 			ATrajectoryQueryNiagaraActor* This = WeakThis.Get();
 			if (!This)
@@ -167,6 +181,28 @@ bool ATrajectoryQueryNiagaraActor::FireAsyncQueriesWithCallback(
 			}
 
 			const int32 CurrentBatch = ++(*BatchCounter);
+
+			// On the first batch, log Phase 1 summary to VRLogger so the user
+			// can see how many query samples were handled and how many candidate
+			// trajectories were identified.
+			if (CurrentBatch == 1)
+			{
+				const int32 UnhandledSamples = NumPositions - HandledQuerySamples;
+
+				This->GetGameInstance()->GetSubsystem<UVRLogManager>()->AddMessageF(
+					TEXT("Phase 1 complete – %d/%d query samples handled, %d candidate trajectories found."),
+					HandledQuerySamples, NumPositions, TotalCandidatesPhase1);
+
+				if (UnhandledSamples > 0)
+				{
+					This->GetGameInstance()->GetSubsystem<UVRLogManager>()->AddMessageF(
+						TEXT("WARNING: %d query sample(s) had no loaded hash table and were skipped – "
+						     "check timestep coverage for gaps in the visualization."),
+						UnhandledSamples);
+				}
+			}
+
+			*TotalCandidatesProcessed += BatchResults.Num();
 
 			This->AppendBatchResults(BatchResults);
 
@@ -186,6 +222,22 @@ bool ATrajectoryQueryNiagaraActor::FireAsyncQueriesWithCallback(
 				This->GetGameInstance()->GetSubsystem<UVRLogManager>()->AddMessageF(
 					TEXT("All batches complete – %d trajectories found in total."),
 					This->CachedResults.Num());
+
+				// Sanity-check: verify that the number of accumulated result
+				// trajectories does not exceed the Phase 1 candidate count.
+				if (*TotalCandidatesProcessed > TotalCandidatesPhase1)
+				{
+					This->GetGameInstance()->GetSubsystem<UVRLogManager>()->AddMessageF(
+						TEXT("WARNING: Result trajectory count (%d) exceeds Phase 1 candidate count (%d) – "
+						     "possible duplicate handling."),
+						*TotalCandidatesProcessed, TotalCandidatesPhase1);
+				}
+				else
+				{
+					This->GetGameInstance()->GetSubsystem<UVRLogManager>()->AddMessageF(
+						TEXT("Check OK – %d of %d candidate trajectories produced results within the query radius."),
+						*TotalCandidatesProcessed, TotalCandidatesPhase1);
+				}
 
 				OnComplete.ExecuteIfBound();
 			}

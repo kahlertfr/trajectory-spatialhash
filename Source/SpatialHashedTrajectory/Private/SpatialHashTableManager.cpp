@@ -9,8 +9,169 @@
 #include "TrajectoryDataLoader.h"
 #include "TrajectoryDataCppApi.h"
 
+// ============================================================================
+// Free helper functions for periodic boundary conditions (internal linkage)
+// ============================================================================
+namespace
+{
+	/**
+	 * Compute squared distance between two points using the minimum-image
+	 * convention for periodic boundary conditions.
+	 *
+	 * @param A       First point.
+	 * @param B       Second point.
+	 * @param Extent  Periodic box size per axis.  A zero component means that
+	 *                axis is non-periodic.
+	 * @return        Minimum-image squared distance.
+	 */
+	float PeriodicDistSq(const FVector& A, const FVector& B, const FVector& Extent)
+	{
+		FVector Delta = A - B;
+		if (Extent.X > 0.0f && FMath::Abs(Delta.X) > Extent.X * 0.5f)
+			Delta.X -= FMath::Sign(Delta.X) * Extent.X;
+		if (Extent.Y > 0.0f && FMath::Abs(Delta.Y) > Extent.Y * 0.5f)
+			Delta.Y -= FMath::Sign(Delta.Y) * Extent.Y;
+		if (Extent.Z > 0.0f && FMath::Abs(Delta.Z) > Extent.Z * 0.5f)
+			Delta.Z -= FMath::Sign(Delta.Z) * Extent.Z;
+		return Delta.SizeSquared();
+	}
+
+	/**
+	 * Shift SamplePos to the periodic image that is closest to QueryPos.
+	 *
+	 * The returned position may lie outside the original periodic box, but
+	 * will be as close as possible to QueryPos under the minimum-image
+	 * convention.  This ensures continuous visualisation of neighbour
+	 * trajectories when the query trajectory crosses a periodic boundary.
+	 *
+	 * @param SamplePos  Raw (wrapped) sample position from data storage.
+	 * @param QueryPos   Reference position (may be unwrapped, i.e. outside box).
+	 * @param Extent     Periodic box size per axis (zero = non-periodic axis).
+	 * @return           Corrected sample position.
+	 */
+	FVector ApplyMinImageCorrection(const FVector& SamplePos, const FVector& QueryPos, const FVector& Extent)
+	{
+		FVector Delta = SamplePos - QueryPos;
+		if (Extent.X > 0.0f && FMath::Abs(Delta.X) > Extent.X * 0.5f)
+			Delta.X -= FMath::Sign(Delta.X) * Extent.X;
+		if (Extent.Y > 0.0f && FMath::Abs(Delta.Y) > Extent.Y * 0.5f)
+			Delta.Y -= FMath::Sign(Delta.Y) * Extent.Y;
+		if (Extent.Z > 0.0f && FMath::Abs(Delta.Z) > Extent.Z * 0.5f)
+			Delta.Z -= FMath::Sign(Delta.Z) * Extent.Z;
+		return QueryPos + Delta;
+	}
+
+	/**
+	 * Unwrap a periodic trajectory so that consecutive positions are
+	 * continuous (no boundary jumps).
+	 *
+	 * Each step applies the minimum-image convention to the displacement
+	 * between successive samples, accumulating the result.  The returned
+	 * positions may extend outside the original periodic box.
+	 *
+	 * @param Positions  Input positions (may contain jumps at box boundaries).
+	 * @param Extent     Periodic box size per axis (zero = non-periodic axis).
+	 * @return           Unwrapped positions array (same length as input).
+	 */
+	TArray<FVector> UnwrapPeriodicTrajectory(const TArray<FVector>& Positions, const FVector& Extent)
+	{
+		TArray<FVector> Unwrapped;
+		Unwrapped.Reserve(Positions.Num());
+		if (Positions.Num() == 0)
+		{
+			return Unwrapped;
+		}
+		Unwrapped.Add(Positions[0]);
+		for (int32 i = 1; i < Positions.Num(); ++i)
+		{
+			FVector Delta = Positions[i] - Unwrapped[i - 1];
+			if (Extent.X > 0.0f && FMath::Abs(Delta.X) > Extent.X * 0.5f)
+				Delta.X -= FMath::Sign(Delta.X) * Extent.X;
+			if (Extent.Y > 0.0f && FMath::Abs(Delta.Y) > Extent.Y * 0.5f)
+				Delta.Y -= FMath::Sign(Delta.Y) * Extent.Y;
+			if (Extent.Z > 0.0f && FMath::Abs(Delta.Z) > Extent.Z * 0.5f)
+				Delta.Z -= FMath::Sign(Delta.Z) * Extent.Z;
+			Unwrapped.Add(Unwrapped[i - 1] + Delta);
+		}
+		return Unwrapped;
+	}
+} // anonymous namespace
+
 USpatialHashTableManager::USpatialHashTableManager()
 {
+}
+
+void USpatialHashTableManager::SetPeriodicVolume(bool bInIsPeriodic, FVector InExtent)
+{
+	PeriodicVolume.bIsPeriodic = bInIsPeriodic;
+	PeriodicVolume.Extent = InExtent;
+
+	UE_LOG(LogTemp, Log,
+		TEXT("USpatialHashTableManager::SetPeriodicVolume: periodic=%s, extent=(%.3f, %.3f, %.3f)"),
+		bInIsPeriodic ? TEXT("true") : TEXT("false"),
+		InExtent.X, InExtent.Y, InExtent.Z);
+}
+
+TArray<FVector> USpatialHashTableManager::GetUnwrappedPositions(const TArray<FVector>& RawPositions, float CellSize) const
+{
+	const FVector Extent = ResolvePeriodicExtent(CellSize);
+	if (Extent.IsNearlyZero())
+	{
+		return RawPositions;
+	}
+	return UnwrapPeriodicTrajectory(RawPositions, Extent);
+}
+
+FVector USpatialHashTableManager::ResolvePeriodicExtent(float CellSize) const
+{
+	if (!PeriodicVolume.bIsPeriodic)
+	{
+		return FVector::ZeroVector;
+	}
+
+	// Use the explicitly provided extent if it is non-zero.
+	if (!PeriodicVolume.Extent.IsNearlyZero())
+	{
+		return PeriodicVolume.Extent;
+	}
+
+	// Fallback: derive the extent from the bounding box of the first loaded
+	// hash table.  When CellSize > 0 we prefer a table that matches the
+	// requested cell size; otherwise (or if none is found) we accept any table.
+	FVector FallbackExtent = FVector::ZeroVector;
+	for (const auto& Pair : LoadedHashTables)
+	{
+		if (!Pair.Value.IsValid())
+		{
+			continue;
+		}
+		const FSpatialHashHeader& H = Pair.Value->Header;
+		FVector Extent(H.BBoxMaxX - H.BBoxMinX, H.BBoxMaxY - H.BBoxMinY, H.BBoxMaxZ - H.BBoxMinZ);
+		if (Extent.IsNearlyZero())
+		{
+			continue;
+		}
+		if (CellSize > SMALL_NUMBER && FMath::IsNearlyEqual(Pair.Key.CellSize, CellSize, CellSizeEpsilon))
+		{
+			return Extent; // exact match
+		}
+		if (FallbackExtent.IsNearlyZero())
+		{
+			FallbackExtent = Extent; // remember first valid one as fallback
+		}
+	}
+
+	if (!FallbackExtent.IsNearlyZero())
+	{
+		return FallbackExtent;
+	}
+
+	UE_LOG(LogTemp, Warning,
+		TEXT("USpatialHashTableManager::ResolvePeriodicExtent: bIsPeriodic=true but no valid extent found "
+		     "(no hash tables loaded for cell size %.3f and Extent was zero). "
+		     "Periodic boundary conditions will be DISABLED for this query."),
+		CellSize);
+	return FVector::ZeroVector;
 }
 
 int32 USpatialHashTableManager::LoadHashTables(
@@ -1289,7 +1450,10 @@ void USpatialHashTableManager::FilterByDistance(
 {
 	OutResults.Reset();
 	
-	float RadiusSquared = Radius * Radius;
+	const float RadiusSquared = Radius * Radius;
+	const bool bPeriodic = PeriodicVolume.bIsPeriodic;
+	// Resolve the periodic extent once; ZeroVector means non-periodic.
+	const FVector Extent = bPeriodic ? ResolvePeriodicExtent(0.0f) : FVector::ZeroVector;
 	
 	for (const auto& Pair : TrajectoryData)
 	{
@@ -1300,11 +1464,25 @@ void USpatialHashTableManager::FilterByDistance(
 		
 		for (const FTrajectorySamplePoint& Sample : SamplePoints)
 		{
-			float DistanceSquared = FVector::DistSquared(QueryPosition, Sample.Position);
+			float DistanceSquared;
+			FVector ReportedPos;
+
+			if (bPeriodic && !Extent.IsNearlyZero())
+			{
+				// Shift the sample to the closest periodic image of QueryPosition.
+				ReportedPos = ApplyMinImageCorrection(Sample.Position, QueryPosition, Extent);
+				DistanceSquared = FVector::DistSquared(QueryPosition, ReportedPos);
+			}
+			else
+			{
+				ReportedPos = Sample.Position;
+				DistanceSquared = FVector::DistSquared(QueryPosition, Sample.Position);
+			}
 			
 			if (DistanceSquared <= RadiusSquared)
 			{
 				FTrajectorySamplePoint FilteredSample = Sample;
+				FilteredSample.Position = ReportedPos;
 				FilteredSample.Distance = FMath::Sqrt(DistanceSquared);
 				Result.SamplePoints.Add(FilteredSample);
 			}
@@ -1329,8 +1507,10 @@ void USpatialHashTableManager::FilterByDualRadius(
 	OutInnerResults.Reset();
 	OutOuterResults.Reset();
 	
-	float InnerRadiusSquared = InnerRadius * InnerRadius;
-	float OuterRadiusSquared = OuterRadius * OuterRadius;
+	const float InnerRadiusSquared = InnerRadius * InnerRadius;
+	const float OuterRadiusSquared = OuterRadius * OuterRadius;
+	const bool bPeriodic = PeriodicVolume.bIsPeriodic;
+	const FVector Extent = bPeriodic ? ResolvePeriodicExtent(0.0f) : FVector::ZeroVector;
 	
 	for (const auto& Pair : TrajectoryData)
 	{
@@ -1342,12 +1522,25 @@ void USpatialHashTableManager::FilterByDualRadius(
 		
 		for (const FTrajectorySamplePoint& Sample : SamplePoints)
 		{
-			float DistanceSquared = FVector::DistSquared(QueryPosition, Sample.Position);
+			float DistanceSquared;
+			FVector ReportedPos;
+
+			if (bPeriodic && !Extent.IsNearlyZero())
+			{
+				ReportedPos = ApplyMinImageCorrection(Sample.Position, QueryPosition, Extent);
+				DistanceSquared = FVector::DistSquared(QueryPosition, ReportedPos);
+			}
+			else
+			{
+				ReportedPos = Sample.Position;
+				DistanceSquared = FVector::DistSquared(QueryPosition, Sample.Position);
+			}
 			
 			if (DistanceSquared <= InnerRadiusSquared)
 			{
 				// Sample is within inner radius - add to both inner and outer results
 				FTrajectorySamplePoint FilteredSample = Sample;
+				FilteredSample.Position = ReportedPos;
 				FilteredSample.Distance = FMath::Sqrt(DistanceSquared);
 				InnerResult.SamplePoints.Add(FilteredSample);
 				OuterResult.SamplePoints.Add(FilteredSample);
@@ -1356,6 +1549,7 @@ void USpatialHashTableManager::FilterByDualRadius(
 			{
 				// Sample is between inner and outer radius - add to outer results only
 				FTrajectorySamplePoint FilteredSample = Sample;
+				FilteredSample.Position = ReportedPos;
 				FilteredSample.Distance = FMath::Sqrt(DistanceSquared);
 				OuterResult.SamplePoints.Add(FilteredSample);
 			}
@@ -1470,9 +1664,10 @@ int32 USpatialHashTableManager::QueryRadiusWithDistanceCheck(
 		return 0;
 	}
 	
-	// Query trajectory IDs in the spatial hash (no distance check yet)
+	// Query trajectory IDs in the spatial hash (no distance check yet).
+	// When periodic, cells on the opposite side of the box boundary are also checked.
 	TArray<int64> CandidateTrajectoryIds;
-	HashTable->QueryTrajectoryIdsInRadius(QueryPosition, Radius, CandidateTrajectoryIds);
+	HashTable->QueryTrajectoryIdsInRadius(QueryPosition, Radius, CandidateTrajectoryIds, PeriodicVolume.bIsPeriodic);
 	
 	if (CandidateTrajectoryIds.Num() == 0)
 	{
@@ -1487,7 +1682,7 @@ int32 USpatialHashTableManager::QueryRadiusWithDistanceCheck(
 		return 0;
 	}
 	
-	// Filter by actual distance
+	// Filter by actual distance (uses minimum-image convention when periodic)
 	FilterByDistance(QueryPosition, Radius, TrajectoryData, OutResults);
 	
 	return OutResults.Num();
@@ -1523,9 +1718,9 @@ int32 USpatialHashTableManager::QueryDualRadiusWithDistanceCheck(
 		return 0;
 	}
 	
-	// Query trajectory IDs using the outer radius
+	// Query trajectory IDs using the outer radius (with periodic boundary support)
 	TArray<int64> CandidateTrajectoryIds;
-	HashTable->QueryTrajectoryIdsInRadius(QueryPosition, OuterRadius, CandidateTrajectoryIds);
+	HashTable->QueryTrajectoryIdsInRadius(QueryPosition, OuterRadius, CandidateTrajectoryIds, PeriodicVolume.bIsPeriodic);
 	
 	if (CandidateTrajectoryIds.Num() == 0)
 	{
@@ -1540,7 +1735,7 @@ int32 USpatialHashTableManager::QueryDualRadiusWithDistanceCheck(
 		return 0;
 	}
 	
-	// Filter by dual radius
+	// Filter by dual radius (uses minimum-image convention when periodic)
 	FilterByDualRadius(QueryPosition, InnerRadius, OuterRadius, TrajectoryData, OutInnerResults, OutOuterResults);
 	
 	// Return count of outer results (which includes all trajectories within outer radius)
@@ -1579,7 +1774,7 @@ int32 USpatialHashTableManager::QueryRadiusOverTimeRange(
 		}
 		
 		TArray<int64> TimeStepTrajectoryIds;
-		HashTable->QueryTrajectoryIdsInRadius(QueryPosition, Radius, TimeStepTrajectoryIds);
+		HashTable->QueryTrajectoryIdsInRadius(QueryPosition, Radius, TimeStepTrajectoryIds, PeriodicVolume.bIsPeriodic);
 		
 		for (int64 TrajId : TimeStepTrajectoryIds)
 		{
@@ -1644,21 +1839,58 @@ int32 USpatialHashTableManager::QueryTrajectoryRadiusOverTimeRange(
 		return 0;
 	}
 	
+	// When periodic, unwrap the query trajectory so positions are continuous.
+	// The unwrapped positions are used as the reference frame for distance
+	// calculations and output position correction; the original (wrapped)
+	// positions are used for hash-table lookups.
+	const bool bPeriodic = PeriodicVolume.bIsPeriodic;
+	const FVector Extent = bPeriodic ? ResolvePeriodicExtent(CellSize) : FVector::ZeroVector;
+	const bool bApplyPeriodic = bPeriodic && !Extent.IsNearlyZero();
+
+	TArray<FTrajectorySamplePoint> UnwrappedQuerySamples;
+	if (bApplyPeriodic)
+	{
+		// Build position array for unwrapping, then copy back with corrected positions.
+		TArray<FVector> RawPositions;
+		RawPositions.Reserve(QuerySamples->Num());
+		for (const FTrajectorySamplePoint& S : *QuerySamples)
+		{
+			RawPositions.Add(S.Position);
+		}
+		TArray<FVector> UnwrappedPositions = UnwrapPeriodicTrajectory(RawPositions, Extent);
+
+		UnwrappedQuerySamples.Reserve(QuerySamples->Num());
+		for (int32 i = 0; i < QuerySamples->Num(); ++i)
+		{
+			FTrajectorySamplePoint S = (*QuerySamples)[i];
+			S.Position = UnwrappedPositions[i];
+			UnwrappedQuerySamples.Add(S);
+		}
+	}
+
+	// Reference to either the original or unwrapped query samples.
+	// For hash-table lookups we always use the original wrapped positions.
+	const TArray<FTrajectorySamplePoint>& RefQuerySamples = bApplyPeriodic ? UnwrappedQuerySamples : *QuerySamples;
+	
 	// Collect all unique trajectory IDs across all query points in the time range
 	TSet<int64> AllTrajectoryIds;
 	
-	for (const FTrajectorySamplePoint& QuerySample : *QuerySamples)
+	for (int32 i = 0; i < QuerySamples->Num(); ++i)
 	{
-		TSharedPtr<FSpatialHashTable> HashTable = GetHashTable(CellSize, QuerySample.TimeStep);
+		// Hash-table lookup always uses the original (wrapped) position.
+		const FVector& LookupPos = (*QuerySamples)[i].Position;
+		const int32 TimeStep = (*QuerySamples)[i].TimeStep;
+
+		TSharedPtr<FSpatialHashTable> HashTable = GetHashTable(CellSize, TimeStep);
 		if (!HashTable.IsValid())
 		{
 			UE_LOG(LogTemp, Warning, TEXT("USpatialHashTableManager::QueryTrajectoryRadiusOverTimeRange: Hash table not loaded for time step %d, skipping"),
-				QuerySample.TimeStep);
+				TimeStep);
 			continue;
 		}
 		
 		TArray<int64> TimeStepTrajectoryIds;
-		HashTable->QueryTrajectoryIdsInRadius(QuerySample.Position, Radius, TimeStepTrajectoryIds);
+		HashTable->QueryTrajectoryIdsInRadius(LookupPos, Radius, TimeStepTrajectoryIds, bApplyPeriodic);
 		
 		for (int64 TrajId : TimeStepTrajectoryIds)
 		{
@@ -1684,7 +1916,8 @@ int32 USpatialHashTableManager::QueryTrajectoryRadiusOverTimeRange(
 		return 0;
 	}
 	
-	// For each trajectory, compute distances to all query points and mark which samples are within radius
+	// For each trajectory, compute distances to all query points and mark which samples are within radius.
+	// When periodic, use minimum-image distance and correct the reported sample position.
 	for (auto& Pair : TrajectoryData)
 	{
 		TArray<FTrajectorySamplePoint>& Samples = Pair.Value;
@@ -1693,19 +1926,36 @@ int32 USpatialHashTableManager::QueryTrajectoryRadiusOverTimeRange(
 		{
 			// Find the closest query sample at the same timestep
 			float MinDistance = FLT_MAX;
+			FVector BestQueryPos = FVector::ZeroVector;
+			bool bFoundQueryPos = false;
 			
-			for (const FTrajectorySamplePoint& QuerySample : *QuerySamples)
+			for (const FTrajectorySamplePoint& QS : RefQuerySamples)
 			{
-				if (QuerySample.TimeStep == Sample.TimeStep)
+				if (QS.TimeStep == Sample.TimeStep)
 				{
-					float Distance = FVector::Dist(QuerySample.Position, Sample.Position);
+					float Distance;
+					if (bApplyPeriodic)
+					{
+						Distance = FMath::Sqrt(PeriodicDistSq(QS.Position, Sample.Position, Extent));
+					}
+					else
+					{
+						Distance = FVector::Dist(QS.Position, Sample.Position);
+					}
 					if (Distance < MinDistance)
 					{
 						MinDistance = Distance;
+						BestQueryPos = QS.Position;
+						bFoundQueryPos = true;
 					}
 				}
 			}
 			
+			// Correct the sample position to follow the (unwrapped) query trajectory.
+			if (bApplyPeriodic && bFoundQueryPos)
+			{
+				Sample.Position = ApplyMinImageCorrection(Sample.Position, BestQueryPos, Extent);
+			}
 			Sample.Distance = MinDistance;
 		}
 	}
@@ -1738,9 +1988,10 @@ void USpatialHashTableManager::QueryRadiusWithDistanceCheckAsync(
 		return;
 	}
 	
-	// Query trajectory IDs in the spatial hash (no distance check yet)
+	// Query trajectory IDs in the spatial hash (no distance check yet).
+	// When periodic, cells on the opposite side of the boundary are also checked.
 	TArray<int64> CandidateTrajectoryIds;
-	HashTable->QueryTrajectoryIdsInRadius(QueryPosition, Radius, CandidateTrajectoryIds);
+	HashTable->QueryTrajectoryIdsInRadius(QueryPosition, Radius, CandidateTrajectoryIds, PeriodicVolume.bIsPeriodic);
 	
 	if (CandidateTrajectoryIds.Num() == 0)
 	{
@@ -1758,12 +2009,15 @@ void USpatialHashTableManager::QueryRadiusWithDistanceCheckAsync(
 		return;
 	}
 	
+	// Resolve periodic extent before dispatching to background thread.
+	const FVector PeriodicExtent = ResolvePeriodicExtent(CellSize);
+
 	// Start async query - callback will be invoked on game thread when complete
 	bool bStarted = Api->QuerySingleTimeStepAsync(
 		DatasetDirectory,
 		CandidateTrajectoryIds,
 		TimeStep,
-		FOnTrajectoryQueryComplete::CreateLambda([QueryPosition, Radius, OnComplete](const FTrajectoryQueryResult& Result)
+		FOnTrajectoryQueryComplete::CreateLambda([QueryPosition, Radius, PeriodicExtent, OnComplete](const FTrajectoryQueryResult& Result)
 		{
 			TArray<FSpatialHashQueryResult> Results;
 			
@@ -1775,8 +2029,9 @@ void USpatialHashTableManager::QueryRadiusWithDistanceCheckAsync(
 			}
 			
 			// At a single timestep each trajectory appears at most once — filter directly
-			// without building an intermediate TMap
+			// without building an intermediate TMap.
 			const float RadiusSquared = Radius * Radius;
+			const bool bPeriodic = !PeriodicExtent.IsNearlyZero();
 			Results.Reserve(Result.Samples.Num());
 			
 			for (const FTrajectorySample& Sample : Result.Samples)
@@ -1786,12 +2041,24 @@ void USpatialHashTableManager::QueryRadiusWithDistanceCheckAsync(
 					continue;
 				}
 				
-				const float DistanceSquared = FVector::DistSquared(QueryPosition, Sample.Position);
+				float DistanceSquared;
+				FVector ReportedPos;
+				if (bPeriodic)
+				{
+					ReportedPos = ApplyMinImageCorrection(Sample.Position, QueryPosition, PeriodicExtent);
+					DistanceSquared = FVector::DistSquared(QueryPosition, ReportedPos);
+				}
+				else
+				{
+					ReportedPos = Sample.Position;
+					DistanceSquared = FVector::DistSquared(QueryPosition, Sample.Position);
+				}
+
 				if (DistanceSquared <= RadiusSquared)
 				{
 					FSpatialHashQueryResult ResultEntry(static_cast<int32>(Sample.TrajectoryId));
 					FTrajectorySamplePoint SamplePoint;
-					SamplePoint.Position = Sample.Position;
+					SamplePoint.Position = ReportedPos;
 					SamplePoint.TimeStep = Sample.TimeStep;
 					SamplePoint.Distance = FMath::Sqrt(DistanceSquared);
 					ResultEntry.SamplePoints.Add(MoveTemp(SamplePoint));
@@ -1829,9 +2096,9 @@ void USpatialHashTableManager::QueryDualRadiusWithDistanceCheckAsync(
 		return;
 	}
 	
-	// Query trajectory IDs in the spatial hash using outer radius
+	// Query trajectory IDs in the spatial hash using outer radius (with periodic support)
 	TArray<int64> CandidateTrajectoryIds;
-	HashTable->QueryTrajectoryIdsInRadius(QueryPosition, OuterRadius, CandidateTrajectoryIds);
+	HashTable->QueryTrajectoryIdsInRadius(QueryPosition, OuterRadius, CandidateTrajectoryIds, PeriodicVolume.bIsPeriodic);
 	
 	if (CandidateTrajectoryIds.Num() == 0)
 	{
@@ -1848,12 +2115,14 @@ void USpatialHashTableManager::QueryDualRadiusWithDistanceCheckAsync(
 		return;
 	}
 	
+	const FVector PeriodicExtent = ResolvePeriodicExtent(CellSize);
+	
 	// Start async query
 	bool bStarted = Api->QuerySingleTimeStepAsync(
 		DatasetDirectory,
 		CandidateTrajectoryIds,
 		TimeStep,
-		FOnTrajectoryQueryComplete::CreateLambda([QueryPosition, InnerRadius, OuterRadius, OnComplete](const FTrajectoryQueryResult& Result)
+		FOnTrajectoryQueryComplete::CreateLambda([QueryPosition, InnerRadius, OuterRadius, PeriodicExtent, OnComplete](const FTrajectoryQueryResult& Result)
 		{
 			TArray<FSpatialHashQueryResult> InnerResults;
 			TArray<FSpatialHashQueryResult> OuterResults;
@@ -1866,9 +2135,10 @@ void USpatialHashTableManager::QueryDualRadiusWithDistanceCheckAsync(
 			}
 			
 			// At a single timestep each trajectory appears at most once — filter directly
-			// without building an intermediate TMap
+			// without building an intermediate TMap.
 			const float InnerRadiusSq = InnerRadius * InnerRadius;
 			const float OuterRadiusSq = OuterRadius * OuterRadius;
+			const bool bPeriodic = !PeriodicExtent.IsNearlyZero();
 			InnerResults.Reserve(Result.Samples.Num());
 			OuterResults.Reserve(Result.Samples.Num());
 			
@@ -1879,7 +2149,19 @@ void USpatialHashTableManager::QueryDualRadiusWithDistanceCheckAsync(
 					continue;
 				}
 				
-				const float DistanceSq = FVector::DistSquared(QueryPosition, Sample.Position);
+				float DistanceSq;
+				FVector ReportedPos;
+				if (bPeriodic)
+				{
+					ReportedPos = ApplyMinImageCorrection(Sample.Position, QueryPosition, PeriodicExtent);
+					DistanceSq = FVector::DistSquared(QueryPosition, ReportedPos);
+				}
+				else
+				{
+					ReportedPos = Sample.Position;
+					DistanceSq = FVector::DistSquared(QueryPosition, Sample.Position);
+				}
+
 				if (DistanceSq > OuterRadiusSq)
 				{
 					continue;
@@ -1887,7 +2169,7 @@ void USpatialHashTableManager::QueryDualRadiusWithDistanceCheckAsync(
 				
 				const float Distance = FMath::Sqrt(DistanceSq);
 				FTrajectorySamplePoint SamplePoint;
-				SamplePoint.Position = Sample.Position;
+				SamplePoint.Position = ReportedPos;
 				SamplePoint.TimeStep = Sample.TimeStep;
 				SamplePoint.Distance = Distance;
 				
@@ -1924,7 +2206,7 @@ void USpatialHashTableManager::QueryRadiusOverTimeRangeAsync(
 	int32 EndTimeStep,
 	FOnSpatialHashQueryComplete OnComplete)
 {
-	// Gather candidate trajectory IDs from all timesteps in range
+	// Gather candidate trajectory IDs from all timesteps in range (with periodic support)
 	TSet<int64> AllCandidateIds;
 	
 	for (int32 TimeStep = StartTimeStep; TimeStep <= EndTimeStep; ++TimeStep)
@@ -1933,7 +2215,7 @@ void USpatialHashTableManager::QueryRadiusOverTimeRangeAsync(
 		if (HashTable)
 		{
 			TArray<int64> CandidateIds;
-			HashTable->QueryTrajectoryIdsInRadius(QueryPosition, Radius, CandidateIds);
+			HashTable->QueryTrajectoryIdsInRadius(QueryPosition, Radius, CandidateIds, PeriodicVolume.bIsPeriodic);
 			AllCandidateIds.Append(CandidateIds);
 		}
 	}
@@ -1955,13 +2237,15 @@ void USpatialHashTableManager::QueryRadiusOverTimeRangeAsync(
 		return;
 	}
 	
+	const FVector PeriodicExtent = ResolvePeriodicExtent(CellSize);
+
 	// Start async query for time range
 	bool bStarted = Api->QueryTimeRangeAsync(
 		DatasetDirectory,
 		AllCandidateIdsArray,
 		StartTimeStep,
 		EndTimeStep,
-		FOnTrajectoryTimeRangeComplete::CreateLambda([QueryPosition, Radius, OnComplete](const FTrajectoryTimeRangeResult& Result)
+		FOnTrajectoryTimeRangeComplete::CreateLambda([QueryPosition, Radius, PeriodicExtent, OnComplete](const FTrajectoryTimeRangeResult& Result)
 		{
 			TArray<FSpatialHashQueryResult> Results;
 			
@@ -1973,8 +2257,9 @@ void USpatialHashTableManager::QueryRadiusOverTimeRangeAsync(
 			}
 			
 			// FTrajectoryTimeSeries already groups data per trajectory — process directly
-			// without building an intermediate TMap
+			// without building an intermediate TMap.
 			const float RadiusSquared = Radius * Radius;
+			const bool bPeriodic = !PeriodicExtent.IsNearlyZero();
 			Results.Reserve(Result.TimeSeries.Num());
 			
 			for (const FTrajectoryTimeSeries& Series : Result.TimeSeries)
@@ -1990,11 +2275,23 @@ void USpatialHashTableManager::QueryRadiusOverTimeRangeAsync(
 						continue;
 					}
 					
-					const float DistanceSq = FVector::DistSquared(QueryPosition, Position);
+					float DistanceSq;
+					FVector ReportedPos;
+					if (bPeriodic)
+					{
+						ReportedPos = ApplyMinImageCorrection(Position, QueryPosition, PeriodicExtent);
+						DistanceSq = FVector::DistSquared(QueryPosition, ReportedPos);
+					}
+					else
+					{
+						ReportedPos = Position;
+						DistanceSq = FVector::DistSquared(QueryPosition, Position);
+					}
+
 					if (DistanceSq <= RadiusSquared)
 					{
 						FTrajectorySamplePoint SamplePoint;
-						SamplePoint.Position = Position;
+						SamplePoint.Position = ReportedPos;
 						SamplePoint.TimeStep = Series.StartTimeStep + i;
 						SamplePoint.Distance = FMath::Sqrt(DistanceSq);
 						ResultEntry.SamplePoints.Add(MoveTemp(SamplePoint));
@@ -2040,6 +2337,9 @@ void USpatialHashTableManager::QueryTrajectoryRadiusOverTimeRangeAsync(
 		OnComplete.ExecuteIfBound(TArray<FSpatialHashQueryResult>());
 		return;
 	}
+
+	// Resolve periodic extent on the game thread before dispatching.
+	const FVector PeriodicExtent = ResolvePeriodicExtent(CellSize);
 	
 	// Load query trajectory first
 	bool bStarted = Api->QueryTimeRangeAsync(
@@ -2047,7 +2347,7 @@ void USpatialHashTableManager::QueryTrajectoryRadiusOverTimeRangeAsync(
 		QueryTrajIdsInt64,
 		StartTimeStep,
 		EndTimeStep,
-		FOnTrajectoryTimeRangeComplete::CreateLambda([this, DatasetDirectory, Radius, CellSize, StartTimeStep, EndTimeStep, OnComplete, Api](const FTrajectoryTimeRangeResult& QueryResult)
+		FOnTrajectoryTimeRangeComplete::CreateLambda([this, DatasetDirectory, Radius, CellSize, StartTimeStep, EndTimeStep, OnComplete, Api, PeriodicExtent](const FTrajectoryTimeRangeResult& QueryResult)
 		{
 			if (!QueryResult.bSuccess || QueryResult.TimeSeries.Num() == 0)
 			{
@@ -2056,33 +2356,59 @@ void USpatialHashTableManager::QueryTrajectoryRadiusOverTimeRangeAsync(
 				return;
 			}
 			
-			// Convert query trajectory to internal format
+			const bool bPeriodic = !PeriodicExtent.IsNearlyZero();
+
+			// Convert query trajectory to internal format.
+			// When periodic, also unwrap the trajectory so positions are continuous.
 			const FTrajectoryTimeSeries& QuerySeries = QueryResult.TimeSeries[0];
 			int64 QueryTrajId = QuerySeries.TrajectoryId;
-			TArray<FTrajectorySamplePoint> QuerySamples;
-			
+
+			// Collect valid raw positions first (needed for unwrapping).
+			TArray<FVector> RawQueryPositions;
+			TArray<int32> RawQueryTimeSteps;
+			RawQueryPositions.Reserve(QuerySeries.Samples.Num());
+			RawQueryTimeSteps.Reserve(QuerySeries.Samples.Num());
 			for (int32 i = 0; i < QuerySeries.Samples.Num(); ++i)
 			{
 				const FVector& Position = QuerySeries.Samples[i];
 				if (!FMath::IsNaN(Position.X) && !FMath::IsNaN(Position.Y) && !FMath::IsNaN(Position.Z))
 				{
-					FTrajectorySamplePoint SamplePoint;
-					SamplePoint.Position = Position;
-					SamplePoint.TimeStep = QuerySeries.StartTimeStep + i;
-					SamplePoint.Distance = 0.0f;
-					QuerySamples.Add(SamplePoint);
+					RawQueryPositions.Add(Position);
+					RawQueryTimeSteps.Add(QuerySeries.StartTimeStep + i);
 				}
 			}
-			
-			// Gather candidate trajectory IDs from spatial hash
-			TSet<int64> AllCandidateIds;
-			for (const FTrajectorySamplePoint& QuerySample : QuerySamples)
+
+			TArray<FVector> QueryPositions;
+			if (bPeriodic)
 			{
-				FSpatialHashTable* HashTable = GetOrLoadHashTable(DatasetDirectory, CellSize, QuerySample.TimeStep);
+				QueryPositions = UnwrapPeriodicTrajectory(RawQueryPositions, PeriodicExtent);
+			}
+			else
+			{
+				QueryPositions = RawQueryPositions;
+			}
+
+			TArray<FTrajectorySamplePoint> QuerySamples;
+			QuerySamples.Reserve(QueryPositions.Num());
+			for (int32 i = 0; i < QueryPositions.Num(); ++i)
+			{
+				FTrajectorySamplePoint SamplePoint;
+				SamplePoint.Position = QueryPositions[i];
+				SamplePoint.TimeStep = RawQueryTimeSteps[i];
+				SamplePoint.Distance = 0.0f;
+				QuerySamples.Add(SamplePoint);
+			}
+			
+			// Gather candidate trajectory IDs from spatial hash.
+			// Hash-table lookups always use the ORIGINAL (wrapped) positions.
+			TSet<int64> AllCandidateIds;
+			for (int32 i = 0; i < RawQueryPositions.Num(); ++i)
+			{
+				FSpatialHashTable* HashTable = GetOrLoadHashTable(DatasetDirectory, CellSize, RawQueryTimeSteps[i]);
 				if (HashTable)
 				{
 					TArray<int64> CandidateIds;
-					HashTable->QueryTrajectoryIdsInRadius(QuerySample.Position, Radius, CandidateIds);
+					HashTable->QueryTrajectoryIdsInRadius(RawQueryPositions[i], Radius, CandidateIds, bPeriodic);
 					AllCandidateIds.Append(CandidateIds);
 				}
 			}
@@ -2104,7 +2430,7 @@ void USpatialHashTableManager::QueryTrajectoryRadiusOverTimeRangeAsync(
 				AllCandidateIdsArray,
 				StartTimeStep,
 				EndTimeStep,
-				FOnTrajectoryTimeRangeComplete::CreateLambda([QuerySamples, Radius, OnComplete](const FTrajectoryTimeRangeResult& CandidateResult)
+				FOnTrajectoryTimeRangeComplete::CreateLambda([QuerySamples, Radius, PeriodicExtent, OnComplete](const FTrajectoryTimeRangeResult& CandidateResult)
 				{
 					TArray<FSpatialHashQueryResult> Results;
 					
@@ -2119,6 +2445,7 @@ void USpatialHashTableManager::QueryTrajectoryRadiusOverTimeRangeAsync(
 					// without building an intermediate TMap.
 					// Compute per-sample distances to the query trajectory and find the
 					// extended range (first entry to last exit) in a single pass.
+					const bool bPeriodic = !PeriodicExtent.IsNearlyZero();
 					Results.Reserve(CandidateResult.TimeSeries.Num());
 					
 					for (const FTrajectoryTimeSeries& Series : CandidateResult.TimeSeries)
@@ -2137,22 +2464,41 @@ void USpatialHashTableManager::QueryTrajectoryRadiusOverTimeRangeAsync(
 							
 							const int32 SampleTimeStep = Series.StartTimeStep + i;
 							
-							// Find minimum distance to query trajectory at the same timestep
+							// Find minimum distance to query trajectory at the same timestep.
+							// When periodic, use minimum-image distance and correct the position.
 							float MinDistance = FLT_MAX;
+							FVector BestQueryPos = FVector::ZeroVector;
+							bool bFoundQueryPos = false;
 							for (const FTrajectorySamplePoint& QuerySample : QuerySamples)
 							{
 								if (QuerySample.TimeStep == SampleTimeStep)
 								{
-									const float Distance = FVector::Dist(QuerySample.Position, Position);
+									float Distance;
+									if (bPeriodic)
+									{
+										Distance = FMath::Sqrt(PeriodicDistSq(QuerySample.Position, Position, PeriodicExtent));
+									}
+									else
+									{
+										Distance = FVector::Dist(QuerySample.Position, Position);
+									}
 									if (Distance < MinDistance)
 									{
 										MinDistance = Distance;
+										BestQueryPos = QuerySample.Position;
+										bFoundQueryPos = true;
 									}
 								}
 							}
 							
+							FVector ReportedPos = Position;
+							if (bPeriodic && bFoundQueryPos)
+							{
+								ReportedPos = ApplyMinImageCorrection(Position, BestQueryPos, PeriodicExtent);
+							}
+
 							FTrajectorySamplePoint SamplePoint;
-							SamplePoint.Position = Position;
+							SamplePoint.Position = ReportedPos;
 							SamplePoint.TimeStep = SampleTimeStep;
 							SamplePoint.Distance = MinDistance;
 							SamplePoints.Add(MoveTemp(SamplePoint));
@@ -2236,7 +2582,7 @@ void USpatialHashTableManager::QueryPositionsBatchedAsync(
 		UE_LOG(LogTemp, Warning, TEXT("USpatialHashTableManager::QueryPositionsBatchedAsync: QueryPositions is empty or mismatched with QueryTimeSteps"));
 		AsyncTask(ENamedThreads::GameThread, [BatchCallback]()
 		{
-			BatchCallback.ExecuteIfBound(TArray<FSpatialHashQueryResult>(), true);
+			BatchCallback.ExecuteIfBound(TArray<FSpatialHashQueryResult>(), true, 0, 0);
 		});
 		return;
 	}
@@ -2255,7 +2601,7 @@ void USpatialHashTableManager::QueryPositionsBatchedAsync(
 		UE_LOG(LogTemp, Error, TEXT("USpatialHashTableManager::QueryPositionsBatchedAsync: Failed to get TrajectoryDataLoader"));
 		AsyncTask(ENamedThreads::GameThread, [BatchCallback]()
 		{
-			BatchCallback.ExecuteIfBound(TArray<FSpatialHashQueryResult>(), true);
+			BatchCallback.ExecuteIfBound(TArray<FSpatialHashQueryResult>(), true, 0, 0);
 		});
 		return;
 	}
@@ -2275,7 +2621,7 @@ void USpatialHashTableManager::QueryPositionsBatchedAsync(
 		UE_LOG(LogTemp, Warning, TEXT("USpatialHashTableManager::QueryPositionsBatchedAsync: No shard files found in %s"), *DatasetDirectory);
 		AsyncTask(ENamedThreads::GameThread, [BatchCallback]()
 		{
-			BatchCallback.ExecuteIfBound(TArray<FSpatialHashQueryResult>(), true);
+			BatchCallback.ExecuteIfBound(TArray<FSpatialHashQueryResult>(), true, 0, 0);
 		});
 		return;
 	}
@@ -2288,11 +2634,35 @@ void USpatialHashTableManager::QueryPositionsBatchedAsync(
 		ShardStartTimes.Add(ParseTimestepFromFilename(ShardFile));
 	}
 
+	UE_LOG(LogTemp, Log,
+		TEXT("QueryPositionsBatchedAsync: Checking %d query samples for nearest neighbours."),
+		QueryPositions.Num());
+
+	// ── Resolve periodic configuration on the game thread ─────────────────────
+	// ResolvePeriodicExtent() accesses LoadedHashTables (game-thread-only state).
+	const FVector PeriodicExtent = ResolvePeriodicExtent(CellSize);
+	const bool bPeriodic = !PeriodicExtent.IsNearlyZero();
+
+	// When periodic, unwrap the query trajectory so positions are continuous.
+	// The unwrapped positions are used as the reference frame for distance
+	// calculations and output position correction.  The original positions are
+	// used for Phase 1 hash-table lookups (which are always in box coordinates).
+	TArray<FVector> UnwrappedQueryPositions;
+	if (bPeriodic)
+	{
+		UnwrappedQueryPositions = UnwrapPeriodicTrajectory(QueryPositions, PeriodicExtent);
+	}
+	else
+	{
+		UnwrappedQueryPositions = QueryPositions;
+	}
+
 	// ── Dispatch the full pipeline to a worker thread ─────────────────────────
 	Async(EAsyncExecution::ThreadPool,
 		[Loader, HashTables, ShardFiles, ShardStartTimes,
-		 QueryPositions, QueryTimeSteps, Radius, EffectiveBatchSize,
-		 ExcludeTrajectoryId, BatchCallback]()
+		 QueryPositions, QueryTimeSteps, UnwrappedQueryPositions,
+		 Radius, EffectiveBatchSize, ExcludeTrajectoryId,
+		 PeriodicExtent, bPeriodic, BatchCallback]()
 	{
 		// ── PHASE 1: Parallel nearest-neighbour queries ───────────────────────
 		//
@@ -2300,21 +2670,30 @@ void USpatialHashTableManager::QueryPositionsBatchedAsync(
 		// lookup on a worker thread.  The only shared write is into AllCandidates,
 		// protected by CandidateMutex.  Spatial-hash reads use per-call file
 		// handles (see ReadTrajectoryIdsFromDisk) and are therefore thread-safe.
+		//
+		// Hash-table lookups always use the ORIGINAL (wrapped) query positions.
+		// When periodic, the hash table also checks cells on the opposite side of
+		// the box boundary so that trajectories near a periodic edge are found.
 
 		FCriticalSection CandidateMutex;
 		// candidateId → { earliest timestep, latest timestep }
 		TMap<int64, TPair<int32, int32>> AllCandidates;
+
+		// Count the query samples whose hash table was null (unhandled).
+		FThreadSafeCounter UnhandledSampleCount(0);
 
 		ParallelFor(QueryPositions.Num(), [&](int32 i)
 		{
 			FSpatialHashTable* HashTable = HashTables[i];
 			if (!HashTable)
 			{
+				UnhandledSampleCount.Increment();
 				return;
 			}
 
 			TArray<int64> FoundIds;
-			HashTable->QueryTrajectoryIdsInRadius(QueryPositions[i], Radius, FoundIds);
+			// Use original (wrapped) query position for hash-table lookup.
+			HashTable->QueryTrajectoryIdsInRadius(QueryPositions[i], Radius, FoundIds, bPeriodic);
 
 			if (FoundIds.IsEmpty())
 			{
@@ -2342,13 +2721,28 @@ void USpatialHashTableManager::QueryPositionsBatchedAsync(
 			}
 		});
 
-		UE_LOG(LogTemp, Log, TEXT("QueryPositionsBatchedAsync: Phase 1 complete – %d candidate trajectories found"), AllCandidates.Num());
+		const int32 TotalQuerySamples   = QueryPositions.Num();
+		const int32 UnhandledSamples    = UnhandledSampleCount.GetValue();
+		const int32 HandledQuerySamples = TotalQuerySamples - UnhandledSamples;
+		const int32 TotalCandidates     = AllCandidates.Num();
+
+		UE_LOG(LogTemp, Log,
+			TEXT("QueryPositionsBatchedAsync: Phase 1 complete – %d/%d query samples handled, %d candidate trajectories found."),
+			HandledQuerySamples, TotalQuerySamples, TotalCandidates);
+
+		if (UnhandledSamples > 0)
+		{
+			UE_LOG(LogTemp, Warning,
+				TEXT("QueryPositionsBatchedAsync: %d query sample(s) had no loaded hash table and were skipped. "
+				     "Check that the loaded time range covers all query timesteps."),
+				UnhandledSamples);
+		}
 
 		if (AllCandidates.IsEmpty())
 		{
-			AsyncTask(ENamedThreads::GameThread, [BatchCallback]()
+			AsyncTask(ENamedThreads::GameThread, [BatchCallback, TotalCandidates, HandledQuerySamples]()
 			{
-				BatchCallback.ExecuteIfBound(TArray<FSpatialHashQueryResult>(), true);
+				BatchCallback.ExecuteIfBound(TArray<FSpatialHashQueryResult>(), true, TotalCandidates, HandledQuerySamples);
 			});
 			return;
 		}
@@ -2369,12 +2763,14 @@ void USpatialHashTableManager::QueryPositionsBatchedAsync(
 			CandidateList.Add({Pair.Key, Pair.Value.Key, Pair.Value.Value});
 		}
 
-		// Build timestep → query position lookup (read-only from all threads).
+		// Build timestep → UNWRAPPED query position lookup (read-only from all threads).
+		// Using the unwrapped positions ensures that minimum-image corrections applied
+		// during Phase 2 produce continuous neighbour trajectories.
 		TMap<int32, FVector> QueryPosAtTimeStep;
-		QueryPosAtTimeStep.Reserve(QueryPositions.Num());
-		for (int32 i = 0; i < QueryPositions.Num(); ++i)
+		QueryPosAtTimeStep.Reserve(UnwrappedQueryPositions.Num());
+		for (int32 i = 0; i < UnwrappedQueryPositions.Num(); ++i)
 		{
-			QueryPosAtTimeStep.Add(QueryTimeSteps[i], QueryPositions[i]);
+			QueryPosAtTimeStep.Add(QueryTimeSteps[i], UnwrappedQueryPositions[i]);
 		}
 
 		// ── PHASE 2: Batch processing ─────────────────────────────────────────
@@ -2385,12 +2781,16 @@ void USpatialHashTableManager::QueryPositionsBatchedAsync(
 		UE_LOG(LogTemp, Log, TEXT("QueryPositionsBatchedAsync: Processing %d candidates in %d batch(es) of up to %d"),
 			NumCandidates, NumBatches, EffectiveBatchSize);
 
+		int32 TotalCandidatesProcessed = 0;
+
 		for (int32 BatchIdx = 0; BatchIdx < NumBatches; ++BatchIdx)
 		{
 			const int32 BatchStart  = BatchIdx * EffectiveBatchSize;
 			const int32 BatchEnd    = FMath::Min(BatchStart + EffectiveBatchSize, NumCandidates);
 			const int32 BatchCount  = BatchEnd - BatchStart;
 			const bool  bFinalBatch = (BatchIdx == NumBatches - 1);
+
+			TotalCandidatesProcessed += BatchCount;
 
 			// Determine the time range spanned by candidates in this batch.
 			int32 BatchMinTime = INT32_MAX;
@@ -2523,6 +2923,10 @@ void USpatialHashTableManager::QueryPositionsBatchedAsync(
 			//
 			// Multiple tasks each process a subset of the loaded batch and build
 			// a partial result list.  Partial lists are merged under ResultMutex.
+			//
+			// When periodic, distances use the minimum-image convention and
+			// sample positions are shifted to the image closest to the (unwrapped)
+			// query position so that neighbour trajectories appear continuous.
 
 			TArray<FSpatialHashQueryResult> BatchResults;
 			FCriticalSection               ResultMutex;
@@ -2552,11 +2956,25 @@ void USpatialHashTableManager::QueryPositionsBatchedAsync(
 						continue; // no query position for this timestep
 					}
 
-					const float DistSq = FVector::DistSquared(*QueryPos, Pos);
+					float   DistSq;
+					FVector ReportedPos;
+					if (bPeriodic)
+					{
+						// Shift the sample to the closest periodic image of the
+						// unwrapped query position, then compute the distance.
+						ReportedPos = ApplyMinImageCorrection(Pos, *QueryPos, PeriodicExtent);
+						DistSq      = FVector::DistSquared(*QueryPos, ReportedPos);
+					}
+					else
+					{
+						ReportedPos = Pos;
+						DistSq      = FVector::DistSquared(*QueryPos, Pos);
+					}
+
 					if (DistSq <= RadiusSq)
 					{
 						FTrajectorySamplePoint Sample;
-						Sample.Position = Pos;
+						Sample.Position = ReportedPos;
 						Sample.TimeStep = GlobalTimeStep;
 						Sample.Distance = FMath::Sqrt(DistSq);
 						Result.SamplePoints.Add(Sample);
@@ -2575,10 +2993,24 @@ void USpatialHashTableManager::QueryPositionsBatchedAsync(
 
 			// ── Deliver batch results to the game thread ──────────────────────
 			AsyncTask(ENamedThreads::GameThread,
-				[BatchCallback, MovedResults = MoveTemp(BatchResults), bFinalBatch]()
+				[BatchCallback, MovedResults = MoveTemp(BatchResults), bFinalBatch, TotalCandidates, HandledQuerySamples]()
 				{
-					BatchCallback.ExecuteIfBound(MovedResults, bFinalBatch);
+					BatchCallback.ExecuteIfBound(MovedResults, bFinalBatch, TotalCandidates, HandledQuerySamples);
 				});
+		}
+
+		// ── Verify all candidates were processed ──────────────────────────────
+		if (TotalCandidatesProcessed != NumCandidates)
+		{
+			UE_LOG(LogTemp, Error,
+				TEXT("QueryPositionsBatchedAsync: Phase 2 mismatch – processed %d candidates but expected %d."),
+				TotalCandidatesProcessed, NumCandidates);
+		}
+		else
+		{
+			UE_LOG(LogTemp, Log,
+				TEXT("QueryPositionsBatchedAsync: Phase 2 complete – all %d candidate trajectories were processed."),
+				NumCandidates);
 		}
 	});
 }

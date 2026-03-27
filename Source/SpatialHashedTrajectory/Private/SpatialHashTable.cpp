@@ -155,12 +155,13 @@ bool FSpatialHashTable::QueryAtPosition(const FVector& WorldPos, TArray<int64>& 
 	return false;
 }
 
-int32 FSpatialHashTable::QueryTrajectoryIdsInRadius(const FVector& WorldPos, float Radius, TArray<int64>& OutTrajectoryIds) const
+int32 FSpatialHashTable::QueryTrajectoryIdsInRadius(const FVector& WorldPos, float Radius, TArray<int64>& OutTrajectoryIds, bool bPeriodic) const
 {
 	OutTrajectoryIds.Reset();
 	
 	// Calculate the bounding box of cells that could overlap with the query radius
 	FVector BBoxMin = Header.GetBBoxMin();
+	FVector BBoxMax = Header.GetBBoxMax();
 	float CellSize = Header.CellSize;
 	
 	// Calculate the cell range that encompasses the query sphere
@@ -170,9 +171,33 @@ int32 FSpatialHashTable::QueryTrajectoryIdsInRadius(const FVector& WorldPos, flo
 	// Calculate how many cells to check in each direction
 	// Add 1 to ensure we cover the full radius even at cell boundaries
 	int32 CellRadius = FMath::CeilToInt(Radius / CellSize) + 1;
+
+	// Number of cells in each dimension (needed for periodic wrapping)
+	int32 NumCellsX = 0;
+	int32 NumCellsY = 0;
+	int32 NumCellsZ = 0;
+	if (bPeriodic && CellSize > SMALL_NUMBER)
+	{
+		NumCellsX = FMath::CeilToInt((BBoxMax.X - BBoxMin.X) / CellSize);
+		NumCellsY = FMath::CeilToInt((BBoxMax.Y - BBoxMin.Y) / CellSize);
+		NumCellsZ = FMath::CeilToInt((BBoxMax.Z - BBoxMin.Z) / CellSize);
+		// Guard against degenerate volumes
+		if (NumCellsX <= 0) NumCellsX = 1;
+		if (NumCellsY <= 0) NumCellsY = 1;
+		if (NumCellsZ <= 0) NumCellsZ = 1;
+	}
 	
 	// Collect all candidate trajectory IDs into a flat array; dedup in one pass after
 	TArray<int64> AllTrajectoryIds;
+
+	/*
+	int32 MinCellX = NumCellsX + 1;
+	int32 MinCellY = NumCellsY + 1;
+	int32 MinCellZ = NumCellsZ + 1;
+	int32 MaxCellX = 0;
+	int32 MaxCellY = 0;
+	int32 MaxCellZ = 0;
+	*/
 	
 	// Iterate over all cells within the bounding box
 	for (int32 dx = -CellRadius; dx <= CellRadius; ++dx)
@@ -185,10 +210,39 @@ int32 FSpatialHashTable::QueryTrajectoryIdsInRadius(const FVector& WorldPos, flo
 				int32 CellY = CenterCellY + dy;
 				int32 CellZ = CenterCellZ + dz;
 				
-				// Skip cells that are outside the valid range
-				if (CellX < 0 || CellY < 0 || CellZ < 0)
-					continue;
-				
+				if (bPeriodic)
+				{
+					// Wrap cell coordinates for periodic boundary conditions.
+					// The modulo formula ((n % m) + m) % m handles negative values correctly.
+					CellX = ((CellX % NumCellsX) + NumCellsX) % NumCellsX;
+					CellY = ((CellY % NumCellsY) + NumCellsY) % NumCellsY;
+					CellZ = ((CellZ % NumCellsZ) + NumCellsZ) % NumCellsZ;
+				}
+				else
+				{
+					// Skip cells that are outside the valid range
+					if (CellX < 0 || CellY < 0 || CellZ < 0)
+						continue;
+				}
+
+				/*
+				if (CellX < MinCellX)
+					MinCellX = CellX;
+				if (CellY < MinCellY)
+					MinCellY = CellY;
+				if (CellZ < MinCellZ)
+					MinCellZ = CellZ;
+				if (CellX > MaxCellX)
+					MaxCellX = CellX;
+				if (CellY > MaxCellY)
+					MaxCellY = CellY;
+				if (CellZ > MaxCellZ)
+					MaxCellZ = CellZ;
+
+				// UE_LOG(LogTemp, Log, TEXT("FSpatialHashTable::QueryTrajectoryIdsInRadius: cell %d,%d,%d for point (%f,%f,%f)"), CellX, CellY, CellZ, WorldPos.X, WorldPos.Y, WorldPos.Z);
+				*/
+
+
 				// Calculate Z-Order key for this cell
 				uint64 Key = CalculateZOrderKey(CellX, CellY, CellZ);
 				
@@ -206,7 +260,14 @@ int32 FSpatialHashTable::QueryTrajectoryIdsInRadius(const FVector& WorldPos, flo
 			}
 		}
 	}
-	
+
+	/*
+	int32 CellExtentX = MaxCellX - MinCellX;
+	int32 CellExtentY = MaxCellY - MinCellY;
+	int32 CellExtentZ = MaxCellZ - MinCellZ;
+	UE_LOG(LogTemp, Log, TEXT("FSpatialHashTable::QueryTrajectoryIdsInRadius: min cell %d, %d, %d and max cell %d, %d, %d covering %d, %d, %d for point (%f,%f,%f)"), MinCellX, MinCellY, MinCellZ, MaxCellX, MaxCellY, MaxCellZ, CellExtentX, CellExtentY, CellExtentZ,  WorldPos.X, WorldPos.Y, WorldPos.Z);
+	*/
+
 	// Sort then remove consecutive duplicates — O(n log n) instead of O(n) hash insertions
 	AllTrajectoryIds.Sort();
 	// AllTrajectoryIds.SetNum(Algo::Unique(AllTrajectoryIds));
