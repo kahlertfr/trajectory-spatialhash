@@ -112,6 +112,16 @@ void USpatialHashTableManager::SetPeriodicVolume(bool bInIsPeriodic, FVector InE
 		InExtent.X, InExtent.Y, InExtent.Z);
 }
 
+TArray<FVector> USpatialHashTableManager::GetUnwrappedPositions(const TArray<FVector>& RawPositions, float CellSize) const
+{
+	const FVector Extent = ResolvePeriodicExtent(CellSize);
+	if (Extent.IsNearlyZero())
+	{
+		return RawPositions;
+	}
+	return UnwrapPeriodicTrajectory(RawPositions, Extent);
+}
+
 FVector USpatialHashTableManager::ResolvePeriodicExtent(float CellSize) const
 {
 	if (!PeriodicVolume.bIsPeriodic)

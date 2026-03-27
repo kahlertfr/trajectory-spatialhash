@@ -588,6 +588,22 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Spatial Hash")
 	FPeriodicVolume GetPeriodicVolume() const { return PeriodicVolume; }
 
+	/**
+	 * Unwrap a trajectory so that consecutive positions are continuous across
+	 * periodic boundaries.  Returns the input array unchanged when the periodic
+	 * volume is not enabled or the extent cannot be resolved.
+	 *
+	 * This mirrors the unwrapping applied internally to query trajectories in
+	 * QueryPositionsBatchedAsync so that caller-held query-point arrays stay
+	 * in sync with the corrected result positions.
+	 *
+	 * @param RawPositions  Input positions (may contain periodic jumps).
+	 * @param CellSize      Cell size used to look up the reference hash table
+	 *                      when the extent is not set explicitly.
+	 * @return Unwrapped positions (same length as RawPositions).
+	 */
+	TArray<FVector> GetUnwrappedPositions(const TArray<FVector>& RawPositions, float CellSize) const;
+
 protected:
 	/** Tolerance for floating-point comparison of cell sizes */
 	static constexpr float CellSizeEpsilon = 0.001f;

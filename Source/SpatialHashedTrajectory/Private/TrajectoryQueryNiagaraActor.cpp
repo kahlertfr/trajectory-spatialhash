@@ -117,8 +117,11 @@ bool ATrajectoryQueryNiagaraActor::FireAsyncQueriesWithCallback(
 	// ── Reset cached state so progressive updates start clean ─────────────────
 	// CachedQueryPoints is set to the full query trajectory up-front so that
 	// Niagara receives the correct query-point transforms from the very first
-	// progressive update.
-	CachedQueryPoints              = QueryPositions;
+	// progressive update.  When periodic, use the unwrapped positions so that
+	// they match the corrected result sample positions.
+	CachedQueryPoints = PeriodicVolume.bIsPeriodic
+		? Manager->GetUnwrappedPositions(QueryPositions, CellSize)
+		: QueryPositions;
 	CachedResults.Empty();
 	CachedResultsIndex.Empty();
 	CachedQueryPositionIndices.Empty();
