@@ -2236,7 +2236,7 @@ void USpatialHashTableManager::QueryPositionsBatchedAsync(
 		UE_LOG(LogTemp, Warning, TEXT("USpatialHashTableManager::QueryPositionsBatchedAsync: QueryPositions is empty or mismatched with QueryTimeSteps"));
 		AsyncTask(ENamedThreads::GameThread, [BatchCallback]()
 		{
-			BatchCallback.ExecuteIfBound(TArray<FSpatialHashQueryResult>(), true);
+			BatchCallback.ExecuteIfBound(TArray<FSpatialHashQueryResult>(), true, 0, 0);
 		});
 		return;
 	}
@@ -2255,7 +2255,7 @@ void USpatialHashTableManager::QueryPositionsBatchedAsync(
 		UE_LOG(LogTemp, Error, TEXT("USpatialHashTableManager::QueryPositionsBatchedAsync: Failed to get TrajectoryDataLoader"));
 		AsyncTask(ENamedThreads::GameThread, [BatchCallback]()
 		{
-			BatchCallback.ExecuteIfBound(TArray<FSpatialHashQueryResult>(), true);
+			BatchCallback.ExecuteIfBound(TArray<FSpatialHashQueryResult>(), true, 0, 0);
 		});
 		return;
 	}
@@ -2275,7 +2275,7 @@ void USpatialHashTableManager::QueryPositionsBatchedAsync(
 		UE_LOG(LogTemp, Warning, TEXT("USpatialHashTableManager::QueryPositionsBatchedAsync: No shard files found in %s"), *DatasetDirectory);
 		AsyncTask(ENamedThreads::GameThread, [BatchCallback]()
 		{
-			BatchCallback.ExecuteIfBound(TArray<FSpatialHashQueryResult>(), true);
+			BatchCallback.ExecuteIfBound(TArray<FSpatialHashQueryResult>(), true, 0, 0);
 		});
 		return;
 	}
@@ -2287,6 +2287,10 @@ void USpatialHashTableManager::QueryPositionsBatchedAsync(
 	{
 		ShardStartTimes.Add(ParseTimestepFromFilename(ShardFile));
 	}
+
+	UE_LOG(LogTemp, Log,
+		TEXT("QueryPositionsBatchedAsync: Checking %d query samples for nearest neighbours."),
+		QueryPositions.Num());
 
 	// ── Dispatch the full pipeline to a worker thread ─────────────────────────
 	Async(EAsyncExecution::ThreadPool,
@@ -2305,11 +2309,15 @@ void USpatialHashTableManager::QueryPositionsBatchedAsync(
 		// candidateId → { earliest timestep, latest timestep }
 		TMap<int64, TPair<int32, int32>> AllCandidates;
 
+		// Count the query samples whose hash table was null (unhandled).
+		FThreadSafeCounter UnhandledSampleCount(0);
+
 		ParallelFor(QueryPositions.Num(), [&](int32 i)
 		{
 			FSpatialHashTable* HashTable = HashTables[i];
 			if (!HashTable)
 			{
+				UnhandledSampleCount.Increment();
 				return;
 			}
 
@@ -2342,13 +2350,28 @@ void USpatialHashTableManager::QueryPositionsBatchedAsync(
 			}
 		});
 
-		UE_LOG(LogTemp, Log, TEXT("QueryPositionsBatchedAsync: Phase 1 complete – %d candidate trajectories found"), AllCandidates.Num());
+		const int32 TotalQuerySamples   = QueryPositions.Num();
+		const int32 UnhandledSamples    = UnhandledSampleCount.GetValue();
+		const int32 HandledQuerySamples = TotalQuerySamples - UnhandledSamples;
+		const int32 TotalCandidates     = AllCandidates.Num();
+
+		UE_LOG(LogTemp, Log,
+			TEXT("QueryPositionsBatchedAsync: Phase 1 complete – %d/%d query samples handled, %d candidate trajectories found."),
+			HandledQuerySamples, TotalQuerySamples, TotalCandidates);
+
+		if (UnhandledSamples > 0)
+		{
+			UE_LOG(LogTemp, Warning,
+				TEXT("QueryPositionsBatchedAsync: %d query sample(s) had no loaded hash table and were skipped. "
+				     "Check that the loaded time range covers all query timesteps."),
+				UnhandledSamples);
+		}
 
 		if (AllCandidates.IsEmpty())
 		{
-			AsyncTask(ENamedThreads::GameThread, [BatchCallback]()
+			AsyncTask(ENamedThreads::GameThread, [BatchCallback, TotalCandidates, HandledQuerySamples]()
 			{
-				BatchCallback.ExecuteIfBound(TArray<FSpatialHashQueryResult>(), true);
+				BatchCallback.ExecuteIfBound(TArray<FSpatialHashQueryResult>(), true, TotalCandidates, HandledQuerySamples);
 			});
 			return;
 		}
@@ -2385,12 +2408,16 @@ void USpatialHashTableManager::QueryPositionsBatchedAsync(
 		UE_LOG(LogTemp, Log, TEXT("QueryPositionsBatchedAsync: Processing %d candidates in %d batch(es) of up to %d"),
 			NumCandidates, NumBatches, EffectiveBatchSize);
 
+		int32 TotalCandidatesProcessed = 0;
+
 		for (int32 BatchIdx = 0; BatchIdx < NumBatches; ++BatchIdx)
 		{
 			const int32 BatchStart  = BatchIdx * EffectiveBatchSize;
 			const int32 BatchEnd    = FMath::Min(BatchStart + EffectiveBatchSize, NumCandidates);
 			const int32 BatchCount  = BatchEnd - BatchStart;
 			const bool  bFinalBatch = (BatchIdx == NumBatches - 1);
+
+			TotalCandidatesProcessed += BatchCount;
 
 			// Determine the time range spanned by candidates in this batch.
 			int32 BatchMinTime = INT32_MAX;
@@ -2575,10 +2602,24 @@ void USpatialHashTableManager::QueryPositionsBatchedAsync(
 
 			// ── Deliver batch results to the game thread ──────────────────────
 			AsyncTask(ENamedThreads::GameThread,
-				[BatchCallback, MovedResults = MoveTemp(BatchResults), bFinalBatch]()
+				[BatchCallback, MovedResults = MoveTemp(BatchResults), bFinalBatch, TotalCandidates, HandledQuerySamples]()
 				{
-					BatchCallback.ExecuteIfBound(MovedResults, bFinalBatch);
+					BatchCallback.ExecuteIfBound(MovedResults, bFinalBatch, TotalCandidates, HandledQuerySamples);
 				});
+		}
+
+		// ── Verify all candidates were processed ──────────────────────────────
+		if (TotalCandidatesProcessed != NumCandidates)
+		{
+			UE_LOG(LogTemp, Error,
+				TEXT("QueryPositionsBatchedAsync: Phase 2 mismatch – processed %d candidates but expected %d."),
+				TotalCandidatesProcessed, NumCandidates);
+		}
+		else
+		{
+			UE_LOG(LogTemp, Log,
+				TEXT("QueryPositionsBatchedAsync: Phase 2 complete – all %d candidate trajectories were processed."),
+				NumCandidates);
 		}
 	});
 }

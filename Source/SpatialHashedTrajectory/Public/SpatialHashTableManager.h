@@ -14,12 +14,16 @@ DECLARE_DELEGATE_TwoParams(FOnSpatialHashDualQueryComplete, const TArray<FSpatia
 
 /**
  * Delegate called on the game thread with a batch of trajectory query results.
- * @param Results     Trajectories found in this batch.
- * @param bFinalBatch True when this is the last (or only) batch.
+ * @param Results                  Trajectories found in this batch.
+ * @param bFinalBatch              True when this is the last (or only) batch.
+ * @param TotalCandidatesPhase1    Total candidate trajectories collected during Phase 1 (nearest-neighbour lookup). Constant across all batch invocations.
+ * @param HandledQuerySamples      Number of query samples that had a loaded hash table and were actually queried. Constant across all batch invocations.
  */
-DECLARE_DELEGATE_TwoParams(FOnSpatialHashBatchResult,
+DECLARE_DELEGATE_FourParams(FOnSpatialHashBatchResult,
 	const TArray<FSpatialHashQueryResult>& /*Results*/,
-	bool /*bFinalBatch*/);
+	bool /*bFinalBatch*/,
+	int32 /*TotalCandidatesPhase1*/,
+	int32 /*HandledQuerySamples*/);
 
 /**
  * Result structure for nearest neighbor queries
