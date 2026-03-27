@@ -103,6 +103,10 @@ bool ATrajectoryQueryNiagaraActor::FireAsyncQueriesWithCallback(
 		return false;
 	}
 
+	// Apply the periodic volume setting from this actor to the manager so
+	// that all subsequent queries use the correct boundary conditions.
+	Manager->SetPeriodicVolume(PeriodicVolume.bIsPeriodic, PeriodicVolume.Extent);
+
 	if (QueryPositions.IsEmpty())
 	{
 		UE_LOG(LogTemp, Warning, TEXT("ATrajectoryQueryNiagaraActor: QueryPositions array is empty – nothing to query."));

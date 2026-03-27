@@ -560,6 +560,34 @@ public:
 		int64 ExcludeTrajectoryId,
 		FOnSpatialHashBatchResult BatchCallback);
 
+	/**
+	 * Configure periodic boundary conditions for all subsequent queries.
+	 *
+	 * Call this once after loading hash tables if the dataset represents a
+	 * periodic simulation box.  All query methods will then automatically:
+	 *   - check cells on the opposite side of the boundary during candidate
+	 *     lookup;
+	 *   - compute distances using the minimum-image convention;
+	 *   - correct reported sample positions so that neighbour trajectories
+	 *     appear next to the (unwrapped) query position rather than on the
+	 *     far side of the box.
+	 *
+	 * @param bInIsPeriodic  True to enable periodic boundary handling.
+	 * @param InExtent       Size of the periodic box in world units (X, Y, Z).
+	 *                       A zero component disables periodicity for that axis.
+	 *                       Pass FVector::ZeroVector to infer the extent from
+	 *                       the bounding box of the loaded hash tables.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Spatial Hash")
+	void SetPeriodicVolume(bool bInIsPeriodic, FVector InExtent);
+
+	/**
+	 * Get the current periodic volume configuration.
+	 * @return Copy of the FPeriodicVolume struct stored on this manager.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Spatial Hash")
+	FPeriodicVolume GetPeriodicVolume() const { return PeriodicVolume; }
+
 protected:
 	/** Tolerance for floating-point comparison of cell sizes */
 	static constexpr float CellSizeEpsilon = 0.001f;
@@ -600,34 +628,6 @@ protected:
 
 	/** Periodic volume configuration used for all subsequent queries */
 	FPeriodicVolume PeriodicVolume;
-
-	/**
-	 * Configure periodic boundary conditions for all subsequent queries.
-	 *
-	 * Call this once after loading hash tables if the dataset represents a
-	 * periodic simulation box.  All query methods will then automatically:
-	 *   - check cells on the opposite side of the boundary during candidate
-	 *     lookup;
-	 *   - compute distances using the minimum-image convention;
-	 *   - correct reported sample positions so that neighbour trajectories
-	 *     appear next to the (unwrapped) query position rather than on the
-	 *     far side of the box.
-	 *
-	 * @param bInIsPeriodic  True to enable periodic boundary handling.
-	 * @param InExtent       Size of the periodic box in world units (X, Y, Z).
-	 *                       A zero component disables periodicity for that axis.
-	 *                       Pass FVector::ZeroVector to infer the extent from
-	 *                       the bounding box of the loaded hash tables.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "Spatial Hash")
-	void SetPeriodicVolume(bool bInIsPeriodic, FVector InExtent = FVector::ZeroVector);
-
-	/**
-	 * Get the current periodic volume configuration.
-	 * @return Copy of the FPeriodicVolume struct stored on this manager.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "Spatial Hash")
-	FPeriodicVolume GetPeriodicVolume() const { return PeriodicVolume; }
 
 	/**
 	 * Get a loaded hash table for a specific cell size and time step
