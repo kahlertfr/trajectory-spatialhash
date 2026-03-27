@@ -189,6 +189,15 @@ int32 FSpatialHashTable::QueryTrajectoryIdsInRadius(const FVector& WorldPos, flo
 	
 	// Collect all candidate trajectory IDs into a flat array; dedup in one pass after
 	TArray<int64> AllTrajectoryIds;
+
+	/*
+	int32 MinCellX = NumCellsX + 1;
+	int32 MinCellY = NumCellsY + 1;
+	int32 MinCellZ = NumCellsZ + 1;
+	int32 MaxCellX = 0;
+	int32 MaxCellY = 0;
+	int32 MaxCellZ = 0;
+	*/
 	
 	// Iterate over all cells within the bounding box
 	for (int32 dx = -CellRadius; dx <= CellRadius; ++dx)
@@ -215,7 +224,25 @@ int32 FSpatialHashTable::QueryTrajectoryIdsInRadius(const FVector& WorldPos, flo
 					if (CellX < 0 || CellY < 0 || CellZ < 0)
 						continue;
 				}
-				
+
+				/*
+				if (CellX < MinCellX)
+					MinCellX = CellX;
+				if (CellY < MinCellY)
+					MinCellY = CellY;
+				if (CellZ < MinCellZ)
+					MinCellZ = CellZ;
+				if (CellX > MaxCellX)
+					MaxCellX = CellX;
+				if (CellY > MaxCellY)
+					MaxCellY = CellY;
+				if (CellZ > MaxCellZ)
+					MaxCellZ = CellZ;
+
+				// UE_LOG(LogTemp, Log, TEXT("FSpatialHashTable::QueryTrajectoryIdsInRadius: cell %d,%d,%d for point (%f,%f,%f)"), CellX, CellY, CellZ, WorldPos.X, WorldPos.Y, WorldPos.Z);
+				*/
+
+
 				// Calculate Z-Order key for this cell
 				uint64 Key = CalculateZOrderKey(CellX, CellY, CellZ);
 				
@@ -233,7 +260,14 @@ int32 FSpatialHashTable::QueryTrajectoryIdsInRadius(const FVector& WorldPos, flo
 			}
 		}
 	}
-	
+
+	/*
+	int32 CellExtentX = MaxCellX - MinCellX;
+	int32 CellExtentY = MaxCellY - MinCellY;
+	int32 CellExtentZ = MaxCellZ - MinCellZ;
+	UE_LOG(LogTemp, Log, TEXT("FSpatialHashTable::QueryTrajectoryIdsInRadius: min cell %d, %d, %d and max cell %d, %d, %d covering %d, %d, %d for point (%f,%f,%f)"), MinCellX, MinCellY, MinCellZ, MaxCellX, MaxCellY, MaxCellZ, CellExtentX, CellExtentY, CellExtentZ,  WorldPos.X, WorldPos.Y, WorldPos.Z);
+	*/
+
 	// Sort then remove consecutive duplicates — O(n log n) instead of O(n) hash insertions
 	AllTrajectoryIds.Sort();
 	// AllTrajectoryIds.SetNum(Algo::Unique(AllTrajectoryIds));
