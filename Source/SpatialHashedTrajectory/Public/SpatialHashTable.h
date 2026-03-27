@@ -199,12 +199,14 @@ public:
 	 * This gathers all possible trajectory IDs from cells that overlap with the query radius.
 	 * Does NOT perform actual distance calculations - returns all trajectories in overlapping cells.
 	 * 
-	 * @param WorldPos Center of the query sphere
+	 * @param WorldPos Center of the query sphere (may be outside bounding box for periodic volumes)
 	 * @param Radius Search radius in world units
 	 * @param OutTrajectoryIds Output array of unique trajectory IDs
+	 * @param bPeriodic If true, wrap cell coordinates at boundaries so cells on the opposite side
+	 *                  of the periodic volume are also checked
 	 * @return Number of trajectories found
 	 */
-	int32 QueryTrajectoryIdsInRadius(const FVector& WorldPos, float Radius, TArray<int64>& OutTrajectoryIds) const;
+	int32 QueryTrajectoryIdsInRadius(const FVector& WorldPos, float Radius, TArray<int64>& OutTrajectoryIds, bool bPeriodic = false) const;
 
 	/**
 	 * Save hash table to binary file

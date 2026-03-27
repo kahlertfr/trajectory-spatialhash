@@ -117,6 +117,56 @@ struct FSpatialHashQueryResult
 };
 
 /**
+ * Periodic volume configuration for trajectory queries.
+ *
+ * When a dataset lives inside a periodic simulation box, particles that leave
+ * through one face re-enter through the opposite face.  Setting bIsPeriodic to
+ * true enables:
+ *   1. Candidate lookup: cells on the opposite side of the volume are also
+ *      checked during nearest-neighbour queries so that trajectories near the
+ *      boundary are never missed.
+ *   2. Minimum-image distance: the closest periodic image of each sample point
+ *      is used when checking whether the point falls within the query radius.
+ *   3. Position correction: sample positions returned in query results are
+ *      shifted to the image that is closest to the (unwrapped) query position,
+ *      ensuring that neighbour trajectories follow the query trajectory
+ *      continuously without jumping across the box.
+ */
+USTRUCT(BlueprintType)
+struct FPeriodicVolume
+{
+	GENERATED_BODY()
+
+	/** Whether the dataset occupies a periodic volume */
+	UPROPERTY(BlueprintReadWrite, Category = "Spatial Hash")
+	bool bIsPeriodic;
+
+	/**
+	 * Size of the periodic box in each spatial dimension (world units).
+	 * Interpretation when bIsPeriodic is true:
+	 *   - Non-zero vector: use these values as the periodic box size per axis.
+	 *     A zero component for a single axis disables periodicity on that axis.
+	 *   - Zero vector (default): the extent is inferred automatically from the
+	 *     bounding box stored inside the loaded hash tables.
+	 * This field is ignored when bIsPeriodic is false.
+	 */
+	UPROPERTY(BlueprintReadWrite, Category = "Spatial Hash")
+	FVector Extent;
+
+	FPeriodicVolume()
+		: bIsPeriodic(false)
+		, Extent(FVector::ZeroVector)
+	{
+	}
+
+	FPeriodicVolume(bool bInIsPeriodic, const FVector& InExtent)
+		: bIsPeriodic(bInIsPeriodic)
+		, Extent(InExtent)
+	{
+	}
+};
+
+/**
  * Spatial Hash Table Manager
  * 
  * Blueprint-accessible manager for loading, creating, and querying spatial hash tables.
@@ -548,6 +598,37 @@ protected:
 	/** Critical section for protecting creation flag */
 	FCriticalSection CreationMutex;
 
+	/** Periodic volume configuration used for all subsequent queries */
+	FPeriodicVolume PeriodicVolume;
+
+	/**
+	 * Configure periodic boundary conditions for all subsequent queries.
+	 *
+	 * Call this once after loading hash tables if the dataset represents a
+	 * periodic simulation box.  All query methods will then automatically:
+	 *   - check cells on the opposite side of the boundary during candidate
+	 *     lookup;
+	 *   - compute distances using the minimum-image convention;
+	 *   - correct reported sample positions so that neighbour trajectories
+	 *     appear next to the (unwrapped) query position rather than on the
+	 *     far side of the box.
+	 *
+	 * @param bInIsPeriodic  True to enable periodic boundary handling.
+	 * @param InExtent       Size of the periodic box in world units (X, Y, Z).
+	 *                       A zero component disables periodicity for that axis.
+	 *                       Pass FVector::ZeroVector to infer the extent from
+	 *                       the bounding box of the loaded hash tables.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Spatial Hash")
+	void SetPeriodicVolume(bool bInIsPeriodic, FVector InExtent = FVector::ZeroVector);
+
+	/**
+	 * Get the current periodic volume configuration.
+	 * @return Copy of the FPeriodicVolume struct stored on this manager.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Spatial Hash")
+	FPeriodicVolume GetPeriodicVolume() const { return PeriodicVolume; }
+
 	/**
 	 * Get a loaded hash table for a specific cell size and time step
 	 * 
@@ -736,4 +817,19 @@ protected:
 	 * @return Raw pointer to hash table, or nullptr if not found
 	 */
 	FSpatialHashTable* GetOrLoadHashTable(const FString& DatasetDirectory, float CellSize, int32 TimeStep) const;
+
+	/**
+	 * Resolve the effective periodic box extent for queries.
+	 *
+	 * Returns PeriodicVolume.Extent if explicitly set (non-zero).  Otherwise
+	 * falls back to the bounding-box size of the first available hash table for
+	 * the given cell size (any loaded time step is used).
+	 *
+	 * Returns FVector::ZeroVector when PeriodicVolume.bIsPeriodic is false or
+	 * when no extent can be determined.
+	 *
+	 * @param CellSize Cell size used to look up a reference hash table.
+	 * @return Resolved extent, or ZeroVector if not periodic / undetermined.
+	 */
+	FVector ResolvePeriodicExtent(float CellSize) const;
 };
