@@ -410,6 +410,9 @@ void ATrajectoryQueryNiagaraActor::TransferResultsToNiagara(
 	// ResultPoints: all sample positions concatenated in trajectory order
 	TArray<FVector> ResultPoints;
 
+	// ResultDistances: distance from the query point for each sample (parallel to ResultPoints)
+	TArray<float> ResultDistances;
+
 	// Per-trajectory metadata arrays (one entry per result trajectory)
 	TArray<int32> ResultTrajectoryIds;
 	TArray<int32> ResultTrajStartIndex;
@@ -428,6 +431,7 @@ void ATrajectoryQueryNiagaraActor::TransferResultsToNiagara(
 		for (const FTrajectorySamplePoint& Sample : Result.SamplePoints)
 		{
 			ResultPoints.Add(Sample.Position);
+			ResultDistances.Add(Sample.Distance);
 		}
 	}
 
@@ -487,6 +491,10 @@ void ATrajectoryQueryNiagaraActor::TransferResultsToNiagara(
 
 	UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayVector(
 		NiagaraComponent, FName("ResultPoints"), ResultPoints);
+
+	// Float array: per-sample distance from the query point (parallel to ResultPoints)
+	UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayFloat(
+		NiagaraComponent, FName("ResultDistances"), ResultDistances);
 
 	// Query-relative transform arrays
 	UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayVector(

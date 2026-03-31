@@ -30,6 +30,7 @@ enum class ETrajectoryColorEncoding : uint8
  * The following Niagara user parameters are populated when data is transferred:
  * - PositionArray  QueryPoints          – query sample positions (length = number of query points)
  * - PositionArray  ResultPoints         – result sample positions ordered by trajectory (length = all result samples)
+ * - FloatArray     ResultDistances      – per-sample distance from the query point (parallel to ResultPoints)
  * - PositionArray  QueryTranslations    – per query point: translation from that point to the first query point (QueryPoints[0] - QueryPoints[i])
  * - QuatArray      QueryRotations       – per query point: rotation that aligns its forward vector to the first query point's forward vector
  * - Int Array      ResultTrajectoryIds  – original trajectory ID per result trajectory
