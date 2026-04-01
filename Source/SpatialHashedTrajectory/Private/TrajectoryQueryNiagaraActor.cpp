@@ -15,6 +15,9 @@ ATrajectoryQueryNiagaraActor::ATrajectoryQueryNiagaraActor()
 	NiagaraSystem = nullptr;
 	ResultBoundsMin = FVector::ZeroVector;
 	ResultBoundsMax = FVector::ZeroVector;
+	VisualizationTimeStart = QueryTimeStart;
+	VisualizationTimeEnd   = QueryTimeEnd;
+	ColorEncoding = ETrajectoryColorEncoding::Timestep;
 }
 
 void ATrajectoryQueryNiagaraActor::BeginPlay()
@@ -91,6 +94,44 @@ void ATrajectoryQueryNiagaraActor::RunQueryAndUpdateNiagara()
 		FSimpleDelegate::CreateUObject(this, &ATrajectoryQueryNiagaraActor::TransferDataToNiagara));
 }
 
+void ATrajectoryQueryNiagaraActor::SetVisualizationTimeRange(int32 NewTimeStart, int32 NewTimeEnd)
+{
+	VisualizationTimeStart = NewTimeStart;
+	VisualizationTimeEnd   = NewTimeEnd;
+
+	if (!NiagaraComponent)
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("ATrajectoryQueryNiagaraActor: SetVisualizationTimeRange called before a Niagara component is available."));
+		return;
+	}
+
+	NiagaraComponent->SetVariableInt(FName("VisTimeStart"), VisualizationTimeStart);
+	NiagaraComponent->SetVariableInt(FName("VisTimeEnd"),   VisualizationTimeEnd);
+
+	UE_LOG(LogTemp, Log,
+		TEXT("ATrajectoryQueryNiagaraActor: Visualization time range updated to [%d, %d]."),
+		VisualizationTimeStart, VisualizationTimeEnd);
+}
+
+void ATrajectoryQueryNiagaraActor::SetColorEncoding(ETrajectoryColorEncoding NewColorEncoding)
+{
+	ColorEncoding = NewColorEncoding;
+
+	if (!NiagaraComponent)
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("ATrajectoryQueryNiagaraActor: SetColorEncoding called before a Niagara component is available."));
+		return;
+	}
+
+	NiagaraComponent->SetVariableInt(FName("ColorEncoding"), static_cast<int32>(ColorEncoding));
+
+	UE_LOG(LogTemp, Log,
+		TEXT("ATrajectoryQueryNiagaraActor: Color encoding updated to %d."),
+		static_cast<int32>(ColorEncoding));
+}
+
 // ─── Core async pipeline ──────────────────────────────────────────────────────
 
 bool ATrajectoryQueryNiagaraActor::FireAsyncQueriesWithCallback(
@@ -128,6 +169,11 @@ bool ATrajectoryQueryNiagaraActor::FireAsyncQueriesWithCallback(
 	bBoundsValid    = false;
 	ResultBoundsMin = FVector::ZeroVector;
 	ResultBoundsMax = FVector::ZeroVector;
+
+	// Note: VisualizationTimeStart, VisualizationTimeEnd and ColorEncoding are
+	// intentionally NOT reset here.  They represent independent user-facing
+	// controls that persist across queries, allowing the shader to keep the
+	// currently selected view while new data arrives.
 
 	const int32 NumPositions  = QueryPositions.Num();
 	const int32 TimeRangeSize = QueryTimeEnd - QueryTimeStart + 1;
@@ -364,6 +410,9 @@ void ATrajectoryQueryNiagaraActor::TransferResultsToNiagara(
 	// ResultPoints: all sample positions concatenated in trajectory order
 	TArray<FVector> ResultPoints;
 
+	// ResultDistances: distance from the query point for each sample (parallel to ResultPoints)
+	TArray<float> ResultDistances;
+
 	// Per-trajectory metadata arrays (one entry per result trajectory)
 	TArray<int32> ResultTrajectoryIds;
 	TArray<int32> ResultTrajStartIndex;
@@ -382,6 +431,7 @@ void ATrajectoryQueryNiagaraActor::TransferResultsToNiagara(
 		for (const FTrajectorySamplePoint& Sample : Result.SamplePoints)
 		{
 			ResultPoints.Add(Sample.Position);
+			ResultDistances.Add(Sample.Distance);
 		}
 	}
 
@@ -442,6 +492,10 @@ void ATrajectoryQueryNiagaraActor::TransferResultsToNiagara(
 	UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayVector(
 		NiagaraComponent, FName("ResultPoints"), ResultPoints);
 
+	// Float array: per-sample distance from the query point (parallel to ResultPoints)
+	UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayFloat(
+		NiagaraComponent, FName("ResultDistances"), ResultDistances);
+
 	// Query-relative transform arrays
 	UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayVector(
 		NiagaraComponent, FName("QueryTranslations"), QueryTranslations);
@@ -464,6 +518,13 @@ void ATrajectoryQueryNiagaraActor::TransferResultsToNiagara(
 	NiagaraComponent->SetVariableFloat(FName("OuterQueryRadius"), OuterQueryRadius);
 	NiagaraComponent->SetVariableInt(FName("QueryTimeStart"), QueryTimeStart);
 	NiagaraComponent->SetVariableInt(FName("QueryTimeEnd"), QueryTimeEnd);
+
+	// Visualization range – default to the full query range on initial transfer
+	NiagaraComponent->SetVariableInt(FName("VisTimeStart"), VisualizationTimeStart);
+	NiagaraComponent->SetVariableInt(FName("VisTimeEnd"),   VisualizationTimeEnd);
+
+	// Color encoding (0 = Timestep, 1 = Velocity)
+	NiagaraComponent->SetVariableInt(FName("ColorEncoding"), static_cast<int32>(ColorEncoding));
 
 	// Bounding box – use the stored values computed by StoreQueryResults
 	NiagaraComponent->SetVariableVec3(FName("BoundsMin"), ResultBoundsMin);

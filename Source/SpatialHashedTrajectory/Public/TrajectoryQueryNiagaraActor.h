@@ -11,11 +11,26 @@ class UNiagaraSystem;
 class UNiagaraComponent;
 
 /**
+ * Color encoding mode used by the Niagara shader to colorize trajectory particles.
+ * The integer value is passed to the Niagara user parameter "ColorEncoding".
+ */
+UENUM(BlueprintType)
+enum class ETrajectoryColorEncoding : uint8
+{
+	/** Color mapped from the normalized timestep along the trajectory */
+	Timestep UMETA(DisplayName = "Timestep"),
+
+	/** Color mapped from the particle velocity (speed) */
+	Velocity UMETA(DisplayName = "Velocity"),
+};
+
+/**
  * Actor that runs a spatial hash trajectory query and transfers the results to a Niagara System.
  *
- * The following Niagara user parameters are populated:
+ * The following Niagara user parameters are populated when data is transferred:
  * - PositionArray  QueryPoints          – query sample positions (length = number of query points)
  * - PositionArray  ResultPoints         – result sample positions ordered by trajectory (length = all result samples)
+ * - FloatArray     ResultDistances      – per-sample distance from the query point (parallel to ResultPoints)
  * - PositionArray  QueryTranslations    – per query point: translation from that point to the first query point (QueryPoints[0] - QueryPoints[i])
  * - QuatArray      QueryRotations       – per query point: rotation that aligns its forward vector to the first query point's forward vector
  * - Int Array      ResultTrajectoryIds  – original trajectory ID per result trajectory
@@ -27,6 +42,12 @@ class UNiagaraComponent;
  * - int            QueryTimeEnd
  * - Vector         BoundsMin            – minimum corner of the AABB enclosing all query + result points
  * - Vector         BoundsMax            – maximum corner of the AABB enclosing all query + result points
+ *
+ * The following Niagara user parameters can be updated at runtime without re-transferring data
+ * (via SetVisualizationTimeRange / SetColorEncoding):
+ * - int            VisTimeStart         – first timestep shown by the shader (inclusive)
+ * - int            VisTimeEnd           – last timestep shown by the shader (inclusive)
+ * - int            ColorEncoding        – 0 = Timestep, 1 = Velocity (see ETrajectoryColorEncoding)
  */
 UCLASS(BlueprintType, Blueprintable)
 class SPATIALHASHEDTRAJECTORY_API ATrajectoryQueryNiagaraActor : public AActor
@@ -105,6 +126,35 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Niagara")
 	UNiagaraSystem* NiagaraSystem;
 
+	// ─── Visualization Settings ───────────────────────────────────────────────
+
+	/**
+	 * First timestep shown by the shader (inclusive).
+	 * Initialized to match QueryTimeStart.  Can be changed at runtime via
+	 * SetVisualizationTimeRange without re-querying or re-transferring the
+	 * trajectory data.  The value is preserved across queries so a custom
+	 * range set by the user survives a new RunQuery call.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visualization")
+	int32 VisualizationTimeStart = 0;
+
+	/**
+	 * Last timestep shown by the shader (inclusive).
+	 * Initialized to match QueryTimeEnd.  Can be changed at runtime via
+	 * SetVisualizationTimeRange without re-querying or re-transferring the
+	 * trajectory data.  The value is preserved across queries so a custom
+	 * range set by the user survives a new RunQuery call.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visualization")
+	int32 VisualizationTimeEnd = 100;
+
+	/**
+	 * Color encoding mode used by the Niagara shader.
+	 * Can be changed at runtime via SetColorEncoding without re-transferring data.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visualization")
+	ETrajectoryColorEncoding ColorEncoding = ETrajectoryColorEncoding::Timestep;
+
 	// ─── Blueprint callable entry points ─────────────────────────────────────
 
 	/**
@@ -121,6 +171,32 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Trajectory Visualization")
 	void RunQueryAndUpdateNiagara();
+
+	/**
+	 * Update the visible time range on the active Niagara system without re-transferring
+	 * trajectory data.  Writes the Niagara user parameters "VisTimeStart" and "VisTimeEnd"
+	 * so that the shader can immediately restrict which timesteps are rendered.
+	 *
+	 * Call this any time after the Niagara component has been activated (i.e. after
+	 * TransferDataToNiagara / RunQueryAndUpdateNiagara has completed).
+	 *
+	 * @param NewTimeStart  First timestep to show (inclusive).
+	 * @param NewTimeEnd    Last  timestep to show (inclusive).
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Trajectory Visualization")
+	void SetVisualizationTimeRange(int32 NewTimeStart, int32 NewTimeEnd);
+
+	/**
+	 * Change the color encoding used by the Niagara shader without re-transferring
+	 * trajectory data.  Writes the Niagara user parameter "ColorEncoding" (int) so
+	 * that the shader can immediately switch its coloring scheme.
+	 *
+	 * Call this any time after the Niagara component has been activated.
+	 *
+	 * @param NewColorEncoding  The desired color encoding mode.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Trajectory Visualization")
+	void SetColorEncoding(ETrajectoryColorEncoding NewColorEncoding);
 
 	/**
 	 * High-performance parallel/batched async query dispatch.
