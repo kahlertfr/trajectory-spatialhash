@@ -256,6 +256,203 @@ On Some Event
          └─ Process each trajectory ID
 ```
 
+#### User Selection Manager (Blueprint)
+
+The `UUserSelectionManager` class lets you store a list of user-driven trajectory selections and automatically push updates to any Blueprint that registers interest.  It supports two complementary notification patterns — a **delegate binding** for quick one-off handlers and a formal **listener interface** for objects that need a persistent callback — and a separate **provider interface** so Blueprints can contribute selections rather than just consume them.
+
+---
+
+##### The Selection Data Structure
+
+Each entry in the manager is an `FUserTrajectorySelection` struct with five fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `TrajectoryId` | `int32` | ID of the selected trajectory |
+| `TimeStart` | `int32` | First time step of the selection (inclusive) |
+| `TimeEnd` | `int32` | Last time step of the selection (inclusive) |
+| `InnerRadius` | `float` | Inner query radius for dual-radius lookups |
+| `OuterRadius` | `float` | Outer query radius for dual-radius lookups |
+
+---
+
+##### Step 1 – Create and store the manager
+
+Create exactly one `UserSelectionManager` object, typically in your **Game Mode** or **Game State**, and store it in a variable so every other Blueprint can reach it.
+
+```
+Event BeginPlay
+└─ Create Object of Class: User Selection Manager
+   └─ Assign to "SelectionManager" variable (expose as Blueprint readable)
+```
+
+---
+
+##### Step 2 – Reading and mutating the selection list
+
+Use the manager's access and mutation nodes any time the user picks, changes, or removes a trajectory selection.  Every mutation call automatically notifies all registered listeners.
+
+```
+// Add a new selection
+SelectionManager → Add Selection
+   ├─ Trajectory Id: 42
+   ├─ Time Start: 0
+   ├─ Time End: 500
+   ├─ Inner Radius: 25.0
+   └─ Outer Radius: 50.0
+
+// Replace a selection at a known index (returns false if index is out of range)
+SelectionManager → Update Selection
+   ├─ Index: 0
+   └─ Selection: (new FUserTrajectorySelection values)
+
+// Replace the selection whose TrajectoryId matches (returns false if not found)
+SelectionManager → Update Selection By Trajectory Id
+   ├─ Trajectory Id: 42
+   └─ Selection: (new FUserTrajectorySelection values)
+
+// Remove the selection at an index (returns false if index is out of range)
+SelectionManager → Remove Selection
+   └─ Index: 0
+
+// Wipe the whole list
+SelectionManager → Clear Selections
+
+// Read all current selections at any time (pure, no side effects)
+SelectionManager → Get Selections → TArray<FUserTrajectorySelection>
+
+// Look up a single selection by trajectory ID (pure, no side effects)
+// Returns true + filled OutSelection when found, false when not found
+SelectionManager → Get Selection By Trajectory Id
+   ├─ Trajectory Id: 42
+   ├─ Return value (bool): true if found
+   └─ Out Selection: FUserTrajectorySelection
+```
+
+---
+
+##### Step 3 – Reacting to changes (Listener pattern)
+
+There are two equivalent ways to be notified.  Pick whichever fits your Blueprint's structure.
+
+**Option A – Delegate binding (simplest)**
+
+Bind directly to `OnSelectionsChanged` from any Blueprint.  No interface is required.
+
+```
+Event BeginPlay (inside the Blueprint that wants to react)
+└─ Bind Event to On Selections Changed on SelectionManager
+   └─ Target: SelectionManager
+      └─ Event: [Custom Event] Handle Selections Changed
+
+[Custom Event] Handle Selections Changed
+   └─ Selections: TArray<FUserTrajectorySelection>
+      └─ ForEach Loop
+         └─ Break FUserTrajectorySelection
+            ├─ Trajectory Id  → use in your logic
+            ├─ Time Start     → use in your logic
+            ├─ Time End       → use in your logic
+            ├─ Inner Radius   → use in your logic
+            └─ Outer Radius   → use in your logic
+```
+
+**Option B – Listener interface (persistent, multi-actor)**
+
+Implement the `Trajectory Selection Listener` interface in any Blueprint Actor or Object class.  Override the `On User Selections Changed` event that the interface provides, then register with the manager.
+
+```
+// In your Blueprint class settings → Interfaces → add "Trajectory Selection Listener"
+
+// Override the interface event:
+Event On User Selections Changed (Selections: TArray<FUserTrajectorySelection>)
+   └─ [your update logic here]
+
+// Register once at startup:
+Event BeginPlay
+└─ SelectionManager → Register Listener
+   └─ Listener: Self
+
+// Unregister when the actor is done (optional – stale listeners are cleaned up automatically):
+Event EndPlay
+└─ SelectionManager → Unregister Listener
+   └─ Listener: Self
+```
+
+> **Tip:** You can use both patterns simultaneously.  A UI widget might use the delegate binding while a visualizer actor uses the interface.
+
+---
+
+##### Step 4 – Contributing selections (Provider pattern)
+
+If a Blueprint *produces* selections (e.g. a UI picker, a VR controller, or an analysis actor) instead of just reacting to them, implement the `Trajectory Selection Provider` interface and let the manager aggregate all providers automatically.
+
+```
+// In your Blueprint class settings → Interfaces → add "Trajectory Selection Provider"
+
+// Implement the interface function:
+Function Get Provided Selections → TArray<FUserTrajectorySelection>
+   ├─ Make FUserTrajectorySelection (Trajectory Id: ..., Time Start: ..., ...)
+   └─ Return Array containing all selections this actor currently owns
+
+// Register with the manager at startup:
+Event BeginPlay
+└─ SelectionManager → Register Provider
+   └─ Provider: Self
+
+// Unregister when done:
+Event EndPlay
+└─ SelectionManager → Unregister Provider
+   └─ Provider: Self
+```
+
+Call `RefreshFromProviders` whenever the manager should re-poll every registered provider and merge their results into a fresh selection list.  This fires `OnSelectionsChanged` exactly once after all providers have been queried.
+
+```
+// Trigger a full refresh (e.g. from a "Confirm Selection" button):
+SelectionManager → Refresh From Providers
+```
+
+---
+
+##### Complete example – UI + Visualizer + Provider
+
+This end-to-end example shows a typical setup with three Blueprints:
+
+**BP_GameMode** – owns the manager
+
+```
+Event BeginPlay
+└─ Create Object: User Selection Manager → assign to "SelectionManager"
+```
+
+**BP_UIWidget** (implements `ITrajectorySelectionProvider`) – lets the user pick trajectories
+
+```
+// Interface: ITrajectorySelectionProvider
+Function Get Provided Selections → TArray<FUserTrajectorySelection>
+   └─ Return: [SelectedItems array built from the widget's list view]
+
+Event On Button Confirm Clicked
+├─ GameMode → SelectionManager → Register Provider (Self)   // safe to call repeatedly
+└─ GameMode → SelectionManager → Refresh From Providers     // notifies all listeners
+```
+
+**BP_TrajectoryVisualizer** (implements `ITrajectorySelectionListener`) – reacts to changes
+
+```
+// Interface: ITrajectorySelectionListener
+Event On User Selections Changed (Selections)
+   └─ ForEach Selections
+      └─ Start visualization for each FUserTrajectorySelection
+
+Event BeginPlay
+└─ GameMode → SelectionManager → Register Listener (Self)
+```
+
+When the user clicks **Confirm**, the manager polls `BP_UIWidget::GetProvidedSelections`, stores the result, and calls `BP_TrajectoryVisualizer::OnUserSelectionsChanged` — all with no manual wiring between the two actors.
+
+---
+
 #### Async Queries (Blueprint - Recommended)
 
 **⚠️ IMPORTANT: Use Async Methods to Prevent Game Thread Blocking**
@@ -544,12 +741,16 @@ SpatialHashedTrajectory/
         │   ├── SpatialHashTable.h                     # Hash table data structure
         │   ├── SpatialHashTableBuilder.h              # Hash table builder
         │   ├── SpatialHashTableManager.h              # Blueprint-accessible manager
-        │   └── SpatialHashTableExample.h              # Example usage and validation
+        │   ├── SpatialHashTableExample.h              # Example usage and validation
+        │   ├── UserSelectionManager.h                 # User selection store + FUserTrajectorySelection struct
+        │   ├── TrajectorySelectionListener.h          # ITrajectorySelectionListener Blueprint interface
+        │   └── TrajectorySelectionProvider.h          # ITrajectorySelectionProvider Blueprint interface
         └── Private/
             ├── SpatialHashedTrajectoryModule.cpp      # Module implementation
             ├── SpatialHashTable.cpp                   # Hash table implementation
             ├── SpatialHashTableBuilder.cpp            # Builder implementation
-            └── SpatialHashTableManager.cpp            # Manager implementation
+            ├── SpatialHashTableManager.cpp            # Manager implementation
+            └── UserSelectionManager.cpp               # User selection manager implementation
 ```
 
 ## License
