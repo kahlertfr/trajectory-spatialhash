@@ -288,9 +288,9 @@ Event BeginPlay
 
 ---
 
-##### Step 2 – Mutating the selection list
+##### Step 2 – Reading and mutating the selection list
 
-Use the manager's mutation nodes any time the user picks, changes, or removes a trajectory selection.  Every call automatically notifies all registered listeners.
+Use the manager's access and mutation nodes any time the user picks, changes, or removes a trajectory selection.  Every mutation call automatically notifies all registered listeners.
 
 ```
 // Add a new selection
@@ -306,6 +306,11 @@ SelectionManager → Update Selection
    ├─ Index: 0
    └─ Selection: (new FUserTrajectorySelection values)
 
+// Replace the selection whose TrajectoryId matches (returns false if not found)
+SelectionManager → Update Selection By Trajectory Id
+   ├─ Trajectory Id: 42
+   └─ Selection: (new FUserTrajectorySelection values)
+
 // Remove the selection at an index (returns false if index is out of range)
 SelectionManager → Remove Selection
    └─ Index: 0
@@ -315,6 +320,13 @@ SelectionManager → Clear Selections
 
 // Read all current selections at any time (pure, no side effects)
 SelectionManager → Get Selections → TArray<FUserTrajectorySelection>
+
+// Look up a single selection by trajectory ID (pure, no side effects)
+// Returns true + filled OutSelection when found, false when not found
+SelectionManager → Get Selection By Trajectory Id
+   ├─ Trajectory Id: 42
+   ├─ Return value (bool): true if found
+   └─ Out Selection: FUserTrajectorySelection
 ```
 
 ---

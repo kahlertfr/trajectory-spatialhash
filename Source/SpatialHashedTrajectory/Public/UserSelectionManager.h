@@ -87,6 +87,16 @@ public:
 	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "User Selection")
 	TArray<FUserTrajectorySelection> GetSelections() const;
 
+	/**
+	 * Find the selection whose TrajectoryId matches the supplied value.
+	 *
+	 * @param TrajectoryId  The trajectory identifier to search for.
+	 * @param OutSelection  Receives the matching selection when found.
+	 * @return true if a matching selection was found, false otherwise.
+	 */
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "User Selection")
+	bool GetSelectionByTrajectoryId(int32 TrajectoryId, FUserTrajectorySelection& OutSelection) const;
+
 	// ─── Selection Mutation ───────────────────────────────────────────────────
 
 	/** Append a new selection and notify all listeners. */
@@ -100,6 +110,17 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "User Selection")
 	bool UpdateSelection(int32 Index, FUserTrajectorySelection Selection);
+
+	/**
+	 * Replace the selection whose TrajectoryId matches the supplied value and
+	 * notify all listeners.
+	 *
+	 * @param TrajectoryId  The trajectory identifier to search for.
+	 * @param Selection     The new selection values to store.
+	 * @return true if a matching selection was found and updated, false otherwise.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "User Selection")
+	bool UpdateSelectionByTrajectoryId(int32 TrajectoryId, FUserTrajectorySelection Selection);
 
 	/**
 	 * Remove the selection at Index and notify all listeners.

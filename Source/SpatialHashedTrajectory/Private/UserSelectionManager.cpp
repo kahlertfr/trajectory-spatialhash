@@ -11,6 +11,19 @@ TArray<FUserTrajectorySelection> UUserSelectionManager::GetSelections() const
 	return Selections;
 }
 
+bool UUserSelectionManager::GetSelectionByTrajectoryId(int32 TrajectoryId, FUserTrajectorySelection& OutSelection) const
+{
+	for (const FUserTrajectorySelection& Entry : Selections)
+	{
+		if (Entry.TrajectoryId == TrajectoryId)
+		{
+			OutSelection = Entry;
+			return true;
+		}
+	}
+	return false;
+}
+
 // ─── Selection Mutation ───────────────────────────────────────────────────────
 
 void UUserSelectionManager::AddSelection(FUserTrajectorySelection Selection)
@@ -28,6 +41,20 @@ bool UUserSelectionManager::UpdateSelection(int32 Index, FUserTrajectorySelectio
 	Selections[Index] = MoveTemp(Selection);
 	NotifyListeners();
 	return true;
+}
+
+bool UUserSelectionManager::UpdateSelectionByTrajectoryId(int32 TrajectoryId, FUserTrajectorySelection Selection)
+{
+	for (FUserTrajectorySelection& Entry : Selections)
+	{
+		if (Entry.TrajectoryId == TrajectoryId)
+		{
+			Entry = MoveTemp(Selection);
+			NotifyListeners();
+			return true;
+		}
+	}
+	return false;
 }
 
 bool UUserSelectionManager::RemoveSelection(int32 Index)
