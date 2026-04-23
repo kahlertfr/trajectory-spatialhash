@@ -213,8 +213,17 @@ public:
 	 */
 	bool FireAsyncQueriesWithCallback(FSimpleDelegate OnComplete, FSimpleDelegate OnFailure = FSimpleDelegate());
 
+	/**
+	 * Cancel any in-progress batched query on this actor.
+	 * Safe to call from Blueprint or C++ at any time, including while a
+	 * RunQuery async node is executing.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Trajectory Visualization")
+	void CancelQuery();
+
 protected:
 	virtual void BeginPlay() override;
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
 	/** Niagara component that hosts the effect (read-only from Blueprint subclasses) */
 	UPROPERTY(BlueprintReadOnly, Category = "Niagara")

@@ -40,6 +40,26 @@ void ATrajectoryQueryNiagaraActor::BeginPlay()
 	}
 }
 
+void ATrajectoryQueryNiagaraActor::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	// Cancel any in-progress query so the background worker stops as soon as
+	// possible and does not attempt to access destroyed game-thread objects.
+	if (Manager)
+	{
+		Manager->CancelActiveQuery();
+	}
+
+	Super::EndPlay(EndPlayReason);
+}
+
+void ATrajectoryQueryNiagaraActor::CancelQuery()
+{
+	if (Manager)
+	{
+		Manager->CancelActiveQuery();
+	}
+}
+
 bool ATrajectoryQueryNiagaraActor::InitializeManager()
 {
 	if (DatasetDirectory.IsEmpty())

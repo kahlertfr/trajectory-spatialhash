@@ -561,6 +561,21 @@ public:
 		FOnSpatialHashBatchResult BatchCallback);
 
 	/**
+	 * Cancel any in-progress batched query started by QueryPositionsBatchedAsync.
+	 *
+	 * This is safe to call from any thread.  The background worker checks this
+	 * flag at the start of every Phase-1 iteration and before every Phase-2
+	 * batch, so cancellation takes effect quickly.  The BatchCallback is invoked
+	 * one final time on the game thread with an empty result array and
+	 * bFinalBatch=true so that callers that rely on the final callback to
+	 * signal completion are not left hanging.
+	 *
+	 * Has no effect if no query is currently running.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Spatial Hash")
+	void CancelActiveQuery();
+
+	/**
 	 * Configure periodic boundary conditions for all subsequent queries.
 	 *
 	 * Call this once after loading hash tables if the dataset represents a
@@ -644,6 +659,14 @@ protected:
 
 	/** Periodic volume configuration used for all subsequent queries */
 	FPeriodicVolume PeriodicVolume;
+
+	/**
+	 * Cancellation token shared with the currently-running QueryPositionsBatchedAsync
+	 * background task.  A new TSharedPtr<FThreadSafeBool> is created (reset to false)
+	 * at the start of every QueryPositionsBatchedAsync call.  Calling CancelActiveQuery()
+	 * sets the flag to true so the background thread stops early.
+	 */
+	TSharedPtr<FThreadSafeBool> ActiveCancellationToken;
 
 	/**
 	 * Get a loaded hash table for a specific cell size and time step
