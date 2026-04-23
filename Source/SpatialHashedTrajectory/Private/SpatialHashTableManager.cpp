@@ -2704,7 +2704,7 @@ void USpatialHashTableManager::QueryPositionsBatchedAsync(
 		ParallelFor(QueryPositions.Num(), [&](int32 i)
 		{
 			// Abort this iteration immediately if the query was cancelled.
-			if (CancellationToken->GetValue())
+			if ((bool)(*CancellationToken))
 			{
 				return;
 			}
@@ -2764,7 +2764,7 @@ void USpatialHashTableManager::QueryPositionsBatchedAsync(
 		}
 
 		// ── Check for cancellation after Phase 1 ─────────────────────────────
-		if (CancellationToken->GetValue())
+		if ((bool)(*CancellationToken))
 		{
 			UE_LOG(LogTemp, Log, TEXT("QueryPositionsBatchedAsync: Cancelled after Phase 1."));
 			AsyncTask(ENamedThreads::GameThread, [BatchCallback, TotalCandidates, HandledQuerySamples]()
@@ -2822,7 +2822,7 @@ void USpatialHashTableManager::QueryPositionsBatchedAsync(
 		for (int32 BatchIdx = 0; BatchIdx < NumBatches; ++BatchIdx)
 		{
 			// Check for cancellation before starting each batch.
-			if (CancellationToken->GetValue())
+			if ((bool)(*CancellationToken))
 			{
 				UE_LOG(LogTemp, Log, TEXT("QueryPositionsBatchedAsync: Cancelled before batch %d/%d."),
 					BatchIdx + 1, NumBatches);
@@ -2919,7 +2919,7 @@ void USpatialHashTableManager::QueryPositionsBatchedAsync(
 			ParallelFor(CandidateShardIndices.Num(), [&](int32 RelIdx)
 			{
 				// Skip this shard if the query was cancelled.
-				if (CancellationToken->GetValue())
+				if ((bool)(*CancellationToken))
 				{
 					return;
 				}
@@ -2989,7 +2989,7 @@ void USpatialHashTableManager::QueryPositionsBatchedAsync(
 			ParallelFor(BatchCount, [&](int32 LocalIdx)
 			{
 				// Skip this trajectory if the query was cancelled.
-				if (CancellationToken->GetValue())
+				if ((bool)(*CancellationToken))
 				{
 					return;
 				}
