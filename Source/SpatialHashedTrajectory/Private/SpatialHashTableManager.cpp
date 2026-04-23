@@ -98,7 +98,17 @@ namespace
 } // anonymous namespace
 
 USpatialHashTableManager::USpatialHashTableManager()
+	: ActiveCancellationToken(MakeShared<FThreadSafeBool>(false))
 {
+}
+
+void USpatialHashTableManager::CancelActiveQuery()
+{
+	if (ActiveCancellationToken.IsValid())
+	{
+		ActiveCancellationToken->AtomicSet(true);
+		UE_LOG(LogTemp, Log, TEXT("USpatialHashTableManager::CancelActiveQuery: Cancellation requested."));
+	}
 }
 
 void USpatialHashTableManager::SetPeriodicVolume(bool bInIsPeriodic, FVector InExtent)
@@ -2589,6 +2599,15 @@ void USpatialHashTableManager::QueryPositionsBatchedAsync(
 
 	const int32 EffectiveBatchSize = FMath::Max(1, BatchSize);
 
+	// ── Create a fresh cancellation token for this query ─────────────────────
+	//
+	// Any previous query's token is replaced.  The old background task may still
+	// hold a reference to the previous shared token and will therefore see its own
+	// cancellation flag set to true (if CancelActiveQuery was called) but will
+	// never interfere with this new query's token.
+	ActiveCancellationToken = MakeShared<FThreadSafeBool>(false);
+	TSharedPtr<FThreadSafeBool> CancellationToken = ActiveCancellationToken;
+
 	// ── Gather game-thread resources before dispatching to the thread pool ────
 	//
 	// UTrajectoryDataLoader::Get() and GetOrLoadHashTable() must be called on
@@ -2662,7 +2681,7 @@ void USpatialHashTableManager::QueryPositionsBatchedAsync(
 		[Loader, HashTables, ShardFiles, ShardStartTimes,
 		 QueryPositions, QueryTimeSteps, UnwrappedQueryPositions,
 		 Radius, EffectiveBatchSize, ExcludeTrajectoryId,
-		 PeriodicExtent, bPeriodic, BatchCallback]()
+		 PeriodicExtent, bPeriodic, BatchCallback, CancellationToken]()
 	{
 		// ── PHASE 1: Parallel nearest-neighbour queries ───────────────────────
 		//
@@ -2684,6 +2703,12 @@ void USpatialHashTableManager::QueryPositionsBatchedAsync(
 
 		ParallelFor(QueryPositions.Num(), [&](int32 i)
 		{
+			// Abort this iteration immediately if the query was cancelled.
+			if ((bool)(*CancellationToken))
+			{
+				return;
+			}
+
 			FSpatialHashTable* HashTable = HashTables[i];
 			if (!HashTable)
 			{
@@ -2738,6 +2763,17 @@ void USpatialHashTableManager::QueryPositionsBatchedAsync(
 				UnhandledSamples);
 		}
 
+		// ── Check for cancellation after Phase 1 ─────────────────────────────
+		if ((bool)(*CancellationToken))
+		{
+			UE_LOG(LogTemp, Log, TEXT("QueryPositionsBatchedAsync: Cancelled after Phase 1."));
+			AsyncTask(ENamedThreads::GameThread, [BatchCallback, TotalCandidates, HandledQuerySamples]()
+			{
+				BatchCallback.ExecuteIfBound(TArray<FSpatialHashQueryResult>(), true, TotalCandidates, HandledQuerySamples);
+			});
+			return;
+		}
+
 		if (AllCandidates.IsEmpty())
 		{
 			AsyncTask(ENamedThreads::GameThread, [BatchCallback, TotalCandidates, HandledQuerySamples]()
@@ -2785,6 +2821,18 @@ void USpatialHashTableManager::QueryPositionsBatchedAsync(
 
 		for (int32 BatchIdx = 0; BatchIdx < NumBatches; ++BatchIdx)
 		{
+			// Check for cancellation before starting each batch.
+			if ((bool)(*CancellationToken))
+			{
+				UE_LOG(LogTemp, Log, TEXT("QueryPositionsBatchedAsync: Cancelled before batch %d/%d."),
+					BatchIdx + 1, NumBatches);
+				AsyncTask(ENamedThreads::GameThread, [BatchCallback, TotalCandidates, HandledQuerySamples]()
+				{
+					BatchCallback.ExecuteIfBound(TArray<FSpatialHashQueryResult>(), true, TotalCandidates, HandledQuerySamples);
+				});
+				return;
+			}
+
 			const int32 BatchStart  = BatchIdx * EffectiveBatchSize;
 			const int32 BatchEnd    = FMath::Min(BatchStart + EffectiveBatchSize, NumCandidates);
 			const int32 BatchCount  = BatchEnd - BatchStart;
@@ -2870,6 +2918,12 @@ void USpatialHashTableManager::QueryPositionsBatchedAsync(
 
 			ParallelFor(CandidateShardIndices.Num(), [&](int32 RelIdx)
 			{
+				// Skip this shard if the query was cancelled.
+				if ((bool)(*CancellationToken))
+				{
+					return;
+				}
+
 				const int32   ShardIdx   = CandidateShardIndices[RelIdx];
 				const int32   ShardStart = ShardStartTimes[ShardIdx];
 
@@ -2934,6 +2988,12 @@ void USpatialHashTableManager::QueryPositionsBatchedAsync(
 
 			ParallelFor(BatchCount, [&](int32 LocalIdx)
 			{
+				// Skip this trajectory if the query was cancelled.
+				if ((bool)(*CancellationToken))
+				{
+					return;
+				}
+
 				const FTrajectoryData& TrajData = BatchData[LocalIdx];
 
 				// Note: FSpatialHashQueryResult stores trajectory IDs as int32 (matching the uint32
