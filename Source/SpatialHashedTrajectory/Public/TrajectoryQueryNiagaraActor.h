@@ -226,8 +226,9 @@ protected:
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
 	/** Niagara component that hosts the effect (read-only from Blueprint subclasses) */
-	UPROPERTY(BlueprintReadOnly, Category = "Niagara")
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	UNiagaraComponent* NiagaraComponent;
+
 
 	/** Spatial hash table manager used for queries */
 	UPROPERTY()

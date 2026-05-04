@@ -444,20 +444,6 @@ void ATrajectoryQueryNiagaraActor::TransferResultsToNiagara(
 
 	for (const FSpatialHashQueryResult& Result : Results)
 	{
-		// Sanity check: sample points must be time-ordered (non-decreasing).
-		for (int32 i = 1; i < Result.SamplePoints.Num(); ++i)
-		{
-			if (Result.SamplePoints[i].TimeStep < Result.SamplePoints[i - 1].TimeStep)
-			{
-				UE_LOG(LogTemp, Error,
-					TEXT("Trajectory %lld sample points are NOT time-ordered at i=%d: prev=%d, cur=%d"),
-					Result.TrajectoryId, i,
-					Result.SamplePoints[i - 1].TimeStep,
-					Result.SamplePoints[i].TimeStep);
-				break; // stop after first violation for this trajectory
-			}
-		}
-
 		ResultTrajectoryIds.Add(Result.TrajectoryId);
 		ResultTrajStartIndex.Add(ResultPoints.Num());
 		ResultStartTime.Add(Result.SamplePoints.Num() > 0 ? Result.SamplePoints[0].TimeStep : 0);
@@ -509,7 +495,7 @@ void ATrajectoryQueryNiagaraActor::TransferResultsToNiagara(
 		{
 			const FVector CurForward = GetForwardAt(i);
 			QueryTranslations.Add(QueryPoints[0] - QueryPoints[i]);
-			// if (i >0)
+			//if (i >0)
 			//	UE_LOG(LogTemp, Log,
 			//	TEXT("%d with %f"), i,  QueryTranslations[i].Length() - QueryTranslations[i-1].Length());
 
