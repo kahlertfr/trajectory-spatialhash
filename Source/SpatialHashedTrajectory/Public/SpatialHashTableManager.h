@@ -127,10 +127,9 @@ struct FSpatialHashQueryResult
  *      boundary are never missed.
  *   2. Minimum-image distance: the closest periodic image of each sample point
  *      is used when checking whether the point falls within the query radius.
- *   3. Position correction: sample positions returned in query results are
- *      shifted to the image that is closest to the (unwrapped) query position,
- *      ensuring that neighbour trajectories follow the query trajectory
- *      continuously without jumping across the box.
+ *   3. Original coordinates: sample positions returned in query results keep
+ *      the original simulation coordinates.  The rendering layer is responsible
+ *      for handling the periodic volume and any boundary jumps.
  */
 USTRUCT(BlueprintType)
 struct FPeriodicVolume
@@ -583,9 +582,8 @@ public:
 	 *   - check cells on the opposite side of the boundary during candidate
 	 *     lookup;
 	 *   - compute distances using the minimum-image convention;
-	 *   - correct reported sample positions so that neighbour trajectories
-	 *     appear next to the (unwrapped) query position rather than on the
-	 *     far side of the box.
+	 *   - return sample positions as original simulation coordinates (the
+	 *     rendering layer handles the periodic volume and boundary jumps).
 	 *
 	 * @param bInIsPeriodic  True to enable periodic boundary handling.
 	 * @param InExtent       Size of the periodic box in world units (X, Y, Z).

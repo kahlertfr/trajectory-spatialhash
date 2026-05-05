@@ -1475,24 +1475,24 @@ void USpatialHashTableManager::FilterByDistance(
 		for (const FTrajectorySamplePoint& Sample : SamplePoints)
 		{
 			float DistanceSquared;
-			FVector ReportedPos;
 
 			if (bPeriodic && !Extent.IsNearlyZero())
 			{
-				// Shift the sample to the closest periodic image of QueryPosition.
-				ReportedPos = ApplyMinImageCorrection(Sample.Position, QueryPosition, Extent);
-				DistanceSquared = FVector::DistSquared(QueryPosition, ReportedPos);
+				// Use the minimum-image convention for the radius check so that
+				// samples near a periodic boundary are not missed, but keep the
+				// original simulation coordinates in the result — the rendering
+				// layer handles the periodic volume and any boundary jumps.
+				DistanceSquared = PeriodicDistSq(QueryPosition, Sample.Position, Extent);
 			}
 			else
 			{
-				ReportedPos = Sample.Position;
 				DistanceSquared = FVector::DistSquared(QueryPosition, Sample.Position);
 			}
 			
 			if (DistanceSquared <= RadiusSquared)
 			{
 				FTrajectorySamplePoint FilteredSample = Sample;
-				FilteredSample.Position = ReportedPos;
+				// Position kept as original simulation coordinates.
 				FilteredSample.Distance = FMath::Sqrt(DistanceSquared);
 				Result.SamplePoints.Add(FilteredSample);
 			}
@@ -1533,16 +1533,15 @@ void USpatialHashTableManager::FilterByDualRadius(
 		for (const FTrajectorySamplePoint& Sample : SamplePoints)
 		{
 			float DistanceSquared;
-			FVector ReportedPos;
 
 			if (bPeriodic && !Extent.IsNearlyZero())
 			{
-				ReportedPos = ApplyMinImageCorrection(Sample.Position, QueryPosition, Extent);
-				DistanceSquared = FVector::DistSquared(QueryPosition, ReportedPos);
+				// Use the minimum-image convention for the radius check.
+				// Original simulation coordinates are preserved in the result.
+				DistanceSquared = PeriodicDistSq(QueryPosition, Sample.Position, Extent);
 			}
 			else
 			{
-				ReportedPos = Sample.Position;
 				DistanceSquared = FVector::DistSquared(QueryPosition, Sample.Position);
 			}
 			
@@ -1550,7 +1549,7 @@ void USpatialHashTableManager::FilterByDualRadius(
 			{
 				// Sample is within inner radius - add to both inner and outer results
 				FTrajectorySamplePoint FilteredSample = Sample;
-				FilteredSample.Position = ReportedPos;
+				// Position kept as original simulation coordinates.
 				FilteredSample.Distance = FMath::Sqrt(DistanceSquared);
 				InnerResult.SamplePoints.Add(FilteredSample);
 				OuterResult.SamplePoints.Add(FilteredSample);
@@ -1559,7 +1558,7 @@ void USpatialHashTableManager::FilterByDualRadius(
 			{
 				// Sample is between inner and outer radius - add to outer results only
 				FTrajectorySamplePoint FilteredSample = Sample;
-				FilteredSample.Position = ReportedPos;
+				// Position kept as original simulation coordinates.
 				FilteredSample.Distance = FMath::Sqrt(DistanceSquared);
 				OuterResult.SamplePoints.Add(FilteredSample);
 			}
@@ -1961,11 +1960,8 @@ int32 USpatialHashTableManager::QueryTrajectoryRadiusOverTimeRange(
 				}
 			}
 			
-			// Correct the sample position to follow the (unwrapped) query trajectory.
-			if (bApplyPeriodic && bFoundQueryPos)
-			{
-				Sample.Position = ApplyMinImageCorrection(Sample.Position, BestQueryPos, Extent);
-			}
+			// Original simulation coordinates are kept in Sample.Position.
+			// The minimum-image distance has already been computed above.
 			Sample.Distance = MinDistance;
 		}
 	}
@@ -2052,15 +2048,14 @@ void USpatialHashTableManager::QueryRadiusWithDistanceCheckAsync(
 				}
 				
 				float DistanceSquared;
-				FVector ReportedPos;
 				if (bPeriodic)
 				{
-					ReportedPos = ApplyMinImageCorrection(Sample.Position, QueryPosition, PeriodicExtent);
-					DistanceSquared = FVector::DistSquared(QueryPosition, ReportedPos);
+					// Minimum-image distance for the radius check; original
+					// simulation coordinates are stored in the result.
+					DistanceSquared = PeriodicDistSq(QueryPosition, Sample.Position, PeriodicExtent);
 				}
 				else
 				{
-					ReportedPos = Sample.Position;
 					DistanceSquared = FVector::DistSquared(QueryPosition, Sample.Position);
 				}
 
@@ -2068,7 +2063,7 @@ void USpatialHashTableManager::QueryRadiusWithDistanceCheckAsync(
 				{
 					FSpatialHashQueryResult ResultEntry(static_cast<int32>(Sample.TrajectoryId));
 					FTrajectorySamplePoint SamplePoint;
-					SamplePoint.Position = ReportedPos;
+					SamplePoint.Position = Sample.Position; // Original simulation coordinates.
 					SamplePoint.TimeStep = Sample.TimeStep;
 					SamplePoint.Distance = FMath::Sqrt(DistanceSquared);
 					ResultEntry.SamplePoints.Add(MoveTemp(SamplePoint));
@@ -2160,15 +2155,14 @@ void USpatialHashTableManager::QueryDualRadiusWithDistanceCheckAsync(
 				}
 				
 				float DistanceSq;
-				FVector ReportedPos;
 				if (bPeriodic)
 				{
-					ReportedPos = ApplyMinImageCorrection(Sample.Position, QueryPosition, PeriodicExtent);
-					DistanceSq = FVector::DistSquared(QueryPosition, ReportedPos);
+					// Minimum-image distance for the radius check; original
+					// simulation coordinates are stored in the result.
+					DistanceSq = PeriodicDistSq(QueryPosition, Sample.Position, PeriodicExtent);
 				}
 				else
 				{
-					ReportedPos = Sample.Position;
 					DistanceSq = FVector::DistSquared(QueryPosition, Sample.Position);
 				}
 
@@ -2179,7 +2173,7 @@ void USpatialHashTableManager::QueryDualRadiusWithDistanceCheckAsync(
 				
 				const float Distance = FMath::Sqrt(DistanceSq);
 				FTrajectorySamplePoint SamplePoint;
-				SamplePoint.Position = ReportedPos;
+				SamplePoint.Position = Sample.Position; // Original simulation coordinates.
 				SamplePoint.TimeStep = Sample.TimeStep;
 				SamplePoint.Distance = Distance;
 				
@@ -2286,22 +2280,21 @@ void USpatialHashTableManager::QueryRadiusOverTimeRangeAsync(
 					}
 					
 					float DistanceSq;
-					FVector ReportedPos;
 					if (bPeriodic)
 					{
-						ReportedPos = ApplyMinImageCorrection(Position, QueryPosition, PeriodicExtent);
-						DistanceSq = FVector::DistSquared(QueryPosition, ReportedPos);
+						// Minimum-image distance for the radius check; original
+						// simulation coordinates are stored in the result.
+						DistanceSq = PeriodicDistSq(QueryPosition, Position, PeriodicExtent);
 					}
 					else
 					{
-						ReportedPos = Position;
 						DistanceSq = FVector::DistSquared(QueryPosition, Position);
 					}
 
 					if (DistanceSq <= RadiusSquared)
 					{
 						FTrajectorySamplePoint SamplePoint;
-						SamplePoint.Position = ReportedPos;
+						SamplePoint.Position = Position; // Original simulation coordinates.
 						SamplePoint.TimeStep = Series.StartTimeStep + i;
 						SamplePoint.Distance = FMath::Sqrt(DistanceSq);
 						ResultEntry.SamplePoints.Add(MoveTemp(SamplePoint));
@@ -2501,14 +2494,10 @@ void USpatialHashTableManager::QueryTrajectoryRadiusOverTimeRangeAsync(
 								}
 							}
 							
-							FVector ReportedPos = Position;
-							if (bPeriodic && bFoundQueryPos)
-							{
-								ReportedPos = ApplyMinImageCorrection(Position, BestQueryPos, PeriodicExtent);
-							}
-
+							// Original simulation coordinates are kept in Position.
+							// The minimum-image distance has already been computed above.
 							FTrajectorySamplePoint SamplePoint;
-							SamplePoint.Position = ReportedPos;
+							SamplePoint.Position = Position; // Original simulation coordinates.
 							SamplePoint.TimeStep = SampleTimeStep;
 							SamplePoint.Distance = MinDistance;
 							SamplePoints.Add(MoveTemp(SamplePoint));
@@ -2664,8 +2653,10 @@ void USpatialHashTableManager::QueryPositionsBatchedAsync(
 
 	// When periodic, unwrap the query trajectory so positions are continuous.
 	// The unwrapped positions are used as the reference frame for distance
-	// calculations and output position correction.  The original positions are
+	// calculations (minimum-image convention).  The original positions are
 	// used for Phase 1 hash-table lookups (which are always in box coordinates).
+	// Result sample positions are kept as original simulation coordinates; the
+	// rendering layer handles the periodic volume and boundary jumps.
 	TArray<FVector> UnwrappedQueryPositions;
 	if (bPeriodic)
 	{
@@ -2978,9 +2969,9 @@ void USpatialHashTableManager::QueryPositionsBatchedAsync(
 			// Multiple tasks each process a subset of the loaded batch and build
 			// a partial result list.  Partial lists are merged under ResultMutex.
 			//
-			// When periodic, distances use the minimum-image convention and
-			// sample positions are shifted to the image closest to the (unwrapped)
-			// query position so that neighbour trajectories appear continuous.
+			// When periodic, distances use the minimum-image convention.
+			// Original simulation coordinates are preserved in the result — the
+			// rendering layer handles the periodic volume and boundary jumps.
 
 			TArray<FSpatialHashQueryResult> BatchResults;
 			FCriticalSection               ResultMutex;
@@ -3016,25 +3007,24 @@ void USpatialHashTableManager::QueryPositionsBatchedAsync(
 						continue; // no query position for this timestep
 					}
 
-					float   DistSq;
-					FVector ReportedPos;
+					float DistSq;
 					if (bPeriodic)
 					{
-						// Shift the sample to the closest periodic image of the
-						// unwrapped query position, then compute the distance.
-						ReportedPos = ApplyMinImageCorrection(Pos, *QueryPos, PeriodicExtent);
-						DistSq      = FVector::DistSquared(*QueryPos, ReportedPos);
+						// Use the minimum-image convention for the radius check so that
+						// samples near a periodic boundary are not missed.  Original
+						// simulation coordinates are preserved in the result — the
+						// rendering layer handles the periodic volume and boundary jumps.
+						DistSq = PeriodicDistSq(*QueryPos, Pos, PeriodicExtent);
 					}
 					else
 					{
-						ReportedPos = Pos;
-						DistSq      = FVector::DistSquared(*QueryPos, Pos);
+						DistSq = FVector::DistSquared(*QueryPos, Pos);
 					}
 
 					if (DistSq <= RadiusSq)
 					{
 						FTrajectorySamplePoint Sample;
-						Sample.Position = ReportedPos;
+						Sample.Position = Pos; // Original simulation coordinates.
 						Sample.TimeStep = GlobalTimeStep;
 						Sample.Distance = FMath::Sqrt(DistSq);
 						Result.SamplePoints.Add(Sample);
