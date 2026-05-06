@@ -18,8 +18,13 @@ namespace
 	 * Compute squared distance between two points using the minimum-image
 	 * convention for periodic boundary conditions.
 	 *
-	 * @param A       First point.
-	 * @param B       Second point.
+	 * Uses round-to-nearest to reduce the delta to the range [-Extent/2, +Extent/2]
+	 * on each periodic axis.  This handles an arbitrary number of box crossings,
+	 * which is necessary when the reference point (A) is an unwrapped query position
+	 * that has drifted multiple box-lengths from the original simulation box.
+	 *
+	 * @param A       First point (may be unwrapped, i.e. outside the periodic box).
+	 * @param B       Second point (typically a raw/wrapped sample position).
 	 * @param Extent  Periodic box size per axis.  A zero component means that
 	 *                axis is non-periodic.
 	 * @return        Minimum-image squared distance.
@@ -27,37 +32,41 @@ namespace
 	float PeriodicDistSq(const FVector& A, const FVector& B, const FVector& Extent)
 	{
 		FVector Delta = A - B;
-		if (Extent.X > 0.0f && FMath::Abs(Delta.X) > Extent.X * 0.5f)
-			Delta.X -= FMath::Sign(Delta.X) * Extent.X;
-		if (Extent.Y > 0.0f && FMath::Abs(Delta.Y) > Extent.Y * 0.5f)
-			Delta.Y -= FMath::Sign(Delta.Y) * Extent.Y;
-		if (Extent.Z > 0.0f && FMath::Abs(Delta.Z) > Extent.Z * 0.5f)
-			Delta.Z -= FMath::Sign(Delta.Z) * Extent.Z;
+		// Use round-to-nearest to handle multi-hop crossings:
+		//   delta -= extent * round(delta / extent)
+		// brings delta into [-extent/2, +extent/2] regardless of how many full
+		// box-lengths separate A and B.
+		if (Extent.X > 0.0f)
+			Delta.X -= Extent.X * FMath::RoundToFloat(Delta.X / Extent.X);
+		if (Extent.Y > 0.0f)
+			Delta.Y -= Extent.Y * FMath::RoundToFloat(Delta.Y / Extent.Y);
+		if (Extent.Z > 0.0f)
+			Delta.Z -= Extent.Z * FMath::RoundToFloat(Delta.Z / Extent.Z);
 		return Delta.SizeSquared();
 	}
 
 	/**
 	 * Shift SamplePos to the periodic image that is closest to QueryPos.
 	 *
-	 * The returned position may lie outside the original periodic box, but
-	 * will be as close as possible to QueryPos under the minimum-image
-	 * convention.  This ensures continuous visualisation of neighbour
-	 * trajectories when the query trajectory crosses a periodic boundary.
+	 * Uses round-to-nearest to handle multi-hop crossings, so the result is
+	 * correct even when QueryPos is multiple box-lengths outside the simulation box.
+	 * The returned position may lie outside the original periodic box but will be
+	 * as close as possible to QueryPos.
 	 *
 	 * @param SamplePos  Raw (wrapped) sample position from data storage.
 	 * @param QueryPos   Reference position (may be unwrapped, i.e. outside box).
 	 * @param Extent     Periodic box size per axis (zero = non-periodic axis).
-	 * @return           Corrected sample position.
+	 * @return           Corrected sample position in the image closest to QueryPos.
 	 */
 	FVector ApplyMinImageCorrection(const FVector& SamplePos, const FVector& QueryPos, const FVector& Extent)
 	{
 		FVector Delta = SamplePos - QueryPos;
-		if (Extent.X > 0.0f && FMath::Abs(Delta.X) > Extent.X * 0.5f)
-			Delta.X -= FMath::Sign(Delta.X) * Extent.X;
-		if (Extent.Y > 0.0f && FMath::Abs(Delta.Y) > Extent.Y * 0.5f)
-			Delta.Y -= FMath::Sign(Delta.Y) * Extent.Y;
-		if (Extent.Z > 0.0f && FMath::Abs(Delta.Z) > Extent.Z * 0.5f)
-			Delta.Z -= FMath::Sign(Delta.Z) * Extent.Z;
+		if (Extent.X > 0.0f)
+			Delta.X -= Extent.X * FMath::RoundToFloat(Delta.X / Extent.X);
+		if (Extent.Y > 0.0f)
+			Delta.Y -= Extent.Y * FMath::RoundToFloat(Delta.Y / Extent.Y);
+		if (Extent.Z > 0.0f)
+			Delta.Z -= Extent.Z * FMath::RoundToFloat(Delta.Z / Extent.Z);
 		return QueryPos + Delta;
 	}
 
@@ -94,6 +103,50 @@ namespace
 			Unwrapped.Add(Unwrapped[i - 1] + Delta);
 		}
 		return Unwrapped;
+	}
+
+	/**
+	 * Compute the periodic volume index for a raw (wrapped) sample position
+	 * relative to an (optionally unwrapped) reference query position.
+	 *
+	 * Encodes the integer number of periodic box-lengths the sample must be
+	 * shifted per axis to place it in the same continuous image as the query
+	 * position.  Uses round-to-nearest so that multi-hop crossings (where the
+	 * unwrapped query position is multiple box-lengths from the original box)
+	 * are handled correctly.
+	 *
+	 * Encoding (byte-packed, one signed byte per axis):
+	 *   Bits  7..0  = ix  (X shift count, signed byte, range -127..127)
+	 *   Bits 15..8  = iy
+	 *   Bits 23..16 = iz
+	 * Index 0 always means the original simulation box (ix = iy = iz = 0).
+	 *
+	 * @param SamplePos  Raw (wrapped) sample position.
+	 * @param QueryPos   Reference position (may be unwrapped, multiple box-lengths away).
+	 * @param Extent     Periodic box size per axis (zero = non-periodic axis).
+	 * @return           Encoded volume index (0 when sample is in the original box).
+	 */
+	int32 ComputeVolumeIndex(const FVector& SamplePos, const FVector& QueryPos, const FVector& Extent)
+	{
+		const FVector Delta = SamplePos - QueryPos;
+		// Negative round: the result is how many box-lengths to ADD to SamplePos
+		// to reach the QueryPos image.  The sign flip converts
+		//   "SamplePos is N boxes to the right of QueryPos"
+		// into
+		//   "shift SamplePos N boxes to the LEFT to align with QueryPos"
+		// i.e.  ix = -round((SamplePos - QueryPos) / Extent) = round((QueryPos - SamplePos) / Extent).
+		// The bit-packing format (0xFF / shift 8 / shift 16) is the same encoding
+		// used by DecodeVolumeIndexToOffset() in TrajectoryQueryNiagaraActor.cpp and
+		// by the HLSL DecodeVolumeIndex() in PERIODIC_VOLUME_INDEX.md.
+		auto ComputePeriodicShift = [](float Delta, float Extent) -> int32
+		{
+			return (Extent > 0.0f) ? -FMath::RoundToInt(Delta / Extent) : 0;
+		};
+		const int32 ix = ComputePeriodicShift(Delta.X, Extent.X);
+		const int32 iy = ComputePeriodicShift(Delta.Y, Extent.Y);
+		const int32 iz = ComputePeriodicShift(Delta.Z, Extent.Z);
+		// Pack each signed component into one byte (two's-complement representation).
+		return (ix & 0xFF) | ((iy & 0xFF) << 8) | ((iz & 0xFF) << 16);
 	}
 } // anonymous namespace
 
@@ -1475,25 +1528,29 @@ void USpatialHashTableManager::FilterByDistance(
 		for (const FTrajectorySamplePoint& Sample : SamplePoints)
 		{
 			float DistanceSquared;
-			FVector ReportedPos;
 
 			if (bPeriodic && !Extent.IsNearlyZero())
 			{
-				// Shift the sample to the closest periodic image of QueryPosition.
-				ReportedPos = ApplyMinImageCorrection(Sample.Position, QueryPosition, Extent);
-				DistanceSquared = FVector::DistSquared(QueryPosition, ReportedPos);
+				// Use the minimum-image convention for the radius check so that
+				// samples near a periodic boundary are not missed, but keep the
+				// original simulation coordinates in the result — the rendering
+				// layer handles the periodic volume and any boundary jumps.
+				DistanceSquared = PeriodicDistSq(QueryPosition, Sample.Position, Extent);
 			}
 			else
 			{
-				ReportedPos = Sample.Position;
 				DistanceSquared = FVector::DistSquared(QueryPosition, Sample.Position);
 			}
 			
 			if (DistanceSquared <= RadiusSquared)
 			{
 				FTrajectorySamplePoint FilteredSample = Sample;
-				FilteredSample.Position = ReportedPos;
+				// Position kept as original simulation coordinates.
 				FilteredSample.Distance = FMath::Sqrt(DistanceSquared);
+				if (bPeriodic && !Extent.IsNearlyZero())
+				{
+					FilteredSample.VolumeIndex = ComputeVolumeIndex(Sample.Position, QueryPosition, Extent);
+				}
 				Result.SamplePoints.Add(FilteredSample);
 			}
 		}
@@ -1533,16 +1590,15 @@ void USpatialHashTableManager::FilterByDualRadius(
 		for (const FTrajectorySamplePoint& Sample : SamplePoints)
 		{
 			float DistanceSquared;
-			FVector ReportedPos;
 
 			if (bPeriodic && !Extent.IsNearlyZero())
 			{
-				ReportedPos = ApplyMinImageCorrection(Sample.Position, QueryPosition, Extent);
-				DistanceSquared = FVector::DistSquared(QueryPosition, ReportedPos);
+				// Use the minimum-image convention for the radius check.
+				// Original simulation coordinates are preserved in the result.
+				DistanceSquared = PeriodicDistSq(QueryPosition, Sample.Position, Extent);
 			}
 			else
 			{
-				ReportedPos = Sample.Position;
 				DistanceSquared = FVector::DistSquared(QueryPosition, Sample.Position);
 			}
 			
@@ -1550,8 +1606,12 @@ void USpatialHashTableManager::FilterByDualRadius(
 			{
 				// Sample is within inner radius - add to both inner and outer results
 				FTrajectorySamplePoint FilteredSample = Sample;
-				FilteredSample.Position = ReportedPos;
+				// Position kept as original simulation coordinates.
 				FilteredSample.Distance = FMath::Sqrt(DistanceSquared);
+				if (bPeriodic && !Extent.IsNearlyZero())
+				{
+					FilteredSample.VolumeIndex = ComputeVolumeIndex(Sample.Position, QueryPosition, Extent);
+				}
 				InnerResult.SamplePoints.Add(FilteredSample);
 				OuterResult.SamplePoints.Add(FilteredSample);
 			}
@@ -1559,8 +1619,12 @@ void USpatialHashTableManager::FilterByDualRadius(
 			{
 				// Sample is between inner and outer radius - add to outer results only
 				FTrajectorySamplePoint FilteredSample = Sample;
-				FilteredSample.Position = ReportedPos;
+				// Position kept as original simulation coordinates.
 				FilteredSample.Distance = FMath::Sqrt(DistanceSquared);
+				if (bPeriodic && !Extent.IsNearlyZero())
+				{
+					FilteredSample.VolumeIndex = ComputeVolumeIndex(Sample.Position, QueryPosition, Extent);
+				}
 				OuterResult.SamplePoints.Add(FilteredSample);
 			}
 		}
@@ -1961,11 +2025,8 @@ int32 USpatialHashTableManager::QueryTrajectoryRadiusOverTimeRange(
 				}
 			}
 			
-			// Correct the sample position to follow the (unwrapped) query trajectory.
-			if (bApplyPeriodic && bFoundQueryPos)
-			{
-				Sample.Position = ApplyMinImageCorrection(Sample.Position, BestQueryPos, Extent);
-			}
+			// Original simulation coordinates are kept in Sample.Position.
+			// The minimum-image distance has already been computed above.
 			Sample.Distance = MinDistance;
 		}
 	}
@@ -2052,15 +2113,14 @@ void USpatialHashTableManager::QueryRadiusWithDistanceCheckAsync(
 				}
 				
 				float DistanceSquared;
-				FVector ReportedPos;
 				if (bPeriodic)
 				{
-					ReportedPos = ApplyMinImageCorrection(Sample.Position, QueryPosition, PeriodicExtent);
-					DistanceSquared = FVector::DistSquared(QueryPosition, ReportedPos);
+					// Minimum-image distance for the radius check; original
+					// simulation coordinates are stored in the result.
+					DistanceSquared = PeriodicDistSq(QueryPosition, Sample.Position, PeriodicExtent);
 				}
 				else
 				{
-					ReportedPos = Sample.Position;
 					DistanceSquared = FVector::DistSquared(QueryPosition, Sample.Position);
 				}
 
@@ -2068,7 +2128,7 @@ void USpatialHashTableManager::QueryRadiusWithDistanceCheckAsync(
 				{
 					FSpatialHashQueryResult ResultEntry(static_cast<int32>(Sample.TrajectoryId));
 					FTrajectorySamplePoint SamplePoint;
-					SamplePoint.Position = ReportedPos;
+					SamplePoint.Position = Sample.Position; // Original simulation coordinates.
 					SamplePoint.TimeStep = Sample.TimeStep;
 					SamplePoint.Distance = FMath::Sqrt(DistanceSquared);
 					ResultEntry.SamplePoints.Add(MoveTemp(SamplePoint));
@@ -2160,15 +2220,14 @@ void USpatialHashTableManager::QueryDualRadiusWithDistanceCheckAsync(
 				}
 				
 				float DistanceSq;
-				FVector ReportedPos;
 				if (bPeriodic)
 				{
-					ReportedPos = ApplyMinImageCorrection(Sample.Position, QueryPosition, PeriodicExtent);
-					DistanceSq = FVector::DistSquared(QueryPosition, ReportedPos);
+					// Minimum-image distance for the radius check; original
+					// simulation coordinates are stored in the result.
+					DistanceSq = PeriodicDistSq(QueryPosition, Sample.Position, PeriodicExtent);
 				}
 				else
 				{
-					ReportedPos = Sample.Position;
 					DistanceSq = FVector::DistSquared(QueryPosition, Sample.Position);
 				}
 
@@ -2179,7 +2238,7 @@ void USpatialHashTableManager::QueryDualRadiusWithDistanceCheckAsync(
 				
 				const float Distance = FMath::Sqrt(DistanceSq);
 				FTrajectorySamplePoint SamplePoint;
-				SamplePoint.Position = ReportedPos;
+				SamplePoint.Position = Sample.Position; // Original simulation coordinates.
 				SamplePoint.TimeStep = Sample.TimeStep;
 				SamplePoint.Distance = Distance;
 				
@@ -2286,22 +2345,21 @@ void USpatialHashTableManager::QueryRadiusOverTimeRangeAsync(
 					}
 					
 					float DistanceSq;
-					FVector ReportedPos;
 					if (bPeriodic)
 					{
-						ReportedPos = ApplyMinImageCorrection(Position, QueryPosition, PeriodicExtent);
-						DistanceSq = FVector::DistSquared(QueryPosition, ReportedPos);
+						// Minimum-image distance for the radius check; original
+						// simulation coordinates are stored in the result.
+						DistanceSq = PeriodicDistSq(QueryPosition, Position, PeriodicExtent);
 					}
 					else
 					{
-						ReportedPos = Position;
 						DistanceSq = FVector::DistSquared(QueryPosition, Position);
 					}
 
 					if (DistanceSq <= RadiusSquared)
 					{
 						FTrajectorySamplePoint SamplePoint;
-						SamplePoint.Position = ReportedPos;
+						SamplePoint.Position = Position; // Original simulation coordinates.
 						SamplePoint.TimeStep = Series.StartTimeStep + i;
 						SamplePoint.Distance = FMath::Sqrt(DistanceSq);
 						ResultEntry.SamplePoints.Add(MoveTemp(SamplePoint));
@@ -2501,14 +2559,10 @@ void USpatialHashTableManager::QueryTrajectoryRadiusOverTimeRangeAsync(
 								}
 							}
 							
-							FVector ReportedPos = Position;
-							if (bPeriodic && bFoundQueryPos)
-							{
-								ReportedPos = ApplyMinImageCorrection(Position, BestQueryPos, PeriodicExtent);
-							}
-
+							// Original simulation coordinates are kept in Position.
+							// The minimum-image distance has already been computed above.
 							FTrajectorySamplePoint SamplePoint;
-							SamplePoint.Position = ReportedPos;
+							SamplePoint.Position = Position; // Original simulation coordinates.
 							SamplePoint.TimeStep = SampleTimeStep;
 							SamplePoint.Distance = MinDistance;
 							SamplePoints.Add(MoveTemp(SamplePoint));
@@ -2664,8 +2718,10 @@ void USpatialHashTableManager::QueryPositionsBatchedAsync(
 
 	// When periodic, unwrap the query trajectory so positions are continuous.
 	// The unwrapped positions are used as the reference frame for distance
-	// calculations and output position correction.  The original positions are
+	// calculations (minimum-image convention).  The original positions are
 	// used for Phase 1 hash-table lookups (which are always in box coordinates).
+	// Result sample positions are kept as original simulation coordinates; the
+	// rendering layer handles the periodic volume and boundary jumps.
 	TArray<FVector> UnwrappedQueryPositions;
 	if (bPeriodic)
 	{
@@ -2978,9 +3034,9 @@ void USpatialHashTableManager::QueryPositionsBatchedAsync(
 			// Multiple tasks each process a subset of the loaded batch and build
 			// a partial result list.  Partial lists are merged under ResultMutex.
 			//
-			// When periodic, distances use the minimum-image convention and
-			// sample positions are shifted to the image closest to the (unwrapped)
-			// query position so that neighbour trajectories appear continuous.
+			// When periodic, distances use the minimum-image convention.
+			// Original simulation coordinates are preserved in the result — the
+			// rendering layer handles the periodic volume and boundary jumps.
 
 			TArray<FSpatialHashQueryResult> BatchResults;
 			FCriticalSection               ResultMutex;
@@ -3016,27 +3072,32 @@ void USpatialHashTableManager::QueryPositionsBatchedAsync(
 						continue; // no query position for this timestep
 					}
 
-					float   DistSq;
-					FVector ReportedPos;
+					float DistSq;
 					if (bPeriodic)
 					{
-						// Shift the sample to the closest periodic image of the
-						// unwrapped query position, then compute the distance.
-						ReportedPos = ApplyMinImageCorrection(Pos, *QueryPos, PeriodicExtent);
-						DistSq      = FVector::DistSquared(*QueryPos, ReportedPos);
+						// Use the minimum-image convention for the radius check so that
+						// samples near a periodic boundary are not missed.  Original
+						// simulation coordinates are preserved in the result — the
+						// rendering layer handles the periodic volume and boundary jumps.
+						DistSq = PeriodicDistSq(*QueryPos, Pos, PeriodicExtent);
 					}
 					else
 					{
-						ReportedPos = Pos;
-						DistSq      = FVector::DistSquared(*QueryPos, Pos);
+						DistSq = FVector::DistSquared(*QueryPos, Pos);
 					}
 
 					if (DistSq <= RadiusSq)
 					{
 						FTrajectorySamplePoint Sample;
-						Sample.Position = ReportedPos;
+						Sample.Position = Pos; // Original simulation coordinates.
 						Sample.TimeStep = GlobalTimeStep;
 						Sample.Distance = FMath::Sqrt(DistSq);
+						// Compute the volume index so the rendering layer can correctly
+						// place this sample in world space when periodic boundaries are active.
+						if (bPeriodic)
+						{
+							Sample.VolumeIndex = ComputeVolumeIndex(Pos, *QueryPos, PeriodicExtent);
+						}
 						Result.SamplePoints.Add(Sample);
 					}
 				}
