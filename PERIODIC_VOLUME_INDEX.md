@@ -86,6 +86,7 @@ Add these functions to your Niagara custom HLSL module.
 //
 // Each component is stored in one byte using two's-complement encoding.
 // Index 0 always decodes to (0, 0, 0) – the original simulation box.
+// Valid component range: -127..127 (−128 is reserved and never produced).
 //
 // @param VolumeIndex  Integer value from the ResultVolumeIndices array.
 // @return             Signed 3D offset triple.
