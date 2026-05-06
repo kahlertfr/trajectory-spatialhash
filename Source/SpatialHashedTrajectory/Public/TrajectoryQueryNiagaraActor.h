@@ -28,10 +28,10 @@ enum class ETrajectoryColorEncoding : uint8
  * Actor that runs a spatial hash trajectory query and transfers the results to a Niagara System.
  *
  * The following Niagara user parameters are populated when data is transferred:
- * - PositionArray  QueryPoints          – query sample positions (length = number of query points)
+ * - PositionArray  QueryPoints          – ORIGINAL (raw/wrapped) query sample positions (length = number of query points)
  * - PositionArray  ResultPoints         – result sample positions ordered by trajectory (length = all result samples)
  * - FloatArray     ResultDistances      – per-sample distance from the query point (parallel to ResultPoints)
- * - PositionArray  QueryTranslations    – per query point: translation from that point to the first query point (QueryPoints[0] - QueryPoints[i])
+ * - PositionArray  QueryTranslations    – per query point: translation from that point to the first query point (UnwrappedQueryPoints[0] - UnwrappedQueryPoints[i])
  * - QuatArray      QueryRotations       – per query point: rotation that aligns its forward vector to the first query point's forward vector
  * - Int Array      ResultTrajectoryIds  – original trajectory ID per result trajectory
  * - Int Array      ResultTrajStartIndex – start index into ResultPoints for each result trajectory
@@ -39,12 +39,16 @@ enum class ETrajectoryColorEncoding : uint8
  * - Int Array      ResultVolumeIndices  – per-sample periodic volume index (parallel to ResultPoints).
  *                                         0 = original simulation box; non-zero = periodic image.
  *                                         Decoded via DecodeVolumeIndex / GetVolumeWorldOffset (see PERIODIC_VOLUME_INDEX.md).
+ * - Int Array      QueryVolumeIndices   – per-query-point periodic volume index (parallel to QueryPoints).
+ *                                         Encodes how many box-lengths the raw query position must be shifted
+ *                                         to align with the unwrapped (continuous) query trajectory.
+ *                                         QueryVolumeIndices[0] is always 0 (first point = reference).
  * - float          InnerQueryRadius
  * - float          OuterQueryRadius
  * - int            QueryTimeStart
  * - int            QueryTimeEnd
- * - Vector         BoundsMin            – minimum corner of the AABB enclosing all query + result points
- * - Vector         BoundsMax            – maximum corner of the AABB enclosing all query + result points
+ * - Vector         BoundsMin            – minimum corner of the AABB enclosing all corrected query + result points
+ * - Vector         BoundsMax            – maximum corner of the AABB enclosing all corrected query + result points
  * - Vector         PeriodicVolumeExtent – periodic box size (world units per axis); ZeroVector when non-periodic.
  *                                         Needed by the HLSL helper to compute per-sample world-position offsets.
  *
@@ -284,6 +288,19 @@ private:
 	 * so the Niagara system always receives the current PeriodicVolumeExtent.
 	 */
 	FVector CachedPeriodicExtent = FVector::ZeroVector;
+
+	/**
+	 * Original (raw/wrapped) query positions, always equal to the QueryPositions
+	 * property at the time the last query was started.  Stored separately from
+	 * CachedQueryPoints so that:
+	 *   - The Niagara QueryPoints array carries the raw coordinates (consistent
+	 *     with ResultPoints which are always raw), and
+	 *   - QueryVolumeIndices can be computed by comparing these raw positions
+	 *     against the corresponding unwrapped positions in CachedQueryPoints.
+	 *
+	 * For non-periodic datasets CachedQueryPointsRaw == CachedQueryPoints.
+	 */
+	TArray<FVector> CachedQueryPointsRaw;
 
 	/**
 	 * Store completed query results and compute the result bounding box.

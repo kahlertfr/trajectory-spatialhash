@@ -18,8 +18,13 @@ namespace
 	 * Compute squared distance between two points using the minimum-image
 	 * convention for periodic boundary conditions.
 	 *
-	 * @param A       First point.
-	 * @param B       Second point.
+	 * Uses round-to-nearest to reduce the delta to the range [-Extent/2, +Extent/2]
+	 * on each periodic axis.  This handles an arbitrary number of box crossings,
+	 * which is necessary when the reference point (A) is an unwrapped query position
+	 * that has drifted multiple box-lengths from the original simulation box.
+	 *
+	 * @param A       First point (may be unwrapped, i.e. outside the periodic box).
+	 * @param B       Second point (typically a raw/wrapped sample position).
 	 * @param Extent  Periodic box size per axis.  A zero component means that
 	 *                axis is non-periodic.
 	 * @return        Minimum-image squared distance.
@@ -27,37 +32,41 @@ namespace
 	float PeriodicDistSq(const FVector& A, const FVector& B, const FVector& Extent)
 	{
 		FVector Delta = A - B;
-		if (Extent.X > 0.0f && FMath::Abs(Delta.X) > Extent.X * 0.5f)
-			Delta.X -= FMath::Sign(Delta.X) * Extent.X;
-		if (Extent.Y > 0.0f && FMath::Abs(Delta.Y) > Extent.Y * 0.5f)
-			Delta.Y -= FMath::Sign(Delta.Y) * Extent.Y;
-		if (Extent.Z > 0.0f && FMath::Abs(Delta.Z) > Extent.Z * 0.5f)
-			Delta.Z -= FMath::Sign(Delta.Z) * Extent.Z;
+		// Use round-to-nearest to handle multi-hop crossings:
+		//   delta -= extent * round(delta / extent)
+		// brings delta into [-extent/2, +extent/2] regardless of how many full
+		// box-lengths separate A and B.
+		if (Extent.X > 0.0f)
+			Delta.X -= Extent.X * FMath::RoundToFloat(Delta.X / Extent.X);
+		if (Extent.Y > 0.0f)
+			Delta.Y -= Extent.Y * FMath::RoundToFloat(Delta.Y / Extent.Y);
+		if (Extent.Z > 0.0f)
+			Delta.Z -= Extent.Z * FMath::RoundToFloat(Delta.Z / Extent.Z);
 		return Delta.SizeSquared();
 	}
 
 	/**
 	 * Shift SamplePos to the periodic image that is closest to QueryPos.
 	 *
-	 * The returned position may lie outside the original periodic box, but
-	 * will be as close as possible to QueryPos under the minimum-image
-	 * convention.  This ensures continuous visualisation of neighbour
-	 * trajectories when the query trajectory crosses a periodic boundary.
+	 * Uses round-to-nearest to handle multi-hop crossings, so the result is
+	 * correct even when QueryPos is multiple box-lengths outside the simulation box.
+	 * The returned position may lie outside the original periodic box but will be
+	 * as close as possible to QueryPos.
 	 *
 	 * @param SamplePos  Raw (wrapped) sample position from data storage.
 	 * @param QueryPos   Reference position (may be unwrapped, i.e. outside box).
 	 * @param Extent     Periodic box size per axis (zero = non-periodic axis).
-	 * @return           Corrected sample position.
+	 * @return           Corrected sample position in the image closest to QueryPos.
 	 */
 	FVector ApplyMinImageCorrection(const FVector& SamplePos, const FVector& QueryPos, const FVector& Extent)
 	{
 		FVector Delta = SamplePos - QueryPos;
-		if (Extent.X > 0.0f && FMath::Abs(Delta.X) > Extent.X * 0.5f)
-			Delta.X -= FMath::Sign(Delta.X) * Extent.X;
-		if (Extent.Y > 0.0f && FMath::Abs(Delta.Y) > Extent.Y * 0.5f)
-			Delta.Y -= FMath::Sign(Delta.Y) * Extent.Y;
-		if (Extent.Z > 0.0f && FMath::Abs(Delta.Z) > Extent.Z * 0.5f)
-			Delta.Z -= FMath::Sign(Delta.Z) * Extent.Z;
+		if (Extent.X > 0.0f)
+			Delta.X -= Extent.X * FMath::RoundToFloat(Delta.X / Extent.X);
+		if (Extent.Y > 0.0f)
+			Delta.Y -= Extent.Y * FMath::RoundToFloat(Delta.Y / Extent.Y);
+		if (Extent.Z > 0.0f)
+			Delta.Z -= Extent.Z * FMath::RoundToFloat(Delta.Z / Extent.Z);
 		return QueryPos + Delta;
 	}
 
@@ -100,9 +109,11 @@ namespace
 	 * Compute the periodic volume index for a raw (wrapped) sample position
 	 * relative to an (optionally unwrapped) reference query position.
 	 *
-	 * The index encodes the integer number of periodic box-lengths the sample
-	 * must be shifted per axis to place it in the same continuous image as the
-	 * query position (i.e. the shift applied by the minimum-image convention).
+	 * Encodes the integer number of periodic box-lengths the sample must be
+	 * shifted per axis to place it in the same continuous image as the query
+	 * position.  Uses round-to-nearest so that multi-hop crossings (where the
+	 * unwrapped query position is multiple box-lengths from the original box)
+	 * are handled correctly.
 	 *
 	 * Encoding (byte-packed, one signed byte per axis):
 	 *   Bits  7..0  = ix  (X shift count, signed byte, range -127..127)
@@ -111,20 +122,19 @@ namespace
 	 * Index 0 always means the original simulation box (ix = iy = iz = 0).
 	 *
 	 * @param SamplePos  Raw (wrapped) sample position.
-	 * @param QueryPos   Reference position (may be unwrapped).
+	 * @param QueryPos   Reference position (may be unwrapped, multiple box-lengths away).
 	 * @param Extent     Periodic box size per axis (zero = non-periodic axis).
 	 * @return           Encoded volume index (0 when sample is in the original box).
 	 */
 	int32 ComputeVolumeIndex(const FVector& SamplePos, const FVector& QueryPos, const FVector& Extent)
 	{
 		const FVector Delta = SamplePos - QueryPos;
-		int32 ix = 0, iy = 0, iz = 0;
-		if (Extent.X > 0.0f && FMath::Abs(Delta.X) > Extent.X * 0.5f)
-			ix = -(int32)FMath::Sign(Delta.X);
-		if (Extent.Y > 0.0f && FMath::Abs(Delta.Y) > Extent.Y * 0.5f)
-			iy = -(int32)FMath::Sign(Delta.Y);
-		if (Extent.Z > 0.0f && FMath::Abs(Delta.Z) > Extent.Z * 0.5f)
-			iz = -(int32)FMath::Sign(Delta.Z);
+		// ix = -round(Delta / Extent): the negative sign converts "how far SamplePos is
+		// from QueryPos" into "how many box-lengths to ADD to SamplePos to reach the
+		// QueryPos image".
+		const int32 ix = (Extent.X > 0.0f) ? -FMath::RoundToInt(Delta.X / Extent.X) : 0;
+		const int32 iy = (Extent.Y > 0.0f) ? -FMath::RoundToInt(Delta.Y / Extent.Y) : 0;
+		const int32 iz = (Extent.Z > 0.0f) ? -FMath::RoundToInt(Delta.Z / Extent.Z) : 0;
 		// Pack each signed component into one byte (two's-complement representation).
 		return (ix & 0xFF) | ((iy & 0xFF) << 8) | ((iz & 0xFF) << 16);
 	}
