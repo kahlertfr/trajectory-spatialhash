@@ -129,12 +129,22 @@ namespace
 	int32 ComputeVolumeIndex(const FVector& SamplePos, const FVector& QueryPos, const FVector& Extent)
 	{
 		const FVector Delta = SamplePos - QueryPos;
-		// ix = -round(Delta / Extent): the negative sign converts "how far SamplePos is
-		// from QueryPos" into "how many box-lengths to ADD to SamplePos to reach the
-		// QueryPos image".
-		const int32 ix = (Extent.X > 0.0f) ? -FMath::RoundToInt(Delta.X / Extent.X) : 0;
-		const int32 iy = (Extent.Y > 0.0f) ? -FMath::RoundToInt(Delta.Y / Extent.Y) : 0;
-		const int32 iz = (Extent.Z > 0.0f) ? -FMath::RoundToInt(Delta.Z / Extent.Z) : 0;
+		// Negative round: the result is how many box-lengths to ADD to SamplePos
+		// to reach the QueryPos image.  The sign flip converts
+		//   "SamplePos is N boxes to the right of QueryPos"
+		// into
+		//   "shift SamplePos N boxes to the LEFT to align with QueryPos"
+		// i.e.  ix = -round((SamplePos - QueryPos) / Extent) = round((QueryPos - SamplePos) / Extent).
+		// The bit-packing format (0xFF / shift 8 / shift 16) is the same encoding
+		// used by DecodeVolumeIndexToOffset() in TrajectoryQueryNiagaraActor.cpp and
+		// by the HLSL DecodeVolumeIndex() in PERIODIC_VOLUME_INDEX.md.
+		auto ComputePeriodicShift = [](float Delta, float Extent) -> int32
+		{
+			return (Extent > 0.0f) ? -FMath::RoundToInt(Delta / Extent) : 0;
+		};
+		const int32 ix = ComputePeriodicShift(Delta.X, Extent.X);
+		const int32 iy = ComputePeriodicShift(Delta.Y, Extent.Y);
+		const int32 iz = ComputePeriodicShift(Delta.Z, Extent.Z);
 		// Pack each signed component into one byte (two's-complement representation).
 		return (ix & 0xFF) | ((iy & 0xFF) << 8) | ((iz & 0xFF) << 16);
 	}

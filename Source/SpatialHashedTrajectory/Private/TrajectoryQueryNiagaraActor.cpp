@@ -6,6 +6,36 @@
 #include "NiagaraDataInterfaceArrayFunctionLibrary.h"
 #include "VRLogManager.h"
 
+// ─── File-local helpers ───────────────────────────────────────────────────────
+
+/**
+ * Decode a packed periodic volume index into a world-space offset vector.
+ *
+ * The index uses two's-complement byte packing per axis:
+ *   Bits  7.. 0 = ix,  Bits 15.. 8 = iy,  Bits 23..16 = iz
+ * Each signed component is multiplied by the corresponding box-extent to
+ * produce the translation that must be added to a raw sample position to
+ * place it in the correct periodic image.
+ *
+ * Returns FVector::ZeroVector when VolumeIndex == 0 (original box) or Extent
+ * is zero (non-periodic dataset), so it is safe to call unconditionally.
+ */
+static FVector DecodeVolumeIndexToOffset(int32 VolumeIndex, const FVector& Extent)
+{
+	if (VolumeIndex == 0 || Extent.IsNearlyZero())
+	{
+		return FVector::ZeroVector;
+	}
+	int32 ix = VolumeIndex & 0xFF;
+	int32 iy = (VolumeIndex >> 8)  & 0xFF;
+	int32 iz = (VolumeIndex >> 16) & 0xFF;
+	// Sign-extend from unsigned byte (0-255) to signed integer (-127..127).
+	if (ix >= 128) ix -= 256;
+	if (iy >= 128) iy -= 256;
+	if (iz >= 128) iz -= 256;
+	return FVector(ix * Extent.X, iy * Extent.Y, iz * Extent.Z);
+}
+
 
 ATrajectoryQueryNiagaraActor::ATrajectoryQueryNiagaraActor()
 {
@@ -180,10 +210,12 @@ bool ATrajectoryQueryNiagaraActor::FireAsyncQueriesWithCallback(
 	}
 
 	// ── Reset cached state so progressive updates start clean ─────────────────
-	// CachedQueryPoints is set to the full query trajectory up-front so that
-	// Niagara receives the correct query-point transforms from the very first
-	// progressive update.  When periodic, use the unwrapped positions so that
-	// they match the corrected result sample positions.
+	// CachedQueryPointsRaw stores the original (wrapped) query positions so that
+	// Niagara's QueryPoints array stays consistent with ResultPoints (both raw).
+	// CachedQueryPoints stores the unwrapped (continuous) positions and is used
+	// for transform computation (QueryTranslations / QueryRotations) and for the
+	// query side of the bounding box.
+	CachedQueryPointsRaw = QueryPositions;
 	CachedQueryPoints = PeriodicVolume.bIsPeriodic
 		? Manager->GetUnwrappedPositions(QueryPositions, CellSize)
 		: QueryPositions;
@@ -365,7 +397,9 @@ void ATrajectoryQueryNiagaraActor::AppendBatchResults(
 	{
 		for (const FTrajectorySamplePoint& Sample : Result.SamplePoints)
 		{
-			Bounds += Sample.Position;
+			// Expand the bounding box using the corrected world-space position so
+			// that particles in periodic images are accounted for correctly.
+			Bounds += Sample.Position + DecodeVolumeIndexToOffset(Sample.VolumeIndex, CachedPeriodicExtent);
 		}
 	}
 	if (Bounds.IsValid)
@@ -404,7 +438,8 @@ void ATrajectoryQueryNiagaraActor::StoreQueryResults(
 	{
 		for (const FTrajectorySamplePoint& Sample : Result.SamplePoints)
 		{
-			Bounds += Sample.Position;
+			// Use corrected world-space position (raw + volume offset) for the AABB.
+			Bounds += Sample.Position + DecodeVolumeIndexToOffset(Sample.VolumeIndex, CachedPeriodicExtent);
 		}
 	}
 
@@ -465,7 +500,53 @@ void ATrajectoryQueryNiagaraActor::TransferResultsToNiagara(
 		}
 	}
 
+	// ── Build query volume index array ───────────────────────────────────────
+	//
+	// Parallel to QueryPoints (which Niagara receives as raw/wrapped coordinates).
+	// Each element encodes how many periodic box-lengths must be added to the raw
+	// position to place it in the same continuous image as the unwrapped trajectory.
+	//
+	// When non-periodic, all indices are 0 (no offset needed).
+	// When periodic, CachedQueryPointsRaw holds the original wrapped positions and
+	// QueryPoints (the parameter) holds the unwrapped positions used for transforms.
+	const TArray<FVector>& RawQueryPoints = CachedQueryPointsRaw.IsEmpty() ? QueryPoints : CachedQueryPointsRaw;
+
+	TArray<int32> QueryVolumeIndices;
+	QueryVolumeIndices.Reserve(RawQueryPoints.Num());
+	if (!CachedPeriodicExtent.IsNearlyZero() && !CachedQueryPointsRaw.IsEmpty())
+	{
+		// CachedQueryPointsRaw and CachedQueryPoints (the unwrapped version passed as
+		// QueryPoints) are always built together in FireAsyncQueriesWithCallback and
+		// must have the same length.
+		ensure(CachedQueryPointsRaw.Num() == QueryPoints.Num());
+
+		for (int32 i = 0; i < RawQueryPoints.Num(); ++i)
+		{
+			const FVector& Raw       = RawQueryPoints[i];
+			const FVector& Unwrapped = QueryPoints[i];
+			// Compute the per-axis hop count: how many box-lengths to ADD to Raw
+			// to reach the Unwrapped image (identical to ComputeVolumeIndex(Raw, Unwrapped)).
+			const int32 ix = (CachedPeriodicExtent.X > 0.0f)
+				? FMath::RoundToInt((Unwrapped.X - Raw.X) / CachedPeriodicExtent.X) : 0;
+			const int32 iy = (CachedPeriodicExtent.Y > 0.0f)
+				? FMath::RoundToInt((Unwrapped.Y - Raw.Y) / CachedPeriodicExtent.Y) : 0;
+			const int32 iz = (CachedPeriodicExtent.Z > 0.0f)
+				? FMath::RoundToInt((Unwrapped.Z - Raw.Z) / CachedPeriodicExtent.Z) : 0;
+			QueryVolumeIndices.Add((ix & 0xFF) | ((iy & 0xFF) << 8) | ((iz & 0xFF) << 16));
+		}
+	}
+	else
+	{
+		QueryVolumeIndices.Init(0, RawQueryPoints.Num());
+	}
+
 	// ── Build query-relative transform arrays ────────────────────────────────
+	//
+	// Transforms are computed from the UNWRAPPED query positions (the QueryPoints
+	// parameter) so that translations and rotations are continuous across periodic
+	// boundaries.  The shader reconstructs the unwrapped world position as:
+	//   UnwrappedWorldPos[i] = RawQueryPoints[i] + GetVolumeWorldOffset(QueryVolumeIndices[i], PeriodicVolumeExtent)
+	// which equals QueryPoints[i], so the transforms remain consistent.
 	//
 	// For each query sample point i:
 	//   QueryTranslations[i] = QueryPoints[0] - QueryPoints[i]
@@ -515,9 +596,10 @@ void ATrajectoryQueryNiagaraActor::TransferResultsToNiagara(
 
 	// ── Transfer to Niagara user parameters ──────────────────────────────────
 
-	// Position arrays (PositionArray type in Niagara)
+	// QueryPoints: raw (wrapped) simulation coordinates, consistent with ResultPoints.
+	// The shader uses QueryVolumeIndices to reconstruct the correct world position.
 	UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayVector(
-		NiagaraComponent, FName("QueryPoints"), QueryPoints);
+		NiagaraComponent, FName("QueryPoints"), RawQueryPoints);
 
 	UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayVector(
 		NiagaraComponent, FName("ResultPoints"), ResultPoints);
@@ -547,6 +629,13 @@ void ATrajectoryQueryNiagaraActor::TransferResultsToNiagara(
 	// Encodes the periodic image each sample belongs to; 0 = original box.
 	UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayInt32(
 		NiagaraComponent, FName("ResultVolumeIndices"), ResultVolumeIndices);
+
+	// Per-query-point volume index array (parallel to QueryPoints).
+	// Encodes how many box-lengths the raw query position must be shifted to
+	// reach the unwrapped (continuous) trajectory image.  0 = original box.
+	// QueryVolumeIndices[0] is always 0 (first point = reference / anchor).
+	UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayInt32(
+		NiagaraComponent, FName("QueryVolumeIndices"), QueryVolumeIndices);
 
 	// Scalar user parameters
 	NiagaraComponent->SetVariableFloat(FName("InnerQueryRadius"), InnerQueryRadius);

@@ -73,10 +73,11 @@ Add these functions to your Niagara custom HLSL module.
 
 ### Niagara User Parameters required
 
-| Parameter name        | Type    | Description                                      |
-|-----------------------|---------|--------------------------------------------------|
+| Parameter name        | Type      | Description                                      |
+|-----------------------|-----------|--------------------------------------------------|
 | `ResultVolumeIndices` | Int Array | Per-sample volume index (parallel to `ResultPoints`). |
-| `PeriodicVolumeExtent`| Vector  | Periodic box size in world units per axis (X, Y, Z). `ZeroVector` when non-periodic. |
+| `QueryVolumeIndices`  | Int Array | Per-query-point volume index (parallel to `QueryPoints`). `QueryVolumeIndices[0]` is always 0. |
+| `PeriodicVolumeExtent`| Vector    | Periodic box size in world units per axis (X, Y, Z). `ZeroVector` when non-periodic. |
 
 ### Decode volume index → integer offset triple
 
@@ -96,7 +97,7 @@ int3 DecodeVolumeIndex(int VolumeIndex)
     int iy = (VolumeIndex >> 8)  & 0xFF;
     int iz = (VolumeIndex >> 16) & 0xFF;
 
-    // Sign-extend from unsigned byte (0-255) to signed integer (-128..127).
+    // Sign-extend from unsigned byte (0-255) to signed integer (-127..127).
     if (ix >= 128) ix -= 256;
     if (iy >= 128) iy -= 256;
     if (iz >= 128) iz -= 256;
@@ -147,22 +148,104 @@ returns `(0, 0, 0)` for any index, so the code is safe to use unconditionally.
 
 ---
 
+### Example: placing a query-trajectory particle at the correct world position
+
+`QueryPoints` contains the **raw/wrapped** simulation coordinates.  Apply
+`QueryVolumeIndices` the same way to reconstruct the continuous world position:
+
+```hlsl
+// Inside a Niagara particle update script (query trajectory):
+
+int   QueryIdx   = /* index into QueryPoints / QueryVolumeIndices */;
+float3 RawPos    = QueryPoints[QueryIdx];
+int    VolIdx    = QueryVolumeIndices[QueryIdx];
+
+float3 Offset    = GetVolumeWorldOffset(VolIdx, PeriodicVolumeExtent);
+float3 WorldPos  = RawPos + Offset;
+```
+
+`QueryVolumeIndices[0]` is always `0`, so `QueryPoints[0]` is already the
+world-space anchor of the continuous trajectory.
+
+---
+
+### Computing the correct bounding box in HLSL
+
+The C++ plugin stores the bounding box (`BoundsMin` / `BoundsMax`) over the
+**corrected** world-space positions (raw position + volume offset), so the
+Niagara scalar parameters `BoundsMin` and `BoundsMax` are already correct.
+
+If you need to recompute the bounding box inside a Niagara GPU script (for
+example, per-trajectory or on-the-fly), use the corrected positions:
+
+```hlsl
+// Accumulate an AABB over all result samples of one trajectory.
+//
+// TrajStart   – start index into ResultPoints for this trajectory
+// TrajLen     – number of samples in this trajectory
+// PeriodicVolumeExtent – Niagara Vector user param (ZeroVector = non-periodic)
+
+float3 BoundsMin =  1e30;
+float3 BoundsMax = -1e30;
+
+for (int s = 0; s < TrajLen; ++s)
+{
+    int    SampleIdx    = TrajStart + s;
+    float3 RawPos       = ResultPoints[SampleIdx];
+    int    VolIdx       = ResultVolumeIndices[SampleIdx];
+    float3 Offset       = GetVolumeWorldOffset(VolIdx, PeriodicVolumeExtent);
+    float3 CorrectedPos = RawPos + Offset;
+
+    BoundsMin = min(BoundsMin, CorrectedPos);
+    BoundsMax = max(BoundsMax, CorrectedPos);
+}
+
+// Expand to include query positions as well.
+for (int q = 0; q < QueryPointCount; ++q)
+{
+    float3 RawQPos   = QueryPoints[q];
+    int    QVolIdx   = QueryVolumeIndices[q];
+    float3 QOffset   = GetVolumeWorldOffset(QVolIdx, PeriodicVolumeExtent);
+    float3 QWorldPos = RawQPos + QOffset;
+
+    BoundsMin = min(BoundsMin, QWorldPos);
+    BoundsMax = max(BoundsMax, QWorldPos);
+}
+```
+
+Key points:
+- Use **`RawPos + GetVolumeWorldOffset(VolIdx, PeriodicVolumeExtent)`** for every
+  result sample (not the raw position alone).
+- Use **`RawQPos + GetVolumeWorldOffset(QVolIdx, PeriodicVolumeExtent)`** for every
+  query point (not the raw position alone).
+- When `PeriodicVolumeExtent` is `(0,0,0)` all offsets are zero and the loop is
+  equivalent to the non-periodic case.
+
+---
+
 ## Data Flow Summary
 
 ```
-C++ query pipeline (QueryPositionsBatchedAsync)
+C++ query pipeline (QueryPositionsBatchedAsync / TransferResultsToNiagara)
   │
   ├─ For each result sample point:
   │    VolumeIndex = ComputeVolumeIndex(SamplePos, UnwrappedQueryPos, PeriodicExtent)
+  │    Stored in FTrajectorySamplePoint::VolumeIndex
   │
-  └─ Stored in FTrajectorySamplePoint::VolumeIndex
-       │
-       └─> TransferResultsToNiagara()
-             │
-             ├─ ResultVolumeIndices  (Int Array)  → parallel to ResultPoints
-             └─ PeriodicVolumeExtent (Vector)     → resolved box size
-                   │
-                   └─> Niagara HLSL
-                         GetVolumeWorldOffset(VolumeIndex, PeriodicVolumeExtent)
-                           → world-space offset to apply to RawSamplePosition
+  ├─ For each query point i:
+  │    QueryVolumeIndices[i] = round((Unwrapped[i] - Raw[i]) / PeriodicExtent)  [per axis]
+  │    QueryPoints[i]        = Raw[i]   (original wrapped simulation coordinate)
+  │
+  └─> TransferResultsToNiagara()
+        │
+        ├─ QueryPoints         (PositionArray) → raw query positions
+        ├─ QueryVolumeIndices  (Int Array)     → parallel to QueryPoints
+        ├─ ResultVolumeIndices (Int Array)     → parallel to ResultPoints
+        └─ PeriodicVolumeExtent (Vector)       → resolved box size
+               │
+               └─> Niagara HLSL
+                     GetVolumeWorldOffset(VolumeIndex, PeriodicVolumeExtent)
+                       → world-space offset to add to any raw position
+                     CorrectedPos = RawPos + offset
+                       → use for rendering and bounding-box computation
 ```
