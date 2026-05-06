@@ -36,12 +36,17 @@ enum class ETrajectoryColorEncoding : uint8
  * - Int Array      ResultTrajectoryIds  – original trajectory ID per result trajectory
  * - Int Array      ResultTrajStartIndex – start index into ResultPoints for each result trajectory
  * - Int Array      ResultStartTime      – starting timestep for each result trajectory
+ * - Int Array      ResultVolumeIndices  – per-sample periodic volume index (parallel to ResultPoints).
+ *                                         0 = original simulation box; non-zero = periodic image.
+ *                                         Decoded via DecodeVolumeIndex / GetVolumeWorldOffset (see PERIODIC_VOLUME_INDEX.md).
  * - float          InnerQueryRadius
  * - float          OuterQueryRadius
  * - int            QueryTimeStart
  * - int            QueryTimeEnd
  * - Vector         BoundsMin            – minimum corner of the AABB enclosing all query + result points
  * - Vector         BoundsMax            – maximum corner of the AABB enclosing all query + result points
+ * - Vector         PeriodicVolumeExtent – periodic box size (world units per axis); ZeroVector when non-periodic.
+ *                                         Needed by the HLSL helper to compute per-sample world-position offsets.
  *
  * The following Niagara user parameters can be updated at runtime without re-transferring data
  * (via SetVisualizationTimeRange / SetColorEncoding):
@@ -272,6 +277,13 @@ private:
 
 	/** True once the first result has been incorporated into ResultBoundsMin/Max. */
 	bool bBoundsValid = false;
+
+	/**
+	 * Resolved periodic box extent cached at the start of each query.
+	 * Set in FireAsyncQueriesWithCallback and passed to TransferResultsToNiagara
+	 * so the Niagara system always receives the current PeriodicVolumeExtent.
+	 */
+	FVector CachedPeriodicExtent = FVector::ZeroVector;
 
 	/**
 	 * Store completed query results and compute the result bounding box.

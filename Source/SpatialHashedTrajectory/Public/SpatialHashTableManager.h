@@ -74,10 +74,33 @@ struct FTrajectorySamplePoint
 	UPROPERTY(BlueprintReadOnly, Category = "Spatial Hash")
 	float Distance;
 
+	/**
+	 * Periodic volume index for this sample.
+	 *
+	 * Encodes how many periodic box-lengths the sample position must be
+	 * shifted in each axis direction to place it in the same continuous image
+	 * as the (unwrapped) query trajectory.  A value of 0 means the sample
+	 * lives in the original simulation box (the common case).
+	 *
+	 * Encoding (byte-packed, one signed byte per axis):
+	 *   Bits  7..0  = ix  (X-axis shift, signed, range -127..127)
+	 *   Bits 15..8  = iy  (Y-axis shift)
+	 *   Bits 23..16 = iz  (Z-axis shift)
+	 *
+	 * To decode in HLSL/C++ see the EncodeVolumeIndex / DecodeVolumeIndex
+	 * helpers (documented in PERIODIC_VOLUME_INDEX.md).
+	 *
+	 * Only populated when periodic boundary conditions are active
+	 * (FPeriodicVolume::bIsPeriodic == true); otherwise always 0.
+	 */
+	UPROPERTY(BlueprintReadOnly, Category = "Spatial Hash")
+	int32 VolumeIndex;
+
 	FTrajectorySamplePoint()
 		: Position(FVector::ZeroVector)
 		, TimeStep(0)
 		, Distance(0.0f)
+		, VolumeIndex(0)
 	{
 	}
 
@@ -85,6 +108,7 @@ struct FTrajectorySamplePoint
 		: Position(InPosition)
 		, TimeStep(InTimeStep)
 		, Distance(InDistance)
+		, VolumeIndex(0)
 	{
 	}
 };
@@ -600,6 +624,19 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Spatial Hash")
 	FPeriodicVolume GetPeriodicVolume() const { return PeriodicVolume; }
+
+	/**
+	 * Return the resolved periodic box extent (world units per axis).
+	 *
+	 * Delegates to ResolvePeriodicExtent().  Returns FVector::ZeroVector when
+	 * the periodic volume is disabled or the extent cannot be determined from
+	 * the loaded hash tables.
+	 *
+	 * @param CellSize  Cell size used to look up a reference hash table when
+	 *                  the extent is not set explicitly on the PeriodicVolume.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Spatial Hash")
+	FVector GetResolvedPeriodicExtent(float CellSize) const { return ResolvePeriodicExtent(CellSize); }
 
 	/**
 	 * Unwrap a trajectory so that consecutive positions are continuous across

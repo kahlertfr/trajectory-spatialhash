@@ -95,6 +95,39 @@ namespace
 		}
 		return Unwrapped;
 	}
+
+	/**
+	 * Compute the periodic volume index for a raw (wrapped) sample position
+	 * relative to an (optionally unwrapped) reference query position.
+	 *
+	 * The index encodes the integer number of periodic box-lengths the sample
+	 * must be shifted per axis to place it in the same continuous image as the
+	 * query position (i.e. the shift applied by the minimum-image convention).
+	 *
+	 * Encoding (byte-packed, one signed byte per axis):
+	 *   Bits  7..0  = ix  (X shift count, signed byte, range -127..127)
+	 *   Bits 15..8  = iy
+	 *   Bits 23..16 = iz
+	 * Index 0 always means the original simulation box (ix = iy = iz = 0).
+	 *
+	 * @param SamplePos  Raw (wrapped) sample position.
+	 * @param QueryPos   Reference position (may be unwrapped).
+	 * @param Extent     Periodic box size per axis (zero = non-periodic axis).
+	 * @return           Encoded volume index (0 when sample is in the original box).
+	 */
+	int32 ComputeVolumeIndex(const FVector& SamplePos, const FVector& QueryPos, const FVector& Extent)
+	{
+		const FVector Delta = SamplePos - QueryPos;
+		int32 ix = 0, iy = 0, iz = 0;
+		if (Extent.X > 0.0f && FMath::Abs(Delta.X) > Extent.X * 0.5f)
+			ix = -(int32)FMath::Sign(Delta.X);
+		if (Extent.Y > 0.0f && FMath::Abs(Delta.Y) > Extent.Y * 0.5f)
+			iy = -(int32)FMath::Sign(Delta.Y);
+		if (Extent.Z > 0.0f && FMath::Abs(Delta.Z) > Extent.Z * 0.5f)
+			iz = -(int32)FMath::Sign(Delta.Z);
+		// Pack each signed component into one byte (two's-complement representation).
+		return (ix & 0xFF) | ((iy & 0xFF) << 8) | ((iz & 0xFF) << 16);
+	}
 } // anonymous namespace
 
 USpatialHashTableManager::USpatialHashTableManager()
@@ -1494,6 +1527,10 @@ void USpatialHashTableManager::FilterByDistance(
 				FTrajectorySamplePoint FilteredSample = Sample;
 				// Position kept as original simulation coordinates.
 				FilteredSample.Distance = FMath::Sqrt(DistanceSquared);
+				if (bPeriodic && !Extent.IsNearlyZero())
+				{
+					FilteredSample.VolumeIndex = ComputeVolumeIndex(Sample.Position, QueryPosition, Extent);
+				}
 				Result.SamplePoints.Add(FilteredSample);
 			}
 		}
@@ -1551,6 +1588,10 @@ void USpatialHashTableManager::FilterByDualRadius(
 				FTrajectorySamplePoint FilteredSample = Sample;
 				// Position kept as original simulation coordinates.
 				FilteredSample.Distance = FMath::Sqrt(DistanceSquared);
+				if (bPeriodic && !Extent.IsNearlyZero())
+				{
+					FilteredSample.VolumeIndex = ComputeVolumeIndex(Sample.Position, QueryPosition, Extent);
+				}
 				InnerResult.SamplePoints.Add(FilteredSample);
 				OuterResult.SamplePoints.Add(FilteredSample);
 			}
@@ -1560,6 +1601,10 @@ void USpatialHashTableManager::FilterByDualRadius(
 				FTrajectorySamplePoint FilteredSample = Sample;
 				// Position kept as original simulation coordinates.
 				FilteredSample.Distance = FMath::Sqrt(DistanceSquared);
+				if (bPeriodic && !Extent.IsNearlyZero())
+				{
+					FilteredSample.VolumeIndex = ComputeVolumeIndex(Sample.Position, QueryPosition, Extent);
+				}
 				OuterResult.SamplePoints.Add(FilteredSample);
 			}
 		}
@@ -3027,6 +3072,12 @@ void USpatialHashTableManager::QueryPositionsBatchedAsync(
 						Sample.Position = Pos; // Original simulation coordinates.
 						Sample.TimeStep = GlobalTimeStep;
 						Sample.Distance = FMath::Sqrt(DistSq);
+						// Compute the volume index so the rendering layer can correctly
+						// place this sample in world space when periodic boundaries are active.
+						if (bPeriodic)
+						{
+							Sample.VolumeIndex = ComputeVolumeIndex(Pos, *QueryPos, PeriodicExtent);
+						}
 						Result.SamplePoints.Add(Sample);
 					}
 				}

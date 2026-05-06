@@ -168,6 +168,10 @@ bool ATrajectoryQueryNiagaraActor::FireAsyncQueriesWithCallback(
 	// that all subsequent queries use the correct boundary conditions.
 	Manager->SetPeriodicVolume(PeriodicVolume.bIsPeriodic, PeriodicVolume.Extent);
 
+	// Cache the resolved extent so TransferResultsToNiagara can pass it to
+	// Niagara as PeriodicVolumeExtent (required by the HLSL volume-index helper).
+	CachedPeriodicExtent = Manager->GetResolvedPeriodicExtent(CellSize);
+
 	if (QueryPositions.IsEmpty())
 	{
 		UE_LOG(LogTemp, Warning, TEXT("ATrajectoryQueryNiagaraActor: QueryPositions array is empty – nothing to query."));
@@ -433,6 +437,11 @@ void ATrajectoryQueryNiagaraActor::TransferResultsToNiagara(
 	// ResultDistances: distance from the query point for each sample (parallel to ResultPoints)
 	TArray<float> ResultDistances;
 
+	// ResultVolumeIndices: per-sample periodic volume index (parallel to ResultPoints).
+	// 0 = original simulation box; non-zero = periodic image.
+	// Decoded in HLSL via DecodeVolumeIndex / GetVolumeWorldOffset (see PERIODIC_VOLUME_INDEX.md).
+	TArray<int32> ResultVolumeIndices;
+
 	// Per-trajectory metadata arrays (one entry per result trajectory)
 	TArray<int32> ResultTrajectoryIds;
 	TArray<int32> ResultTrajStartIndex;
@@ -452,6 +461,7 @@ void ATrajectoryQueryNiagaraActor::TransferResultsToNiagara(
 		{
 			ResultPoints.Add(Sample.Position);
 			ResultDistances.Add(Sample.Distance);
+			ResultVolumeIndices.Add(Sample.VolumeIndex);
 		}
 	}
 
@@ -533,6 +543,11 @@ void ATrajectoryQueryNiagaraActor::TransferResultsToNiagara(
 	UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayInt32(
 		NiagaraComponent, FName("ResultStartTime"), ResultStartTime);
 
+	// Per-sample volume index array (parallel to ResultPoints).
+	// Encodes the periodic image each sample belongs to; 0 = original box.
+	UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayInt32(
+		NiagaraComponent, FName("ResultVolumeIndices"), ResultVolumeIndices);
+
 	// Scalar user parameters
 	NiagaraComponent->SetVariableFloat(FName("InnerQueryRadius"), InnerQueryRadius);
 	NiagaraComponent->SetVariableFloat(FName("OuterQueryRadius"), OuterQueryRadius);
@@ -549,6 +564,11 @@ void ATrajectoryQueryNiagaraActor::TransferResultsToNiagara(
 	// Bounding box – use the stored values computed by StoreQueryResults
 	NiagaraComponent->SetVariableVec3(FName("BoundsMin"), ResultBoundsMin);
 	NiagaraComponent->SetVariableVec3(FName("BoundsMax"), ResultBoundsMax);
+
+	// Periodic box size (world units per axis).  ZeroVector when non-periodic.
+	// Used by the HLSL GetVolumeWorldOffset helper to compute per-sample position
+	// offsets from the ResultVolumeIndices array.
+	NiagaraComponent->SetVariableVec3(FName("PeriodicVolumeExtent"), CachedPeriodicExtent);
 
 	// Activate the system now that all data has been pushed.
 	if (bReactivate)
