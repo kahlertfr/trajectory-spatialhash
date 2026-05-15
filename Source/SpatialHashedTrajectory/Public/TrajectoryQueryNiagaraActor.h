@@ -5,24 +5,13 @@
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
 #include "SpatialHashTableManager.h"
+#include "UserSelectionManager.h"
 #include "TrajectoryQueryNiagaraActor.generated.h"
 
 class UNiagaraSystem;
 class UNiagaraComponent;
 
-/**
- * Color encoding mode used by the Niagara shader to colorize trajectory particles.
- * The integer value is passed to the Niagara user parameter "ColorEncoding".
- */
-UENUM(BlueprintType)
-enum class ETrajectoryColorEncoding : uint8
-{
-	/** Color mapped from the normalized timestep along the trajectory */
-	Timestep UMETA(DisplayName = "Timestep"),
 
-	/** Color mapped from the particle velocity (speed) */
-	Velocity UMETA(DisplayName = "Velocity"),
-};
 
 /**
  * Actor that runs a spatial hash trajectory query and transfers the results to a Niagara System.
@@ -162,7 +151,10 @@ public:
 	 * Can be changed at runtime via SetColorEncoding without re-transferring data.
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visualization")
-	ETrajectoryColorEncoding ColorEncoding = ETrajectoryColorEncoding::Timestep;
+	ETrajectoryColorEncoding ColorEncoding = ETrajectoryColorEncoding::Time;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visualization")
+	ETrajectoryDistanceFilter DistanceFilter = ETrajectoryDistanceFilter::NoFilter;
 
 	// ─── Blueprint callable entry points ─────────────────────────────────────
 
@@ -206,6 +198,9 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Trajectory Visualization")
 	void SetColorEncoding(ETrajectoryColorEncoding NewColorEncoding);
+
+	UFUNCTION(BlueprintCallable, Category = "Trajectory Visualization")
+	void SetDistanceFilter(ETrajectoryDistanceFilter newDistanceFilter);
 
 	/**
 	 * High-performance parallel/batched async query dispatch.
