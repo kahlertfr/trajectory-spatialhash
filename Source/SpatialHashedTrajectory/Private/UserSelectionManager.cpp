@@ -28,6 +28,9 @@ bool UUserSelectionManager::GetSelectionByTrajectoryId(int32 TrajectoryId, FUser
 
 void UUserSelectionManager::AddSelection(FUserTrajectorySelection Selection)
 {
+	if (UpdateSelectionByTrajectoryId(Selection.TrajectoryId, Selection))
+		return;
+
 	Selections.Add(MoveTemp(Selection));
 	NotifyListeners();
 }

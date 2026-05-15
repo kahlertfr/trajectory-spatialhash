@@ -47,7 +47,7 @@ ATrajectoryQueryNiagaraActor::ATrajectoryQueryNiagaraActor()
 	ResultBoundsMax = FVector::ZeroVector;
 	VisualizationTimeStart = QueryTimeStart;
 	VisualizationTimeEnd   = QueryTimeEnd;
-	ColorEncoding = ETrajectoryColorEncoding::Timestep;
+	ColorEncoding = ETrajectoryColorEncoding::Time;
 }
 
 void ATrajectoryQueryNiagaraActor::BeginPlay()
@@ -180,6 +180,24 @@ void ATrajectoryQueryNiagaraActor::SetColorEncoding(ETrajectoryColorEncoding New
 	UE_LOG(LogTemp, Log,
 		TEXT("ATrajectoryQueryNiagaraActor: Color encoding updated to %d."),
 		static_cast<int32>(ColorEncoding));
+}
+
+void ATrajectoryQueryNiagaraActor::SetDistanceFilter(ETrajectoryDistanceFilter newDistanceFilter)
+{
+	DistanceFilter = newDistanceFilter;
+
+	if (!NiagaraComponent)
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("ATrajectoryQueryNiagaraActor: SetColorEncoding called before a Niagara component is available."));
+		return;
+	}
+
+	NiagaraComponent->SetVariableInt(FName("DistanceFilter"), static_cast<int32>(DistanceFilter));
+
+	UE_LOG(LogTemp, Log,
+		TEXT("ATrajectoryQueryNiagaraActor: Distance filter updated to %d."),
+		static_cast<int32>(DistanceFilter));
 }
 
 // ─── Core async pipeline ──────────────────────────────────────────────────────
@@ -649,6 +667,7 @@ void ATrajectoryQueryNiagaraActor::TransferResultsToNiagara(
 
 	// Color encoding (0 = Timestep, 1 = Velocity)
 	NiagaraComponent->SetVariableInt(FName("ColorEncoding"), static_cast<int32>(ColorEncoding));
+	NiagaraComponent->SetVariableInt(FName("DistanceFilter"), static_cast<int32>(DistanceFilter));
 
 	// Bounding box – use the stored values computed by StoreQueryResults
 	NiagaraComponent->SetVariableVec3(FName("BoundsMin"), ResultBoundsMin);

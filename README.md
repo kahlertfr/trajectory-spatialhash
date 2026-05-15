@@ -264,7 +264,7 @@ The `UUserSelectionManager` class lets you store a list of user-driven trajector
 
 ##### The Selection Data Structure
 
-Each entry in the manager is an `FUserTrajectorySelection` struct with five fields:
+Each entry in the manager is an `FUserTrajectorySelection` struct with eight fields:
 
 | Field | Type | Description |
 |---|---|---|
@@ -273,6 +273,9 @@ Each entry in the manager is an `FUserTrajectorySelection` struct with five fiel
 | `TimeEnd` | `int32` | Last time step of the selection (inclusive) |
 | `InnerRadius` | `float` | Inner query radius for dual-radius lookups |
 | `OuterRadius` | `float` | Outer query radius for dual-radius lookups |
+| `ColorEncoding` | `ETrajectoryColorEncoding` | Color mode (`Time`, `Distance`, `Velocity`, `VolumeImage`) |
+| `DistanceFilter` | `ETrajectoryDistanceFilter` | Distance filter (`NoFilter`, `ReachesInnerRadius`, `DoesNotReachInnerRadius`, `Collision`) |
+| `bParticlesVisible` | `bool` | Whether particles are visible for the selected trajectory |
 
 ---
 
@@ -299,7 +302,10 @@ SelectionManager → Add Selection
    ├─ Time Start: 0
    ├─ Time End: 500
    ├─ Inner Radius: 25.0
-   └─ Outer Radius: 50.0
+   ├─ Outer Radius: 50.0
+   ├─ Color Encoding: Time
+   ├─ Distance Filter: No Filter
+   └─ Particles Visible: true
 
 // Replace a selection at a known index (returns false if index is out of range)
 SelectionManager → Update Selection
@@ -353,7 +359,10 @@ Event BeginPlay (inside the Blueprint that wants to react)
             ├─ Time Start     → use in your logic
             ├─ Time End       → use in your logic
             ├─ Inner Radius   → use in your logic
-            └─ Outer Radius   → use in your logic
+            ├─ Outer Radius   → use in your logic
+            ├─ Color Encoding → use in your logic
+            ├─ Distance Filter → use in your logic
+            └─ Particles Visible → use in your logic
 ```
 
 **Option B – Listener interface (persistent, multi-actor)**
