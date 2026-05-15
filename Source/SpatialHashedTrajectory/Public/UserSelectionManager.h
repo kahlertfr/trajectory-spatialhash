@@ -8,6 +8,24 @@
 
 // ─── Data Type ────────────────────────────────────────────────────────────────
 
+UENUM(BlueprintType)
+enum class ETrajectoryColorEncoding : uint8
+{
+	Time UMETA(DisplayName = "Time"),
+	Distance UMETA(DisplayName = "Distance"),
+	Velocity UMETA(DisplayName = "Velocity"),
+	VolumeImage UMETA(DisplayName = "Volume Image")
+};
+
+UENUM(BlueprintType)
+enum class ETrajectoryDistanceFilter : uint8
+{
+	NoFilter UMETA(DisplayName = "No Filter"),
+	ReachesInnerRadius UMETA(DisplayName = "Reaching Inner Radius"),
+	DoesNotReachInnerRadius UMETA(DisplayName = "Not Reaching Inner Radius"),
+	Collision UMETA(DisplayName = "Collision")
+};
+
 /**
  * Represents one user trajectory selection.
  *
@@ -38,6 +56,18 @@ struct FUserTrajectorySelection
 	/** Outer query radius */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "User Selection")
 	float OuterRadius = 0.f;
+
+	/** Color encoding mode for rendering/analysis of this trajectory */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "User Selection")
+	ETrajectoryColorEncoding ColorEncoding = ETrajectoryColorEncoding::Time;
+
+	/** Distance-based filter mode to apply to this trajectory */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "User Selection")
+	ETrajectoryDistanceFilter DistanceFilter = ETrajectoryDistanceFilter::NoFilter;
+
+	/** Whether particles are visible for this selected trajectory */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "User Selection")
+	bool bParticlesVisible = true;
 };
 
 // ─── Delegate ─────────────────────────────────────────────────────────────────
