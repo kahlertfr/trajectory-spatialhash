@@ -497,16 +497,34 @@ void ATrajectoryQueryNiagaraActor::TransferResultsToNiagara(
 
 	// Per-trajectory metadata arrays (one entry per result trajectory)
 	TArray<int32> ResultTrajectoryIds;
+	TArray<float> ResultMinDistances;
+	TArray<int32> ResultMinDistanceTimeSteps;
 	TArray<int32> ResultTrajStartIndex;
 	TArray<int32> ResultStartTime;
 
 	ResultTrajectoryIds.Reserve(Results.Num());
+	ResultMinDistances.Reserve(Results.Num());
+	ResultMinDistanceTimeSteps.Reserve(Results.Num());
 	ResultTrajStartIndex.Reserve(Results.Num());
 	ResultStartTime.Reserve(Results.Num());
 
 	for (const FSpatialHashQueryResult& Result : Results)
 	{
 		ResultTrajectoryIds.Add(Result.TrajectoryId);
+		float MinDistance = 0.0f;
+		int32 MinDistanceTimeStep = INDEX_NONE;
+		bool bHasMinDistance = false;
+		for (const FTrajectorySamplePoint& Sample : Result.SamplePoints)
+		{
+			if (!bHasMinDistance || Sample.Distance < MinDistance)
+			{
+				MinDistance = Sample.Distance;
+				MinDistanceTimeStep = Sample.TimeStep;
+				bHasMinDistance = true;
+			}
+		}
+		ResultMinDistances.Add(MinDistance);
+		ResultMinDistanceTimeSteps.Add(MinDistanceTimeStep);
 		ResultTrajStartIndex.Add(ResultPoints.Num());
 		ResultStartTime.Add(Result.SamplePoints.Num() > 0 ? Result.SamplePoints[0].TimeStep : 0);
 
@@ -637,6 +655,15 @@ void ATrajectoryQueryNiagaraActor::TransferResultsToNiagara(
 	UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayInt32(
 		NiagaraComponent, FName("ResultTrajectoryIds"), ResultTrajectoryIds);
 
+	// Float array: minimum distance reached by each trajectory (parallel to ResultTrajectoryIds)
+	UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayFloat(
+		NiagaraComponent, FName("ResultMinDistances"), ResultMinDistances);
+
+	// Integer array: timestep where each trajectory reaches its minimum distance
+	// (parallel to ResultTrajectoryIds / ResultMinDistances).
+	UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayInt32(
+		NiagaraComponent, FName("ResultMinDistanceTimeSteps"), ResultMinDistanceTimeSteps);
+
 	UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayInt32(
 		NiagaraComponent, FName("ResultTrajStartIndex"), ResultTrajStartIndex);
 
@@ -656,8 +683,9 @@ void ATrajectoryQueryNiagaraActor::TransferResultsToNiagara(
 		NiagaraComponent, FName("QueryVolumeIndices"), QueryVolumeIndices);
 
 	// Scalar user parameters
-	NiagaraComponent->SetVariableFloat(FName("InnerQueryRadius"), InnerQueryRadius);
-	NiagaraComponent->SetVariableFloat(FName("OuterQueryRadius"), OuterQueryRadius);
+	NiagaraComponent->SetVariableFloat(FName("InnerRadius"), InnerQueryRadius);
+	NiagaraComponent->SetVariableFloat(FName("QueryRadius"), OuterQueryRadius);
+	NiagaraComponent->SetVariableFloat(FName("OuterRadius"), OuterQueryRadius);
 	NiagaraComponent->SetVariableInt(FName("QueryTimeStart"), QueryTimeStart);
 	NiagaraComponent->SetVariableInt(FName("QueryTimeEnd"), QueryTimeEnd);
 
@@ -694,4 +722,3 @@ void ATrajectoryQueryNiagaraActor::TransferResultsToNiagara(
 		QueryPoints.Num(), ResultPoints.Num(), Results.Num(),
 		*ResultBoundsMin.ToString(), *ResultBoundsMax.ToString());
 }
-
