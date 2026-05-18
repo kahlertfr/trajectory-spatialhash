@@ -683,8 +683,9 @@ void ATrajectoryQueryNiagaraActor::TransferResultsToNiagara(
 		NiagaraComponent, FName("QueryVolumeIndices"), QueryVolumeIndices);
 
 	// Scalar user parameters
-	NiagaraComponent->SetVariableFloat(FName("InnerQueryRadius"), InnerQueryRadius);
-	NiagaraComponent->SetVariableFloat(FName("OuterQueryRadius"), OuterQueryRadius);
+	NiagaraComponent->SetVariableFloat(FName("InnerRadius"), InnerQueryRadius);
+	NiagaraComponent->SetVariableFloat(FName("QueryRadius"), OuterQueryRadius);
+	NiagaraComponent->SetVariableFloat(FName("OuterRadius"), OuterQueryRadius);
 	NiagaraComponent->SetVariableInt(FName("QueryTimeStart"), QueryTimeStart);
 	NiagaraComponent->SetVariableInt(FName("QueryTimeEnd"), QueryTimeEnd);
 
