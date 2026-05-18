@@ -510,12 +510,17 @@ void ATrajectoryQueryNiagaraActor::TransferResultsToNiagara(
 	{
 		ResultTrajectoryIds.Add(Result.TrajectoryId);
 		float MinDistance = 0.0f;
-		if (Result.SamplePoints.Num() > 0)
+		bool bHasMinDistance = false;
+		for (const FTrajectorySamplePoint& Sample : Result.SamplePoints)
 		{
-			MinDistance = Result.SamplePoints[0].Distance;
-			for (int32 SampleIndex = 1; SampleIndex < Result.SamplePoints.Num(); ++SampleIndex)
+			if (!bHasMinDistance)
 			{
-				MinDistance = FMath::Min(MinDistance, Result.SamplePoints[SampleIndex].Distance);
+				MinDistance = Sample.Distance;
+				bHasMinDistance = true;
+			}
+			else
+			{
+				MinDistance = FMath::Min(MinDistance, Sample.Distance);
 			}
 		}
 		ResultMinDistances.Add(MinDistance);
