@@ -512,7 +512,7 @@ void ATrajectoryQueryNiagaraActor::TransferResultsToNiagara(
 	{
 		ResultTrajectoryIds.Add(Result.TrajectoryId);
 		float MinDistance = 0.0f;
-		int32 MinDistanceTimeStep = 0;
+		int32 MinDistanceTimeStep = INDEX_NONE;
 		bool bHasMinDistance = false;
 		for (const FTrajectorySamplePoint& Sample : Result.SamplePoints)
 		{
