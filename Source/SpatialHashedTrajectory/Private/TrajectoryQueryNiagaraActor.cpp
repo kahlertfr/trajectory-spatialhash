@@ -498,11 +498,13 @@ void ATrajectoryQueryNiagaraActor::TransferResultsToNiagara(
 	// Per-trajectory metadata arrays (one entry per result trajectory)
 	TArray<int32> ResultTrajectoryIds;
 	TArray<float> ResultMinDistances;
+	TArray<int32> ResultMinDistanceTimeSteps;
 	TArray<int32> ResultTrajStartIndex;
 	TArray<int32> ResultStartTime;
 
 	ResultTrajectoryIds.Reserve(Results.Num());
 	ResultMinDistances.Reserve(Results.Num());
+	ResultMinDistanceTimeSteps.Reserve(Results.Num());
 	ResultTrajStartIndex.Reserve(Results.Num());
 	ResultStartTime.Reserve(Results.Num());
 
@@ -510,20 +512,19 @@ void ATrajectoryQueryNiagaraActor::TransferResultsToNiagara(
 	{
 		ResultTrajectoryIds.Add(Result.TrajectoryId);
 		float MinDistance = 0.0f;
+		int32 MinDistanceTimeStep = 0;
 		bool bHasMinDistance = false;
 		for (const FTrajectorySamplePoint& Sample : Result.SamplePoints)
 		{
-			if (!bHasMinDistance)
+			if (!bHasMinDistance || Sample.Distance < MinDistance)
 			{
 				MinDistance = Sample.Distance;
+				MinDistanceTimeStep = Sample.TimeStep;
 				bHasMinDistance = true;
-			}
-			else
-			{
-				MinDistance = FMath::Min(MinDistance, Sample.Distance);
 			}
 		}
 		ResultMinDistances.Add(MinDistance);
+		ResultMinDistanceTimeSteps.Add(MinDistanceTimeStep);
 		ResultTrajStartIndex.Add(ResultPoints.Num());
 		ResultStartTime.Add(Result.SamplePoints.Num() > 0 ? Result.SamplePoints[0].TimeStep : 0);
 
@@ -657,6 +658,11 @@ void ATrajectoryQueryNiagaraActor::TransferResultsToNiagara(
 	// Float array: minimum distance reached by each trajectory (parallel to ResultTrajectoryIds)
 	UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayFloat(
 		NiagaraComponent, FName("ResultMinDistances"), ResultMinDistances);
+
+	// Integer array: timestep where each trajectory reaches its minimum distance
+	// (parallel to ResultTrajectoryIds / ResultMinDistances).
+	UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayInt32(
+		NiagaraComponent, FName("ResultMinDistanceTimeSteps"), ResultMinDistanceTimeSteps);
 
 	UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayInt32(
 		NiagaraComponent, FName("ResultTrajStartIndex"), ResultTrajStartIndex);

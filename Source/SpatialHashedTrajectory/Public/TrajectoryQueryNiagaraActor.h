@@ -25,6 +25,8 @@ class UNiagaraComponent;
  * - Int Array      ResultTrajectoryIds  – original trajectory ID per result trajectory
  * - FloatArray     ResultMinDistances   – minimum per-sample distance per result trajectory
  *                                         (parallel to ResultTrajectoryIds)
+ * - Int Array      ResultMinDistanceTimeSteps – timestep at which ResultMinDistances appears
+ *                                         (parallel to ResultTrajectoryIds)
  * - Int Array      ResultTrajStartIndex – start index into ResultPoints for each result trajectory
  * - Int Array      ResultStartTime      – starting timestep for each result trajectory
  * - Int Array      ResultVolumeIndices  – per-sample periodic volume index (parallel to ResultPoints).
