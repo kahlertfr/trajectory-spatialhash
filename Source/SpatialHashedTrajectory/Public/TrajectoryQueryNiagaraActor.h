@@ -23,6 +23,8 @@ class UNiagaraComponent;
  * - PositionArray  QueryTranslations    – per query point: translation from that point to the first query point (UnwrappedQueryPoints[0] - UnwrappedQueryPoints[i])
  * - QuatArray      QueryRotations       – per query point: rotation that aligns its forward vector to the first query point's forward vector
  * - Int Array      ResultTrajectoryIds  – original trajectory ID per result trajectory
+ * - FloatArray     ResultMinDistances   – minimum per-sample distance per result trajectory
+ *                                         (parallel to ResultTrajectoryIds)
  * - Int Array      ResultTrajStartIndex – start index into ResultPoints for each result trajectory
  * - Int Array      ResultStartTime      – starting timestep for each result trajectory
  * - Int Array      ResultVolumeIndices  – per-sample periodic volume index (parallel to ResultPoints).

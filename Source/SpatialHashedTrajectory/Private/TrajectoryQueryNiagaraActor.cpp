@@ -497,16 +497,28 @@ void ATrajectoryQueryNiagaraActor::TransferResultsToNiagara(
 
 	// Per-trajectory metadata arrays (one entry per result trajectory)
 	TArray<int32> ResultTrajectoryIds;
+	TArray<float> ResultMinDistances;
 	TArray<int32> ResultTrajStartIndex;
 	TArray<int32> ResultStartTime;
 
 	ResultTrajectoryIds.Reserve(Results.Num());
+	ResultMinDistances.Reserve(Results.Num());
 	ResultTrajStartIndex.Reserve(Results.Num());
 	ResultStartTime.Reserve(Results.Num());
 
 	for (const FSpatialHashQueryResult& Result : Results)
 	{
 		ResultTrajectoryIds.Add(Result.TrajectoryId);
+		float MinDistance = 0.0f;
+		if (Result.SamplePoints.Num() > 0)
+		{
+			MinDistance = Result.SamplePoints[0].Distance;
+			for (int32 SampleIndex = 1; SampleIndex < Result.SamplePoints.Num(); ++SampleIndex)
+			{
+				MinDistance = FMath::Min(MinDistance, Result.SamplePoints[SampleIndex].Distance);
+			}
+		}
+		ResultMinDistances.Add(MinDistance);
 		ResultTrajStartIndex.Add(ResultPoints.Num());
 		ResultStartTime.Add(Result.SamplePoints.Num() > 0 ? Result.SamplePoints[0].TimeStep : 0);
 
@@ -637,6 +649,10 @@ void ATrajectoryQueryNiagaraActor::TransferResultsToNiagara(
 	UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayInt32(
 		NiagaraComponent, FName("ResultTrajectoryIds"), ResultTrajectoryIds);
 
+	// Float array: minimum distance reached by each trajectory (parallel to ResultTrajectoryIds)
+	UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayFloat(
+		NiagaraComponent, FName("ResultMinDistances"), ResultMinDistances);
+
 	UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayInt32(
 		NiagaraComponent, FName("ResultTrajStartIndex"), ResultTrajStartIndex);
 
@@ -694,4 +710,3 @@ void ATrajectoryQueryNiagaraActor::TransferResultsToNiagara(
 		QueryPoints.Num(), ResultPoints.Num(), Results.Num(),
 		*ResultBoundsMin.ToString(), *ResultBoundsMax.ToString());
 }
-
