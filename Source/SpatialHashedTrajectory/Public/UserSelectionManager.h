@@ -29,8 +29,8 @@ enum class ETrajectoryDistanceFilter : uint8
 /**
  * Represents one user trajectory selection.
  *
- * Stores the trajectory to examine together with the time window and query
- * radii used for spatial hash lookups.
+ * Stores the trajectory to examine together with the time window and three
+ * query radii used for spatial hash lookups.
  */
 USTRUCT(BlueprintType)
 struct FUserTrajectorySelection
