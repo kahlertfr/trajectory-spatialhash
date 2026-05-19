@@ -29,8 +29,8 @@ enum class ETrajectoryDistanceFilter : uint8
 /**
  * Represents one user trajectory selection.
  *
- * Stores the trajectory to examine together with the time window and the two
- * query radii used for dual-radius spatial hash lookups.
+ * Stores the trajectory to examine together with the time window and query
+ * radii used for spatial hash lookups.
  */
 USTRUCT(BlueprintType)
 struct FUserTrajectorySelection
@@ -49,6 +49,10 @@ struct FUserTrajectorySelection
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "User Selection")
 	int32 TimeEnd = 0;
 
+	/** Whether the selection should be sensitive to the configured time range */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "User Selection")
+	bool TimeRangeSensitive = false;
+
 	/** Inner query radius */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "User Selection")
 	float InnerRadius = 0.f;
@@ -56,6 +60,10 @@ struct FUserTrajectorySelection
 	/** Outer query radius */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "User Selection")
 	float OuterRadius = 0.f;
+
+	/** Collision query radius */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "User Selection")
+	float CollisionRadius = 0.f;
 
 	/** Color encoding mode for rendering/analysis of this trajectory */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "User Selection")

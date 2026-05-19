@@ -264,15 +264,17 @@ The `UUserSelectionManager` class lets you store a list of user-driven trajector
 
 ##### The Selection Data Structure
 
-Each entry in the manager is an `FUserTrajectorySelection` struct with eight fields:
+Each entry in the manager is an `FUserTrajectorySelection` struct with ten fields:
 
 | Field | Type | Description |
 |---|---|---|
 | `TrajectoryId` | `int32` | ID of the selected trajectory |
 | `TimeStart` | `int32` | First time step of the selection (inclusive) |
 | `TimeEnd` | `int32` | Last time step of the selection (inclusive) |
+| `TimeRangeSensitive` | `bool` | Whether this selection should be sensitive to the selected time range |
 | `InnerRadius` | `float` | Inner query radius for dual-radius lookups |
 | `OuterRadius` | `float` | Outer query radius for dual-radius lookups |
+| `CollisionRadius` | `float` | Collision query radius |
 | `ColorEncoding` | `ETrajectoryColorEncoding` | Color mode (`Time`, `Distance`, `Velocity`, `VolumeImage`) |
 | `DistanceFilter` | `ETrajectoryDistanceFilter` | Distance filter (`NoFilter`, `ReachesInnerRadius`, `DoesNotReachInnerRadius`, `Collision`) |
 | `bParticlesVisible` | `bool` | Whether particles are visible for the selected trajectory |
