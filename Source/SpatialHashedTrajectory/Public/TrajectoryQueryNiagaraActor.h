@@ -160,6 +160,21 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visualization")
 	ETrajectoryDistanceFilter DistanceFilter = ETrajectoryDistanceFilter::NoFilter;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visualization")
+	bool ParticleVisibility = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visualization")
+	bool TimeRangeSensitivity = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visualization")
+	float CollisionRadius = 0.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visualization")
+	float InnerRadius = 0.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visualization")
+	float OuterRadius = 0.0f;
+
 	// ─── Blueprint callable entry points ─────────────────────────────────────
 
 	/**
@@ -191,20 +206,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Trajectory Visualization")
 	void SetVisualizationTimeRange(int32 NewTimeStart, int32 NewTimeEnd);
 
-	/**
-	 * Change the color encoding used by the Niagara shader without re-transferring
-	 * trajectory data.  Writes the Niagara user parameter "ColorEncoding" (int) so
-	 * that the shader can immediately switch its coloring scheme.
-	 *
-	 * Call this any time after the Niagara component has been activated.
-	 *
-	 * @param NewColorEncoding  The desired color encoding mode.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "Trajectory Visualization")
-	void SetColorEncoding(ETrajectoryColorEncoding NewColorEncoding);
 
 	UFUNCTION(BlueprintCallable, Category = "Trajectory Visualization")
-	void SetDistanceFilter(ETrajectoryDistanceFilter newDistanceFilter);
+	void UpdateUserParameter(int32 NewTimeStart, int32 NewTimeEnd, ETrajectoryColorEncoding NewColorEncoding, ETrajectoryDistanceFilter newDistanceFilter, float newCollisionRadius, float newInnerRadius, float newOuterRadius, bool newSensitivity, bool newVisibility);
+
 
 	/**
 	 * High-performance parallel/batched async query dispatch.

@@ -13,7 +13,7 @@ enum class ETrajectoryColorEncoding : uint8
 {
 	Time UMETA(DisplayName = "Time"),
 	Distance UMETA(DisplayName = "Distance"),
-	Velocity UMETA(DisplayName = "Velocity"),
+	Velocity UMETA(DisplayName = "Distance Category"),
 	VolumeImage UMETA(DisplayName = "Volume Image")
 };
 
@@ -21,9 +21,9 @@ UENUM(BlueprintType)
 enum class ETrajectoryDistanceFilter : uint8
 {
 	NoFilter UMETA(DisplayName = "No Filter"),
-	ReachesInnerRadius UMETA(DisplayName = "Reaching Inner Radius"),
 	DoesNotReachInnerRadius UMETA(DisplayName = "Not Reaching Inner Radius"),
-	Collision UMETA(DisplayName = "Collision")
+	ReachesInnerRadius UMETA(DisplayName = "Reaching Inner Radius"),
+	StayedInnerRadius UMETA(DisplayName = "Stayed Inner Radius")
 };
 
 /**
