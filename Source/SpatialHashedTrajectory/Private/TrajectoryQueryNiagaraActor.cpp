@@ -431,7 +431,7 @@ void ATrajectoryQueryNiagaraActor::AppendBatchResults(
 	// update.  Pass false so the Niagara system is not deactivated and restarted
 	// on each batch, allowing the already-running emitter to pick up the updated
 	// arrays on its next tick without discarding in-flight particles.
-	TransferResultsToNiagara(CachedQueryPoints, CachedResults, false);
+	TransferResultsToNiagara(CachedQueryPoints, CachedResults, true);
 
 	UE_LOG(LogTemp, Log,
 		TEXT("ATrajectoryQueryNiagaraActor: Batch appended – %d new trajectories, %d total, bounds [%s]–[%s]."),
