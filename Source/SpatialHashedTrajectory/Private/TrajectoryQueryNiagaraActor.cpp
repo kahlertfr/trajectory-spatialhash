@@ -540,9 +540,11 @@ void ATrajectoryQueryNiagaraActor::TransferResultsToNiagara(
 	const int32 NumResultDistances = ResultDistances.Num();
 	const int32 NumResultVolumeIndices = ResultVolumeIndices.Num();
 
-	ensureMsgf(
+	const bool bSampleArraysAligned =
 		NumResultPoints == NumResultDistances &&
-		NumResultPoints == NumResultVolumeIndices,
+		NumResultPoints == NumResultVolumeIndices;
+	ensureMsgf(
+		bSampleArraysAligned,
 		TEXT("ATrajectoryQueryNiagaraActor: Result sample arrays are misaligned (Points=%d, Distances=%d, VolumeIndices=%d)."),
 		NumResultPoints, NumResultDistances, NumResultVolumeIndices);
 
@@ -552,14 +554,22 @@ void ATrajectoryQueryNiagaraActor::TransferResultsToNiagara(
 	const int32 NumResultTrajStartIndices = ResultTrajStartIndex.Num();
 	const int32 NumResultStartTimes = ResultStartTime.Num();
 
-	ensureMsgf(
+	const bool bMetadataArraysAligned =
 		NumResultTrajectoryIds == NumResultMinDistances &&
 		NumResultTrajectoryIds == NumResultMinDistanceTimeSteps &&
 		NumResultTrajectoryIds == NumResultTrajStartIndices &&
-		NumResultTrajectoryIds == NumResultStartTimes,
+		NumResultTrajectoryIds == NumResultStartTimes;
+	ensureMsgf(
+		bMetadataArraysAligned,
 		TEXT("ATrajectoryQueryNiagaraActor: Result trajectory metadata arrays are misaligned (Ids=%d, MinDist=%d, MinTime=%d, StartIdx=%d, StartTime=%d)."),
 		NumResultTrajectoryIds, NumResultMinDistances, NumResultMinDistanceTimeSteps,
 		NumResultTrajStartIndices, NumResultStartTimes);
+
+	if (!bSampleArraysAligned || !bMetadataArraysAligned)
+	{
+		UE_LOG(LogTemp, Error, TEXT("ATrajectoryQueryNiagaraActor: Skipping Niagara transfer due to array alignment error."));
+		return;
+	}
 
 	// ── Build query volume index array ───────────────────────────────────────
 	//
