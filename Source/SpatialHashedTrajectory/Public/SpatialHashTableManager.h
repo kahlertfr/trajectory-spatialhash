@@ -571,6 +571,10 @@ public:
 	 * @param CellSize             Spatial-hash cell size (must match loaded hash tables).
 	 * @param BatchSize            Maximum number of candidate trajectories per batch (e.g. 10000).
 	 * @param ExcludeTrajectoryId  Trajectory ID to exclude from results (-1 to disable).
+	 * @param bIncludeWholeResultTrajectorySamples
+	 *                            When true, include all loaded sample points (for the loaded query-time range)
+	 *                            for each trajectory that has at least one point within Radius.
+	 *                            When false, include only sample points that are within Radius.
 	 * @param BatchCallback        Invoked on the game thread after each batch completes.
 	 */
 	void QueryPositionsBatchedAsync(
@@ -581,6 +585,7 @@ public:
 		float CellSize,
 		int32 BatchSize,
 		int64 ExcludeTrajectoryId,
+		bool bIncludeWholeResultTrajectorySamples,
 		FOnSpatialHashBatchResult BatchCallback);
 
 	/**

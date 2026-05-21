@@ -34,13 +34,15 @@ public:
 	 * or QueryPositions array).
 	 *
 	 * @param TargetActor  The actor whose QueryPositions and query settings to use.
+	 * @param bIncludeWholeResultTrajectorySamples  True: keep whole trajectories for matching results.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Trajectory Visualization",
 		meta = (BlueprintInternalUseOnly = "true", WorldContext = "WorldContextObject",
 		        DisplayName = "Run Query (Async)"))
 	static URunTrajectoryQueryAsyncAction* RunQuery(
 		UObject* WorldContextObject,
-		ATrajectoryQueryNiagaraActor* TargetActor);
+		ATrajectoryQueryNiagaraActor* TargetActor,
+		bool bIncludeWholeResultTrajectorySamples = false);
 
 	/** Fires when all async queries have completed and results are cached on the actor */
 	UPROPERTY(BlueprintAssignable)
@@ -56,6 +58,9 @@ public:
 private:
 	UPROPERTY()
 	ATrajectoryQueryNiagaraActor* Actor;
+
+	UPROPERTY()
+	bool bIncludeWholeTrajectorySamples = false;
 
 	void HandleQueryComplete();
 	void HandleQueryFailed();

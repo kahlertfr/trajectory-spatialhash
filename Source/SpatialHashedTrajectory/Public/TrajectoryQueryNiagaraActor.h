@@ -223,11 +223,19 @@ public:
 	 * loads shard data in parallel, filters against the query radius in parallel,
 	 * and pushes the results to Niagara for progressive visual updates.
 	 *
+	 * @param bIncludeWholeResultTrajectorySamples
+	 *        When true, each matching trajectory includes all loaded sample points
+	 *        in the query time range; when false, only points inside OuterQueryRadius
+	 *        are included.
+	 *
 	 * Calls OnComplete when all batches have been processed, or OnFailure if a
 	 * startup condition is not met (empty DatasetDirectory, empty QueryPositions).
 	 * Returns true if the pipeline was successfully started.
 	 */
-	bool FireAsyncQueriesWithCallback(FSimpleDelegate OnComplete, FSimpleDelegate OnFailure = FSimpleDelegate());
+	bool FireAsyncQueriesWithCallback(
+		FSimpleDelegate OnComplete,
+		FSimpleDelegate OnFailure = FSimpleDelegate(),
+		bool bIncludeWholeResultTrajectorySamples = false);
 
 	/**
 	 * Cancel any in-progress batched query on this actor.

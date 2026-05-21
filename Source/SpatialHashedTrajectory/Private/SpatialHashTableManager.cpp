@@ -2639,6 +2639,7 @@ void USpatialHashTableManager::QueryPositionsBatchedAsync(
 	float CellSize,
 	int32 BatchSize,
 	int64 ExcludeTrajectoryId,
+	bool bIncludeWholeResultTrajectorySamples,
 	FOnSpatialHashBatchResult BatchCallback)
 {
 	if (QueryPositions.IsEmpty() || QueryTimeSteps.Num() != QueryPositions.Num())
@@ -2737,7 +2738,8 @@ void USpatialHashTableManager::QueryPositionsBatchedAsync(
 		[Loader, HashTables, ShardFiles, ShardStartTimes,
 		 QueryPositions, QueryTimeSteps, UnwrappedQueryPositions,
 		 Radius, EffectiveBatchSize, ExcludeTrajectoryId,
-		 PeriodicExtent, bPeriodic, BatchCallback, CancellationToken]()
+		 PeriodicExtent, bPeriodic, bIncludeWholeResultTrajectorySamples,
+		 BatchCallback, CancellationToken]()
 	{
 		// ── PHASE 1: Parallel nearest-neighbour queries ───────────────────────
 		//
@@ -2850,9 +2852,24 @@ void USpatialHashTableManager::QueryPositionsBatchedAsync(
 
 		TArray<FCandidateInfo> CandidateList;
 		CandidateList.Reserve(AllCandidates.Num());
+
+		int32 GlobalQueryStartTime = INT32_MAX;
+		int32 GlobalQueryEndTime = INT32_MIN;
+		for (const int32 QueryTimeStep : QueryTimeSteps)
+		{
+			GlobalQueryStartTime = FMath::Min(GlobalQueryStartTime, QueryTimeStep);
+			GlobalQueryEndTime = FMath::Max(GlobalQueryEndTime, QueryTimeStep);
+		}
+
 		for (const auto& Pair : AllCandidates)
 		{
-			CandidateList.Add({Pair.Key, Pair.Value.Key, Pair.Value.Value});
+			const int32 CandidateStartTime = bIncludeWholeResultTrajectorySamples
+				? GlobalQueryStartTime
+				: Pair.Value.Key;
+			const int32 CandidateEndTime = bIncludeWholeResultTrajectorySamples
+				? GlobalQueryEndTime
+				: Pair.Value.Value;
+			CandidateList.Add({Pair.Key, CandidateStartTime, CandidateEndTime});
 		}
 
 		// Build timestep → UNWRAPPED query position lookup (read-only from all threads).
@@ -3056,6 +3073,7 @@ void USpatialHashTableManager::QueryPositionsBatchedAsync(
 				// binary format), which is sufficient for all valid shard data values.
 				FSpatialHashQueryResult Result(static_cast<int32>(TrajData.TrajectoryId));
 				Result.SamplePoints.Reserve(TrajData.Positions.Num());
+				bool bHasSampleInsideRadius = false;
 
 				for (int32 i = 0; i < TrajData.Positions.Num(); ++i)
 				{
@@ -3067,39 +3085,72 @@ void USpatialHashTableManager::QueryPositionsBatchedAsync(
 
 					const int32    GlobalTimeStep = TrajData.StartTimeStep + i;
 					const FVector* QueryPos       = QueryPosAtTimeStep.Find(GlobalTimeStep);
-					if (!QueryPos)
-					{
-						continue; // no query position for this timestep
-					}
+					float DistSq = FLT_MAX;
+					int32 VolumeIndex = 0;
 
-					float DistSq;
-					if (bPeriodic)
+					if (QueryPos)
 					{
-						// Use the minimum-image convention for the radius check so that
-						// samples near a periodic boundary are not missed.  Original
-						// simulation coordinates are preserved in the result — the
-						// rendering layer handles the periodic volume and boundary jumps.
-						DistSq = PeriodicDistSq(*QueryPos, Pos, PeriodicExtent);
+						if (bPeriodic)
+						{
+							// Use the minimum-image convention for the radius check so that
+							// samples near a periodic boundary are not missed.  Original
+							// simulation coordinates are preserved in the result — the
+							// rendering layer handles the periodic volume and boundary jumps.
+							DistSq = PeriodicDistSq(*QueryPos, Pos, PeriodicExtent);
+							VolumeIndex = ComputeVolumeIndex(Pos, *QueryPos, PeriodicExtent);
+						}
+						else
+						{
+							DistSq = FVector::DistSquared(*QueryPos, Pos);
+						}
 					}
-					else
+					else if (bIncludeWholeResultTrajectorySamples && UnwrappedQueryPositions.Num() > 0)
 					{
-						DistSq = FVector::DistSquared(*QueryPos, Pos);
+						// No same-timestep query sample exists (e.g. sparse query trajectory).
+						// Use the nearest query sample across the trajectory to provide
+						// meaningful distance and periodic volume-index values.
+						float BestDistSq = FLT_MAX;
+						FVector BestQueryPos = FVector::ZeroVector;
+						for (const FVector& CandidateQueryPos : UnwrappedQueryPositions)
+						{
+							const float CandidateDistSq = bPeriodic
+								? PeriodicDistSq(CandidateQueryPos, Pos, PeriodicExtent)
+								: FVector::DistSquared(CandidateQueryPos, Pos);
+							if (CandidateDistSq < BestDistSq)
+							{
+								BestDistSq = CandidateDistSq;
+								BestQueryPos = CandidateQueryPos;
+							}
+						}
+
+						DistSq = BestDistSq;
+						if (bPeriodic)
+						{
+							VolumeIndex = ComputeVolumeIndex(Pos, BestQueryPos, PeriodicExtent);
+						}
 					}
 
 					if (DistSq <= RadiusSq)
 					{
-						FTrajectorySamplePoint Sample;
-						Sample.Position = Pos; // Original simulation coordinates.
-						Sample.TimeStep = GlobalTimeStep;
-						Sample.Distance = FMath::Sqrt(DistSq);
-						// Compute the volume index so the rendering layer can correctly
-						// place this sample in world space when periodic boundaries are active.
-						if (bPeriodic)
-						{
-							Sample.VolumeIndex = ComputeVolumeIndex(Pos, *QueryPos, PeriodicExtent);
-						}
-						Result.SamplePoints.Add(Sample);
+						bHasSampleInsideRadius = true;
 					}
+
+					if (!bIncludeWholeResultTrajectorySamples && DistSq > RadiusSq)
+					{
+						continue;
+					}
+
+					FTrajectorySamplePoint Sample;
+					Sample.Position = Pos; // Original simulation coordinates.
+					Sample.TimeStep = GlobalTimeStep;
+					Sample.Distance = FMath::Sqrt(DistSq);
+					Sample.VolumeIndex = VolumeIndex;
+					Result.SamplePoints.Add(Sample);
+				}
+
+				if (bIncludeWholeResultTrajectorySamples && !bHasSampleInsideRadius)
+				{
+					Result.SamplePoints.Reset();
 				}
 
 				if (Result.SamplePoints.Num() > 0)
@@ -3135,4 +3186,3 @@ void USpatialHashTableManager::QueryPositionsBatchedAsync(
 		}
 	});
 }
-

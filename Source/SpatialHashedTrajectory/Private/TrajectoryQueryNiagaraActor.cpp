@@ -205,7 +205,8 @@ void ATrajectoryQueryNiagaraActor::UpdateUserParameter(int32 NewTimeStart, int32
 
 bool ATrajectoryQueryNiagaraActor::FireAsyncQueriesWithCallback(
 	FSimpleDelegate OnComplete,
-	FSimpleDelegate OnFailure)
+	FSimpleDelegate OnFailure,
+	bool bIncludeWholeResultTrajectorySamples)
 {
 	if (!InitializeManager())
 	{
@@ -373,6 +374,7 @@ bool ATrajectoryQueryNiagaraActor::FireAsyncQueriesWithCallback(
 		CellSize,
 		BatchSize,
 		-1LL, // no trajectory to exclude
+		bIncludeWholeResultTrajectorySamples,
 		MoveTemp(BatchCallback)
 	);
 
@@ -535,6 +537,38 @@ void ATrajectoryQueryNiagaraActor::TransferResultsToNiagara(
 			ResultDistances.Add(Sample.Distance);
 			ResultVolumeIndices.Add(Sample.VolumeIndex);
 		}
+	}
+
+	const int32 NumResultPoints = ResultPoints.Num();
+	const int32 NumResultDistances = ResultDistances.Num();
+	const int32 NumResultVolumeIndices = ResultVolumeIndices.Num();
+
+	const bool bSampleArraysAligned =
+		NumResultPoints == NumResultDistances &&
+		NumResultPoints == NumResultVolumeIndices;
+	const int32 NumResultTrajectoryIds = ResultTrajectoryIds.Num();
+	const int32 NumResultMinDistances = ResultMinDistances.Num();
+	const int32 NumResultMinDistanceTimeSteps = ResultMinDistanceTimeSteps.Num();
+	const int32 NumResultTrajStartIndices = ResultTrajStartIndex.Num();
+	const int32 NumResultStartTimes = ResultStartTime.Num();
+
+	const bool bMetadataArraysAligned =
+		NumResultTrajectoryIds == NumResultMinDistances &&
+		NumResultTrajectoryIds == NumResultMinDistanceTimeSteps &&
+		NumResultTrajectoryIds == NumResultTrajStartIndices &&
+		NumResultTrajectoryIds == NumResultStartTimes;
+	if (!bSampleArraysAligned || !bMetadataArraysAligned)
+	{
+		UE_LOG(LogTemp, Error,
+			TEXT("ATrajectoryQueryNiagaraActor: Skipping Niagara transfer due to array alignment error. ")
+			TEXT("SampleAligned=%d (Points=%d, Distances=%d, VolumeIndices=%d), ")
+			TEXT("MetadataAligned=%d (Ids=%d, MinDist=%d, MinTime=%d, StartIdx=%d, StartTime=%d)."),
+			bSampleArraysAligned ? 1 : 0,
+			NumResultPoints, NumResultDistances, NumResultVolumeIndices,
+			bMetadataArraysAligned ? 1 : 0,
+			NumResultTrajectoryIds, NumResultMinDistances, NumResultMinDistanceTimeSteps,
+			NumResultTrajStartIndices, NumResultStartTimes);
+		return;
 	}
 
 	// ── Build query volume index array ───────────────────────────────────────

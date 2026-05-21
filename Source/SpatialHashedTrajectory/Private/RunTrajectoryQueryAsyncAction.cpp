@@ -5,10 +5,12 @@
 
 URunTrajectoryQueryAsyncAction* URunTrajectoryQueryAsyncAction::RunQuery(
 	UObject* WorldContextObject,
-	ATrajectoryQueryNiagaraActor* TargetActor)
+	ATrajectoryQueryNiagaraActor* TargetActor,
+	bool bIncludeWholeResultTrajectorySamples)
 {
 	URunTrajectoryQueryAsyncAction* Action = NewObject<URunTrajectoryQueryAsyncAction>();
 	Action->Actor = TargetActor;
+	Action->bIncludeWholeTrajectorySamples = bIncludeWholeResultTrajectorySamples;
 	Action->RegisterWithGameInstance(WorldContextObject);
 	return Action;
 }
@@ -38,7 +40,8 @@ void URunTrajectoryQueryAsyncAction::Activate()
 			{
 				This->HandleQueryFailed();
 			}
-		})
+		}),
+		bIncludeWholeTrajectorySamples
 	);
 }
 
