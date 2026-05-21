@@ -57,13 +57,17 @@ struct FUserTrajectorySelection
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "User Selection")
 	float InnerRadius = 0.f;
 
-	/** Outer query radius */
+	/** Query radius */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "User Selection")
-	float OuterRadius = 0.f;
+	float QueryRadius = 0.f;
 
-	/** Collision query radius */
+	/** Visibility radius */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "User Selection")
-	float CollisionRadius = 0.f;
+	float VisibilityRadius = 0.f;
+
+	/** Particle radius */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "User Selection")
+	float ParticleRadius = 0.f;
 
 	/** Color encoding mode for rendering/analysis of this trajectory */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "User Selection")
