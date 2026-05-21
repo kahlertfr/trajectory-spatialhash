@@ -228,7 +228,7 @@ Use `ASampleTrajectoryNiagaraActor` to showcase path view and object-centered vi
 2. Assign the same **Niagara System** asset used by `ATrajectoryQueryNiagaraActor` to the actor's **NiagaraSystem** property.
 3. Pick the **SelectedScenario** (A–F) in the Details panel, or call `SetSelectedScenario` at runtime.
 4. (Optional) Assign a **UserSelectionManager** to have time range / radius / color updates pushed to Niagara.
-   - The actor looks for a selection whose `TrajectoryId` matches the scenario index (A=0 … F=5).
+   - The actor looks for a selection whose `TrajectoryId` matches the scenario index (A=0 ... F=5).
    - If none match, it applies the first available selection.
 
 **Generated data defaults:**
