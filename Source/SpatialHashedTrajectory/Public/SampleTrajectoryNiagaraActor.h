@@ -36,7 +36,7 @@ public:
 
 	// ─── Sample Scenario Settings ────────────────────────────────────────────
 
-	/** Which sample query trajectory (A-F) is currently visualized */
+	/** Which sample query trajectory (A–F) is currently visualized */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Sample Data")
 	ESampleTrajectoryScenario SelectedScenario = ESampleTrajectoryScenario::A;
 

@@ -221,7 +221,7 @@ For queries with actual distance calculations using TrajectoryData, see the [Nea
 
 #### Sample Niagara Visualization Actor
 
-Use `ASampleTrajectoryNiagaraActor` to showcase path view and object-centered view without running any spatial hash queries.
+Use `ASampleTrajectoryNiagaraActor` to showcase path view (world-space trajectories) and object-centered view (trajectories aligned to the moving object's frame) without running any spatial hash queries.
 
 **Placement steps:**
 1. In the level editor, add **SampleTrajectoryNiagaraActor** (Place Actors → All Classes → SampleTrajectoryNiagaraActor).

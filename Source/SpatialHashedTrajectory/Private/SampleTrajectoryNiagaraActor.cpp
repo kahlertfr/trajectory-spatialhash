@@ -350,6 +350,7 @@ void ASampleTrajectoryNiagaraActor::BuildScenarioData(ESampleTrajectoryScenario 
 			else
 			{
 				const int32 MidpointStep = Steps / 2;
+				const int32 RemainingSteps = Steps - MidpointStep - 1;
 				float Distance = ApproachRadiusMin;
 				if (i <= MidpointStep)
 				{
@@ -358,12 +359,12 @@ void ASampleTrajectoryNiagaraActor::BuildScenarioData(ESampleTrajectoryScenario 
 						ApproachRadiusMin,
 						static_cast<float>(i) / static_cast<float>(MidpointStep));
 				}
-				else if (Steps - MidpointStep - 1 > 0)
+				else if (RemainingSteps > 0)
 				{
 					Distance = FMath::Lerp(
 						ApproachRadiusMin,
 						ApproachRadiusMax,
-						static_cast<float>(i - MidpointStep) / static_cast<float>(Steps - MidpointStep - 1));
+						static_cast<float>(i - MidpointStep) / static_cast<float>(RemainingSteps));
 				}
 				LocalOffset = FVector(Distance, 0.0f, 0.0f);
 			}
