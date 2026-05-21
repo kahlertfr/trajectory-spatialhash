@@ -536,20 +536,30 @@ void ATrajectoryQueryNiagaraActor::TransferResultsToNiagara(
 		}
 	}
 
-	ensureMsgf(
-		ResultPoints.Num() == ResultDistances.Num() &&
-		ResultPoints.Num() == ResultVolumeIndices.Num(),
-		TEXT("ATrajectoryQueryNiagaraActor: Result sample arrays are misaligned (Points=%d, Distances=%d, VolumeIndices=%d)."),
-		ResultPoints.Num(), ResultDistances.Num(), ResultVolumeIndices.Num());
+	const int32 NumResultPoints = ResultPoints.Num();
+	const int32 NumResultDistances = ResultDistances.Num();
+	const int32 NumResultVolumeIndices = ResultVolumeIndices.Num();
 
 	ensureMsgf(
-		ResultTrajectoryIds.Num() == ResultMinDistances.Num() &&
-		ResultTrajectoryIds.Num() == ResultMinDistanceTimeSteps.Num() &&
-		ResultTrajectoryIds.Num() == ResultTrajStartIndex.Num() &&
-		ResultTrajectoryIds.Num() == ResultStartTime.Num(),
+		NumResultPoints == NumResultDistances &&
+		NumResultPoints == NumResultVolumeIndices,
+		TEXT("ATrajectoryQueryNiagaraActor: Result sample arrays are misaligned (Points=%d, Distances=%d, VolumeIndices=%d)."),
+		NumResultPoints, NumResultDistances, NumResultVolumeIndices);
+
+	const int32 NumResultTrajectoryIds = ResultTrajectoryIds.Num();
+	const int32 NumResultMinDistances = ResultMinDistances.Num();
+	const int32 NumResultMinDistanceTimeSteps = ResultMinDistanceTimeSteps.Num();
+	const int32 NumResultTrajStartIndices = ResultTrajStartIndex.Num();
+	const int32 NumResultStartTimes = ResultStartTime.Num();
+
+	ensureMsgf(
+		NumResultTrajectoryIds == NumResultMinDistances &&
+		NumResultTrajectoryIds == NumResultMinDistanceTimeSteps &&
+		NumResultTrajectoryIds == NumResultTrajStartIndices &&
+		NumResultTrajectoryIds == NumResultStartTimes,
 		TEXT("ATrajectoryQueryNiagaraActor: Result trajectory metadata arrays are misaligned (Ids=%d, MinDist=%d, MinTime=%d, StartIdx=%d, StartTime=%d)."),
-		ResultTrajectoryIds.Num(), ResultMinDistances.Num(), ResultMinDistanceTimeSteps.Num(),
-		ResultTrajStartIndex.Num(), ResultStartTime.Num());
+		NumResultTrajectoryIds, NumResultMinDistances, NumResultMinDistanceTimeSteps,
+		NumResultTrajStartIndices, NumResultStartTimes);
 
 	// ── Build query volume index array ───────────────────────────────────────
 	//
