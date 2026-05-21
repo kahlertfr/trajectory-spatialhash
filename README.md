@@ -219,6 +219,25 @@ On Some Event
 
 For queries with actual distance calculations using TrajectoryData, see the [Nearest Neighbor Query Guide](NEAREST_NEIGHBOR_QUERY_GUIDE.md) for detailed examples.
 
+#### Sample Niagara Visualization Actor
+
+Use `ASampleTrajectoryNiagaraActor` to showcase path view and object-centered view without running any spatial hash queries.
+
+**Placement steps:**
+1. In the level editor, add **SampleTrajectoryNiagaraActor** (Place Actors → All Classes → SampleTrajectoryNiagaraActor).
+2. Assign the same **Niagara System** asset used by `ATrajectoryQueryNiagaraActor` to the actor's **NiagaraSystem** property.
+3. Pick the **SelectedScenario** (A–F) in the Details panel, or call `SetSelectedScenario` at runtime.
+4. (Optional) Assign a **UserSelectionManager** to have time range / radius / color updates pushed to Niagara.
+   - The actor looks for a selection whose `TrajectoryId` matches the scenario index (A=0 … F=5).
+   - If none match, it applies the first available selection.
+
+**Generated data defaults:**
+- Periodic volume extent: **5×5×5**
+- Timesteps: **360**
+- Query object radius: **0.5**
+- Inner radius: **0.6**
+- Particle radius: **0.01**
+
 **Query Types:**
 - **Single Point, Single Timestep (Case A)**: Returns one sample per trajectory within radius at a specific time
 - **Single Point, Time Range (Case B)**: Returns trajectories with samples within radius over a time range
