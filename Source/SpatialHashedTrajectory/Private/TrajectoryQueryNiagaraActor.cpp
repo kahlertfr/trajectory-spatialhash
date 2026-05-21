@@ -202,7 +202,8 @@ void ATrajectoryQueryNiagaraActor::UpdateUserParameter(int32 NewTimeStart, int32
 
 bool ATrajectoryQueryNiagaraActor::FireAsyncQueriesWithCallback(
 	FSimpleDelegate OnComplete,
-	FSimpleDelegate OnFailure)
+	FSimpleDelegate OnFailure,
+	bool bIncludeWholeResultTrajectorySamples)
 {
 	if (!InitializeManager())
 	{
@@ -370,6 +371,7 @@ bool ATrajectoryQueryNiagaraActor::FireAsyncQueriesWithCallback(
 		CellSize,
 		BatchSize,
 		-1LL, // no trajectory to exclude
+		bIncludeWholeResultTrajectorySamples,
 		MoveTemp(BatchCallback)
 	);
 
