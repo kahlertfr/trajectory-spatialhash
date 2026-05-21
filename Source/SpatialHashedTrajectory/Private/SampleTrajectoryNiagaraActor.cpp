@@ -340,7 +340,7 @@ void ASampleTrajectoryNiagaraActor::BuildScenarioData(ESampleTrajectoryScenario 
 			FVector LocalOffset = FVector::ZeroVector;
 			if (TrajectoryIndex == 0)
 			{
-				const float Angle = 2.0f * PI * (static_cast<float>(i) / static_cast<float>(Steps));
+				const float Angle = 2.0f * UE_PI * (static_cast<float>(i) / static_cast<float>(Steps));
 				LocalOffset = FVector(FMath::Cos(Angle) * CircleRadius, FMath::Sin(Angle) * CircleRadius, 0.0f);
 			}
 			else if (TrajectoryIndex == 1)
@@ -442,7 +442,7 @@ void ASampleTrajectoryNiagaraActor::TransferScenarioToNiagara(ESampleTrajectoryS
 	{
 		ResultTrajectoryIds.Add(Result.TrajectoryId);
 		float MinDistance = 0.0f;
-		int32 MinDistanceTimeStep = INDEX_NONE;
+		int32 MinDistanceTimeStep = 0;
 		bool bHasMinDistance = false;
 
 		for (const FTrajectorySamplePoint& Sample : Result.SamplePoints)
