@@ -11,6 +11,10 @@ namespace
 	constexpr float StaticRadius = 0.7f;
 	constexpr float ApproachRadiusMin = 0.55f;
 	constexpr float ApproachRadiusMax = 0.9f;
+	constexpr int32 CurvyScenarioSeed = 1337;
+	constexpr int32 CurvyChangeInterval = 45;
+	constexpr float CurvySpeed = 0.02f;
+	constexpr float CurvyBlend = 0.05f;
 
 	FVector WrapToExtent(const FVector& Position, const FVector& Extent)
 	{
@@ -219,7 +223,7 @@ void ASampleTrajectoryNiagaraActor::BuildScenarioData()
 		return;
 	}
 
-	const int32 ScenarioCount = 6;
+	const int32 ScenarioCount = ScenarioToIndex(ESampleTrajectoryScenario::F) + 1;
 	ScenarioCache.SetNum(ScenarioCount);
 	for (int32 Index = 0; Index < ScenarioCount; ++Index)
 	{
@@ -273,16 +277,16 @@ void ASampleTrajectoryNiagaraActor::BuildScenarioData(ESampleTrajectoryScenario 
 	}
 	case ESampleTrajectoryScenario::E:
 	{
-		FRandomStream Random(1337);
+		FRandomStream Random(CurvyScenarioSeed);
 		FVector Position(
 			Random.FRandRange(0.5f, 4.5f),
 			Random.FRandRange(0.5f, 4.5f),
 			Random.FRandRange(0.5f, 4.5f));
 		FVector Direction = Random.VRand();
 		FVector TargetDirection = Direction;
-		const int32 ChangeInterval = 45;
-		const float Speed = 0.02f;
-		const float Blend = 0.05f;
+		const int32 ChangeInterval = CurvyChangeInterval;
+		const float Speed = CurvySpeed;
+		const float Blend = CurvyBlend;
 
 		for (int32 i = 0; i < Steps; ++i)
 		{
