@@ -233,7 +233,7 @@ Use `ASampleTrajectoryNiagaraActor` to showcase path view and object-centered vi
 
 **Generated data defaults:**
 - Periodic volume extent: **5×5×5**
-- Timesteps: **360**
+- Time steps: **360**
 - Query object radius: **0.5**
 - Inner radius: **0.6**
 - Particle radius: **0.01**
