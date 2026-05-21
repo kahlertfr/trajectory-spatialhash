@@ -167,13 +167,16 @@ public:
 	bool TimeRangeSensitivity = false;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visualization")
-	float CollisionRadius = 0.0f;
+	float ParticleRadius = 0.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visualization")
 	float InnerRadius = 0.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visualization")
-	float OuterRadius = 0.0f;
+	float QueryRadius = 0.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visualization")
+	float VisibilityRadius = 0.0f;
 
 	// ─── Blueprint callable entry points ─────────────────────────────────────
 
@@ -208,7 +211,7 @@ public:
 
 
 	UFUNCTION(BlueprintCallable, Category = "Trajectory Visualization")
-	void UpdateUserParameter(int32 NewTimeStart, int32 NewTimeEnd, ETrajectoryColorEncoding NewColorEncoding, ETrajectoryDistanceFilter newDistanceFilter, float newCollisionRadius, float newInnerRadius, float newOuterRadius, bool newSensitivity, bool newVisibility);
+	void UpdateUserParameter(int32 NewTimeStart, int32 NewTimeEnd, ETrajectoryColorEncoding NewColorEncoding, ETrajectoryDistanceFilter newDistanceFilter, float NewParticleRadius, float NewInnerRadius, float NewQueryRadius, float NewVisibilityRadius, bool NewSensitivity, bool NewVisibility);
 
 
 	/**

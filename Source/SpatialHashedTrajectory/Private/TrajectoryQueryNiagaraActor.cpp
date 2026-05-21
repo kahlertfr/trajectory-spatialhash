@@ -48,6 +48,7 @@ ATrajectoryQueryNiagaraActor::ATrajectoryQueryNiagaraActor()
 	VisualizationTimeStart = QueryTimeStart;
 	VisualizationTimeEnd   = QueryTimeEnd;
 	ColorEncoding = ETrajectoryColorEncoding::Time;
+	QueryRadius = OuterQueryRadius;
 }
 
 void ATrajectoryQueryNiagaraActor::BeginPlay()
@@ -165,17 +166,18 @@ void ATrajectoryQueryNiagaraActor::SetVisualizationTimeRange(int32 NewTimeStart,
 }
 
 
-void ATrajectoryQueryNiagaraActor::UpdateUserParameter(int32 NewTimeStart, int32 NewTimeEnd, ETrajectoryColorEncoding NewColorEncoding, ETrajectoryDistanceFilter newDistanceFilter, float newCollisionRadius, float newInnerRadius, float newOuterRadius, bool newSensitivity, bool newVisibility)
+void ATrajectoryQueryNiagaraActor::UpdateUserParameter(int32 NewTimeStart, int32 NewTimeEnd, ETrajectoryColorEncoding NewColorEncoding, ETrajectoryDistanceFilter NewDistanceFilter, float NewParticleRadius, float NewInnerRadius, float NewQueryRadius, float NewVisibilityRadius, bool NewSensitivity, bool NewVisibility)
 {
 	VisualizationTimeStart = NewTimeStart;
 	VisualizationTimeEnd = NewTimeEnd;
 	ColorEncoding = NewColorEncoding;
-	DistanceFilter = newDistanceFilter;
-	CollisionRadius = newCollisionRadius;
-	InnerRadius = newInnerRadius;
-	OuterRadius = newOuterRadius;
-	TimeRangeSensitivity = newSensitivity;
-	ParticleVisibility = newVisibility;
+	DistanceFilter = NewDistanceFilter;
+	ParticleRadius = NewParticleRadius;
+	InnerRadius = NewInnerRadius;
+	QueryRadius = NewQueryRadius;
+	VisibilityRadius = NewVisibilityRadius;
+	TimeRangeSensitivity = NewSensitivity;
+	ParticleVisibility = NewVisibility;
 
 	if (!NiagaraComponent)
 	{
@@ -188,9 +190,10 @@ void ATrajectoryQueryNiagaraActor::UpdateUserParameter(int32 NewTimeStart, int32
 	NiagaraComponent->SetVariableInt(FName("VisTimeEnd"), VisualizationTimeEnd);
 	NiagaraComponent->SetVariableInt(FName("ColorEncoding"), static_cast<int32>(ColorEncoding));
 	NiagaraComponent->SetVariableInt(FName("DistanceFilter"), static_cast<int32>(DistanceFilter));
-	NiagaraComponent->SetVariableFloat(FName("CollisionRadius"), CollisionRadius);
+	NiagaraComponent->SetVariableFloat(FName("ParticleRadius"), ParticleRadius);
 	NiagaraComponent->SetVariableFloat(FName("InnerRadius"), InnerRadius);
-	NiagaraComponent->SetVariableFloat(FName("OuterRadius"), OuterRadius);
+	NiagaraComponent->SetVariableFloat(FName("QueryRadius"), QueryRadius);
+	NiagaraComponent->SetVariableFloat(FName("VisibilityRadius"), VisibilityRadius);
 	NiagaraComponent->SetVariableBool(FName("TimeRangeSensitive"), TimeRangeSensitivity);
 	NiagaraComponent->SetVariableBool(FName("ParticleVisibility"), ParticleVisibility);
 
@@ -682,9 +685,9 @@ void ATrajectoryQueryNiagaraActor::TransferResultsToNiagara(
 
 	// Scalar user parameters
 	NiagaraComponent->SetVariableFloat(FName("InnerRadius"), InnerRadius);
-	NiagaraComponent->SetVariableFloat(FName("QueryRadius"), OuterQueryRadius);
-	NiagaraComponent->SetVariableFloat(FName("OuterRadius"), OuterRadius);
-	NiagaraComponent->SetVariableFloat(FName("CollisionRadius"), CollisionRadius);
+	NiagaraComponent->SetVariableFloat(FName("QueryRadius"), QueryRadius);
+	NiagaraComponent->SetVariableFloat(FName("VisibilityRadius"), VisibilityRadius);
+	NiagaraComponent->SetVariableFloat(FName("ParticleRadius"), ParticleRadius);
 	NiagaraComponent->SetVariableInt(FName("QueryTimeStart"), QueryTimeStart);
 	NiagaraComponent->SetVariableInt(FName("QueryTimeEnd"), QueryTimeEnd);
 
