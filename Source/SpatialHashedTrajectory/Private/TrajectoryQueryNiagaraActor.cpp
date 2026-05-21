@@ -431,7 +431,7 @@ void ATrajectoryQueryNiagaraActor::AppendBatchResults(
 	// update.  Pass false so the Niagara system is not deactivated and restarted
 	// on each batch, allowing the already-running emitter to pick up the updated
 	// arrays on its next tick without discarding in-flight particles.
-	TransferResultsToNiagara(CachedQueryPoints, CachedResults, true);
+	TransferResultsToNiagara(CachedQueryPoints, CachedResults, false);
 
 	UE_LOG(LogTemp, Log,
 		TEXT("ATrajectoryQueryNiagaraActor: Batch appended – %d new trajectories, %d total, bounds [%s]–[%s]."),
@@ -535,6 +535,21 @@ void ATrajectoryQueryNiagaraActor::TransferResultsToNiagara(
 			ResultVolumeIndices.Add(Sample.VolumeIndex);
 		}
 	}
+
+	ensureMsgf(
+		ResultPoints.Num() == ResultDistances.Num() &&
+		ResultPoints.Num() == ResultVolumeIndices.Num(),
+		TEXT("ATrajectoryQueryNiagaraActor: Result sample arrays are misaligned (Points=%d, Distances=%d, VolumeIndices=%d)."),
+		ResultPoints.Num(), ResultDistances.Num(), ResultVolumeIndices.Num());
+
+	ensureMsgf(
+		ResultTrajectoryIds.Num() == ResultMinDistances.Num() &&
+		ResultTrajectoryIds.Num() == ResultMinDistanceTimeSteps.Num() &&
+		ResultTrajectoryIds.Num() == ResultTrajStartIndex.Num() &&
+		ResultTrajectoryIds.Num() == ResultStartTime.Num(),
+		TEXT("ATrajectoryQueryNiagaraActor: Result trajectory metadata arrays are misaligned (Ids=%d, MinDist=%d, MinTime=%d, StartIdx=%d, StartTime=%d)."),
+		ResultTrajectoryIds.Num(), ResultMinDistances.Num(), ResultMinDistanceTimeSteps.Num(),
+		ResultTrajStartIndex.Num(), ResultStartTime.Num());
 
 	// ── Build query volume index array ───────────────────────────────────────
 	//
