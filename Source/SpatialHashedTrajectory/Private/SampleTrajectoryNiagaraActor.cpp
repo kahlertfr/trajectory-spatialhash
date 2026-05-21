@@ -40,11 +40,32 @@ namespace
 			return 0;
 		}
 
-		const int32 ix = (Extent.X > 0.0f) ? FMath::RoundToInt((Unwrapped.X - Raw.X) / Extent.X) : 0;
-		const int32 iy = (Extent.Y > 0.0f) ? FMath::RoundToInt((Unwrapped.Y - Raw.Y) / Extent.Y) : 0;
-		const int32 iz = (Extent.Z > 0.0f) ? FMath::RoundToInt((Unwrapped.Z - Raw.Z) / Extent.Z) : 0;
+		auto EncodeAxis = [](float RawValue, float UnwrappedValue, float AxisExtent)
+		{
+			return (AxisExtent > 0.0f) ? FMath::RoundToInt((UnwrappedValue - RawValue) / AxisExtent) : 0;
+		};
+
+		const int32 ix = EncodeAxis(Raw.X, Unwrapped.X, Extent.X);
+		const int32 iy = EncodeAxis(Raw.Y, Unwrapped.Y, Extent.Y);
+		const int32 iz = EncodeAxis(Raw.Z, Unwrapped.Z, Extent.Z);
 
 		return (ix & 0xFF) | ((iy & 0xFF) << 8) | ((iz & 0xFF) << 16);
+	}
+
+	FVector DecodeVolumeIndexToOffset(int32 VolumeIndex, const FVector& Extent)
+	{
+		if (VolumeIndex == 0 || Extent.IsNearlyZero())
+		{
+			return FVector::ZeroVector;
+		}
+
+		int32 ix = VolumeIndex & 0xFF;
+		int32 iy = (VolumeIndex >> 8) & 0xFF;
+		int32 iz = (VolumeIndex >> 16) & 0xFF;
+		if (ix >= 128) ix -= 256;
+		if (iy >= 128) iy -= 256;
+		if (iz >= 128) iz -= 256;
+		return FVector(ix * Extent.X, iy * Extent.Y, iz * Extent.Z);
 	}
 
 	FVector GetForwardAt(const TArray<FVector>& Points, int32 Index)
@@ -324,18 +345,21 @@ void ASampleTrajectoryNiagaraActor::BuildScenarioData(ESampleTrajectoryScenario 
 			}
 			else
 			{
-				const int32 Half = Steps / 2;
+				const int32 MidpointStep = Steps / 2;
 				float Distance = ApproachRadiusMin;
-				if (i <= Half)
+				if (i <= MidpointStep)
 				{
-					Distance = FMath::Lerp(ApproachRadiusMax, ApproachRadiusMin, static_cast<float>(i) / static_cast<float>(Half));
+					Distance = FMath::Lerp(
+						ApproachRadiusMax,
+						ApproachRadiusMin,
+						static_cast<float>(i) / static_cast<float>(MidpointStep));
 				}
-				else if (Steps - Half - 1 > 0)
+				else if (Steps - MidpointStep - 1 > 0)
 				{
 					Distance = FMath::Lerp(
 						ApproachRadiusMin,
 						ApproachRadiusMax,
-						static_cast<float>(i - Half) / static_cast<float>(Steps - Half - 1));
+						static_cast<float>(i - MidpointStep) / static_cast<float>(Steps - MidpointStep - 1));
 				}
 				LocalOffset = FVector(Distance, 0.0f, 0.0f);
 			}
@@ -363,10 +387,7 @@ void ASampleTrajectoryNiagaraActor::BuildScenarioData(ESampleTrajectoryScenario 
 	{
 		for (const FTrajectorySamplePoint& Sample : Result.SamplePoints)
 		{
-			const FVector Unwrapped = Sample.Position + FVector(
-				((Sample.VolumeIndex & 0xFF) >= 128 ? (Sample.VolumeIndex & 0xFF) - 256 : (Sample.VolumeIndex & 0xFF)) * PeriodicVolumeExtent.X,
-				(((Sample.VolumeIndex >> 8) & 0xFF) >= 128 ? ((Sample.VolumeIndex >> 8) & 0xFF) - 256 : ((Sample.VolumeIndex >> 8) & 0xFF)) * PeriodicVolumeExtent.Y,
-				(((Sample.VolumeIndex >> 16) & 0xFF) >= 128 ? ((Sample.VolumeIndex >> 16) & 0xFF) - 256 : ((Sample.VolumeIndex >> 16) & 0xFF)) * PeriodicVolumeExtent.Z);
+			const FVector Unwrapped = Sample.Position + DecodeVolumeIndexToOffset(Sample.VolumeIndex, PeriodicVolumeExtent);
 			Bounds += Unwrapped;
 		}
 	}
