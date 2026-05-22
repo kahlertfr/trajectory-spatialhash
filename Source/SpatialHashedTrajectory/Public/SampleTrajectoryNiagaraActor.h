@@ -129,7 +129,7 @@ private:
 	bool bScenarioDataBuilt = false;
 
 	UFUNCTION()
-	void HandleSelectionsChanged(const TArray<FUserTrajectorySelection>& Selections);
+	void HandleSelectionsChanged(TArray<FUserTrajectorySelection> Selections);
 
 	void ApplyUserSelection(const FUserTrajectorySelection& Selection);
 	void UpdateUserParametersOnNiagara();
