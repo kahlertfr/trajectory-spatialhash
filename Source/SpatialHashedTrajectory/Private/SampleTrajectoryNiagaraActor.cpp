@@ -157,7 +157,7 @@ void ASampleTrajectoryNiagaraActor::RefreshVisualization()
 	TransferScenarioToNiagara(SelectedScenario);
 }
 
-void ASampleTrajectoryNiagaraActor::HandleSelectionsChanged(TArray<FUserTrajectorySelection> Selections)
+void ASampleTrajectoryNiagaraActor::HandleSelectionsChanged(const TArray<FUserTrajectorySelection>& Selections)
 {
 	if (Selections.IsEmpty())
 	{
