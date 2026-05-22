@@ -85,7 +85,7 @@ namespace
 		return Dir.IsNearlyZero() ? FVector::ForwardVector : Dir;
 	}
 
-	FRotationMatrix MakeLocalFrame(const FVector& Up)
+	FMatrix MakeLocalFrame(const FVector& Up)
 	{
 		const FVector SafeUp = Up.IsNearlyZero() ? FVector::UpVector : Up.GetSafeNormal();
 		return FRotationMatrix::MakeFromZ(SafeUp);
@@ -335,7 +335,7 @@ void ASampleTrajectoryNiagaraActor::BuildScenarioData(ESampleTrajectoryScenario 
 		for (int32 i = 0; i < Steps; ++i)
 		{
 			const FVector Forward = GetForwardAt(Data.QueryPointsUnwrapped, i);
-			const FRotationMatrix Frame = MakeLocalFrame(Forward);
+			const FMatrix Frame = MakeLocalFrame(Forward);
 
 			FVector LocalOffset = FVector::ZeroVector;
 			if (TrajectoryIndex == 0)

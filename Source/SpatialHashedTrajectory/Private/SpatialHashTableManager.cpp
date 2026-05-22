@@ -136,7 +136,7 @@ namespace
 		//   "shift SamplePos N boxes to the LEFT to align with QueryPos"
 		// i.e.  ix = -round((SamplePos - QueryPos) / Extent) = round((QueryPos - SamplePos) / Extent).
 		// The bit-packing format (0xFF / shift 8 / shift 16) is the same encoding
-		// used by DecodeVolumeIndexToOffset() in TrajectoryQueryNiagaraActor.cpp and
+		// used by DecodePeriodicVolumeIndexToOffset() in TrajectoryQueryNiagaraActor.cpp and
 		// by the HLSL DecodeVolumeIndex() in PERIODIC_VOLUME_INDEX.md.
 		auto ComputePeriodicShift = [](float Delta, float Extent) -> int32
 		{
