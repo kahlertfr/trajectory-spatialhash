@@ -124,7 +124,6 @@ private:
 		FVector BoundsMax = FVector::ZeroVector;
 	};
 
-	UPROPERTY()
 	TArray<FScenarioData> ScenarioCache;
 
 	bool bScenarioDataBuilt = false;
