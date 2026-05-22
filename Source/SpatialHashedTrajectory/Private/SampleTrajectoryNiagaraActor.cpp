@@ -548,8 +548,10 @@ void ASampleTrajectoryNiagaraActor::TransferScenarioToNiagara(ESampleTrajectoryS
 	NiagaraComponent->SetVariableVec3(FName("BoundsMin"), Data.BoundsMin);
 	NiagaraComponent->SetVariableVec3(FName("BoundsMax"), Data.BoundsMax);
 	NiagaraComponent->SetVariableVec3(FName("PeriodicVolumeExtent"), PeriodicVolumeExtent);
+	NiagaraComponent->SetVariableVec3(FName("TargetBounds_cm"), FVector(50.0f, 50.0f, 50.0f));
 	NiagaraComponent->SetVariableBool(FName("TimeRangeSensitive"), TimeRangeSensitivity);
 	NiagaraComponent->SetVariableBool(FName("ParticleVisibility"), ParticleVisibility);
+	NiagaraComponent->SetVariableFloat(FName("ParticleSize"), 0.2f);
 
 	NiagaraComponent->DeactivateImmediate();
 	NiagaraComponent->Activate(true);

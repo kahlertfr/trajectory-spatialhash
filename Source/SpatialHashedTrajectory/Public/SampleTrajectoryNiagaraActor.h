@@ -79,7 +79,7 @@ public:
 	bool TimeRangeSensitivity = false;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visualization")
-	float ParticleRadius = 0.01f;
+	float ParticleRadius = 0.5f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visualization")
 	float InnerRadius = 0.6f;
