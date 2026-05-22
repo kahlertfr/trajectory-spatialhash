@@ -86,7 +86,7 @@ struct FUserTrajectorySelection
 
 /** Broadcast whenever the set of user selections changes. */
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnUserSelectionsChanged,
-	TArray<FUserTrajectorySelection>, Selections);
+	const TArray<FUserTrajectorySelection>&, Selections);
 
 // ─── Manager ──────────────────────────────────────────────────────────────────
 

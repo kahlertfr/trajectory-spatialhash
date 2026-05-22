@@ -20,7 +20,7 @@
  * Returns FVector::ZeroVector when VolumeIndex == 0 (original box) or Extent
  * is zero (non-periodic dataset), so it is safe to call unconditionally.
  */
-static FVector DecodeVolumeIndexToOffset(int32 VolumeIndex, const FVector& Extent)
+static FVector DecodePeriodicVolumeIndexToOffset(int32 VolumeIndex, const FVector& Extent)
 {
 	if (VolumeIndex == 0 || Extent.IsNearlyZero())
 	{
@@ -420,7 +420,7 @@ void ATrajectoryQueryNiagaraActor::AppendBatchResults(
 		{
 			// Expand the bounding box using the corrected world-space position so
 			// that particles in periodic images are accounted for correctly.
-			Bounds += Sample.Position + DecodeVolumeIndexToOffset(Sample.VolumeIndex, CachedPeriodicExtent);
+			Bounds += Sample.Position + DecodePeriodicVolumeIndexToOffset(Sample.VolumeIndex, CachedPeriodicExtent);
 		}
 	}
 	if (Bounds.IsValid)
@@ -460,7 +460,7 @@ void ATrajectoryQueryNiagaraActor::StoreQueryResults(
 		for (const FTrajectorySamplePoint& Sample : Result.SamplePoints)
 		{
 			// Use corrected world-space position (raw + volume offset) for the AABB.
-			Bounds += Sample.Position + DecodeVolumeIndexToOffset(Sample.VolumeIndex, CachedPeriodicExtent);
+			Bounds += Sample.Position + DecodePeriodicVolumeIndexToOffset(Sample.VolumeIndex, CachedPeriodicExtent);
 		}
 	}
 
