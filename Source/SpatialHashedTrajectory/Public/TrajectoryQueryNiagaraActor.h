@@ -104,7 +104,7 @@ public:
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Query Settings",
 		meta = (ClampMin = "1", UIMin = "100"))
-	int32 BatchSize = 10000;
+	int32 BatchSize = 250000;
 
 	/**
 	 * Periodic boundary conditions for the dataset.
