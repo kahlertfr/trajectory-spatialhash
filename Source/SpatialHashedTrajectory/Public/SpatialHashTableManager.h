@@ -575,6 +575,9 @@ public:
 	 *                            When true, include all loaded sample points (for the loaded query-time range)
 	 *                            for each trajectory that has at least one point within Radius.
 	 *                            When false, include only sample points that are within Radius.
+	 * @param QueryStartTimeStep   Optional explicit query-range start timestep (inclusive).
+	 * @param QueryEndTimeStep     Optional explicit query-range end timestep (inclusive).
+	 *                             Pass QueryStartTimeStep > QueryEndTimeStep to infer from QueryTimeSteps.
 	 * @param BatchCallback        Invoked on the game thread after each batch completes.
 	 */
 	void QueryPositionsBatchedAsync(
@@ -586,6 +589,8 @@ public:
 		int32 BatchSize,
 		int64 ExcludeTrajectoryId,
 		bool bIncludeWholeResultTrajectorySamples,
+		int32 QueryStartTimeStep,
+		int32 QueryEndTimeStep,
 		FOnSpatialHashBatchResult BatchCallback);
 
 	/**

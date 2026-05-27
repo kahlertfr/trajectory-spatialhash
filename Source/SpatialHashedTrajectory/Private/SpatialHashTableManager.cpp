@@ -2640,6 +2640,8 @@ void USpatialHashTableManager::QueryPositionsBatchedAsync(
 	int32 BatchSize,
 	int64 ExcludeTrajectoryId,
 	bool bIncludeWholeResultTrajectorySamples,
+	int32 QueryStartTimeStep,
+	int32 QueryEndTimeStep,
 	FOnSpatialHashBatchResult BatchCallback)
 {
 	if (QueryPositions.IsEmpty() || QueryTimeSteps.Num() != QueryPositions.Num())
@@ -2861,13 +2863,17 @@ void USpatialHashTableManager::QueryPositionsBatchedAsync(
 			GlobalQueryEndTime = FMath::Max(GlobalQueryEndTime, QueryTimeStep);
 		}
 
+		const bool bHasExplicitQueryRange = QueryStartTimeStep <= QueryEndTimeStep;
+		const int32 EffectiveQueryStartTime = bHasExplicitQueryRange ? QueryStartTimeStep : GlobalQueryStartTime;
+		const int32 EffectiveQueryEndTime = bHasExplicitQueryRange ? QueryEndTimeStep : GlobalQueryEndTime;
+
 		for (const auto& Pair : AllCandidates)
 		{
 			const int32 CandidateStartTime = bIncludeWholeResultTrajectorySamples
-				? GlobalQueryStartTime
+				? EffectiveQueryStartTime
 				: Pair.Value.Key;
 			const int32 CandidateEndTime = bIncludeWholeResultTrajectorySamples
-				? GlobalQueryEndTime
+				? EffectiveQueryEndTime
 				: Pair.Value.Value;
 			CandidateList.Add({Pair.Key, CandidateStartTime, CandidateEndTime});
 		}

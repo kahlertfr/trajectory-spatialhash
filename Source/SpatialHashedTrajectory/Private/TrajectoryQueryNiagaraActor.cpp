@@ -375,6 +375,8 @@ bool ATrajectoryQueryNiagaraActor::FireAsyncQueriesWithCallback(
 		BatchSize,
 		-1LL, // no trajectory to exclude
 		bIncludeWholeResultTrajectorySamples,
+		QueryTimeStart,
+		QueryTimeEnd,
 		MoveTemp(BatchCallback)
 	);
 
