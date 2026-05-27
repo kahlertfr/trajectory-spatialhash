@@ -2741,6 +2741,7 @@ void USpatialHashTableManager::QueryPositionsBatchedAsync(
 		 QueryPositions, QueryTimeSteps, UnwrappedQueryPositions,
 		 Radius, EffectiveBatchSize, ExcludeTrajectoryId,
 		 PeriodicExtent, bPeriodic, bIncludeWholeResultTrajectorySamples,
+		 QueryStartTimeStep, QueryEndTimeStep,
 		 BatchCallback, CancellationToken]()
 	{
 		// ── PHASE 1: Parallel nearest-neighbour queries ───────────────────────
