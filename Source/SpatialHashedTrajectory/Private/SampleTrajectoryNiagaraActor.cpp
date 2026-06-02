@@ -495,6 +495,13 @@ void ASampleTrajectoryNiagaraActor::TransferScenarioToNiagara(ESampleTrajectoryS
 	}
 
 	TArray<float> QueryVelocities;
+	TArray<int32> QueryTimeSteps;
+	QueryTimeSteps.Reserve(QueryPointsUnwrapped.Num());
+	for (int32 i = 0; i < QueryPointsUnwrapped.Num(); ++i)
+	{
+		QueryTimeSteps.Add(i);
+	}
+
 	QueryVelocities.Reserve(QueryPointsUnwrapped.Num());
 	if (QueryPointsUnwrapped.Num() == 1)
 	{
@@ -506,7 +513,7 @@ void ASampleTrajectoryNiagaraActor::TransferScenarioToNiagara(ESampleTrajectoryS
 		{
 			const int32 FromIndex = (i < QueryPointsUnwrapped.Num() - 1) ? i : (i - 1);
 			const int32 ToIndex = (i < QueryPointsUnwrapped.Num() - 1) ? (i + 1) : i;
-			const int32 DeltaTime = FMath::Abs(ToIndex - FromIndex);
+			const int32 DeltaTime = FMath::Abs(QueryTimeSteps[ToIndex] - QueryTimeSteps[FromIndex]);
 			const float DeltaDistance = FVector::Distance(QueryPointsUnwrapped[ToIndex], QueryPointsUnwrapped[FromIndex]);
 			QueryVelocities.Add(DeltaTime > 0 ? (DeltaDistance / static_cast<float>(DeltaTime)) : 0.0f);
 		}
