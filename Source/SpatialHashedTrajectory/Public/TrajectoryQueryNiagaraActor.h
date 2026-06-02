@@ -18,8 +18,10 @@ class UNiagaraComponent;
  *
  * The following Niagara user parameters are populated when data is transferred:
  * - PositionArray  QueryPoints          – ORIGINAL (raw/wrapped) query sample positions (length = number of query points)
+ * - FloatArray     QueryVelocities      – per-query-sample velocity magnitude (parallel to QueryPoints)
  * - PositionArray  ResultPoints         – result sample positions ordered by trajectory (length = all result samples)
  * - FloatArray     ResultDistances      – per-sample distance from the query point (parallel to ResultPoints)
+ * - FloatArray     ResultVelocities     – per-result-sample velocity magnitude (parallel to ResultPoints)
  * - PositionArray  QueryTranslations    – per query point: translation from that point to the first query point (UnwrappedQueryPoints[0] - UnwrappedQueryPoints[i])
  * - QuatArray      QueryRotations       – per query point: rotation that aligns its forward vector to the first query point's forward vector
  * - Int Array      ResultTrajectoryIds  – original trajectory ID per result trajectory
@@ -42,6 +44,8 @@ class UNiagaraComponent;
  * - int            QueryTimeEnd
  * - Vector         BoundsMin            – minimum corner of the AABB enclosing all corrected query + result points
  * - Vector         BoundsMax            – maximum corner of the AABB enclosing all corrected query + result points
+ * - float          VelocityMin          – minimum velocity across QueryVelocities and ResultVelocities
+ * - float          VelocityMax          – maximum velocity across QueryVelocities and ResultVelocities
  * - Vector         PeriodicVolumeExtent – periodic box size (world units per axis); ZeroVector when non-periodic.
  *                                         Needed by the HLSL helper to compute per-sample world-position offsets.
  *
@@ -49,7 +53,7 @@ class UNiagaraComponent;
  * (via SetVisualizationTimeRange / SetColorEncoding):
  * - int            VisTimeStart         – first timestep shown by the shader (inclusive)
  * - int            VisTimeEnd           – last timestep shown by the shader (inclusive)
- * - int            ColorEncoding        – 0 = Timestep, 1 = Velocity (see ETrajectoryColorEncoding)
+ * - int            ColorEncoding        – color mode index (see ETrajectoryColorEncoding)
  */
 UCLASS(BlueprintType, Blueprintable)
 class SPATIALHASHEDTRAJECTORY_API ATrajectoryQueryNiagaraActor : public AActor
@@ -167,6 +171,9 @@ public:
 	bool TimeRangeSensitivity = false;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visualization")
+	bool NoShadow = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visualization")
 	float ParticleRadius = 0.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visualization")
@@ -211,7 +218,7 @@ public:
 
 
 	UFUNCTION(BlueprintCallable, Category = "Trajectory Visualization")
-	void UpdateUserParameter(int32 NewTimeStart, int32 NewTimeEnd, ETrajectoryColorEncoding NewColorEncoding, ETrajectoryDistanceFilter newDistanceFilter, float NewParticleRadius, float NewInnerRadius, float NewQueryRadius, float NewVisibilityRadius, bool NewSensitivity, bool NewVisibility);
+	void UpdateUserParameter(int32 NewTimeStart, int32 NewTimeEnd, ETrajectoryColorEncoding NewColorEncoding, ETrajectoryDistanceFilter newDistanceFilter, float NewParticleRadius, float NewInnerRadius, float NewQueryRadius, float NewVisibilityRadius, bool NewSensitivity, bool NewVisibility, bool NewNoShadow);
 
 
 	/**

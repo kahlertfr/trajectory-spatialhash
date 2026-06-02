@@ -13,8 +13,10 @@ enum class ETrajectoryColorEncoding : uint8
 {
 	Time UMETA(DisplayName = "Time"),
 	Distance UMETA(DisplayName = "Distance"),
-	Velocity UMETA(DisplayName = "Distance Category"),
-	VolumeImage UMETA(DisplayName = "Volume Image")
+	DistanceCategory UMETA(DisplayName = "Distance Category"),
+	VolumeImage UMETA(DisplayName = "Volume Image"),
+	Velocity UMETA(DisplayName = "Velocity"),
+	SelectorHighlight UMETA(DisplayName = "Selector Highlight")
 };
 
 UENUM(BlueprintType)
@@ -80,6 +82,10 @@ struct FUserTrajectorySelection
 	/** Whether particles are visible for this selected trajectory */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "User Selection")
 	bool bParticlesVisible = true;
+
+	/** Whether this selection should render without shadow contribution */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "User Selection")
+	bool NoShadow = false;
 };
 
 // ─── Delegate ─────────────────────────────────────────────────────────────────

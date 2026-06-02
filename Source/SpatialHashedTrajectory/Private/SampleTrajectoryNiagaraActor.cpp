@@ -189,6 +189,7 @@ void ASampleTrajectoryNiagaraActor::ApplyUserSelection(const FUserTrajectorySele
 	VisibilityRadius = Selection.VisibilityRadius;
 	TimeRangeSensitivity = Selection.TimeRangeSensitive;
 	ParticleVisibility = Selection.bParticlesVisible;
+	NoShadow = Selection.NoShadow;
 
 	UpdateUserParametersOnNiagara();
 }
@@ -214,6 +215,7 @@ void ASampleTrajectoryNiagaraActor::UpdateUserParametersOnNiagara()
 	NiagaraComponent->SetVariableFloat(FName("VisibilityRadius"), VisibilityRadius);
 	NiagaraComponent->SetVariableBool(FName("TimeRangeSensitive"), TimeRangeSensitivity);
 	NiagaraComponent->SetVariableBool(FName("ParticleVisibility"), ParticleVisibility);
+	NiagaraComponent->SetVariableBool(FName("NoShadow"), NoShadow);
 }
 
 void ASampleTrajectoryNiagaraActor::BuildScenarioData()
@@ -426,6 +428,7 @@ void ASampleTrajectoryNiagaraActor::TransferScenarioToNiagara(ESampleTrajectoryS
 	// Build flat result arrays
 	TArray<FVector> ResultPoints;
 	TArray<float> ResultDistances;
+	TArray<float> ResultVelocities;
 	TArray<int32> ResultVolumeIndices;
 	TArray<int32> ResultTrajectoryIds;
 	TArray<float> ResultMinDistances;
@@ -461,13 +464,81 @@ void ASampleTrajectoryNiagaraActor::TransferScenarioToNiagara(ESampleTrajectoryS
 		ResultTrajStartIndex.Add(ResultPoints.Num());
 		ResultStartTime.Add(Result.SamplePoints.Num() > 0 ? Result.SamplePoints[0].TimeStep : 0);
 
+		TArray<FVector> UnwrappedPositions;
+		TArray<int32> TimeSteps;
+		UnwrappedPositions.Reserve(Result.SamplePoints.Num());
+		TimeSteps.Reserve(Result.SamplePoints.Num());
+
 		for (const FTrajectorySamplePoint& Sample : Result.SamplePoints)
 		{
 			ResultPoints.Add(Sample.Position);
 			ResultDistances.Add(Sample.Distance);
 			ResultVolumeIndices.Add(Sample.VolumeIndex);
+
+			UnwrappedPositions.Add(Sample.Position + DecodeVolumeIndexToOffset(Sample.VolumeIndex, PeriodicVolumeExtent));
+			TimeSteps.Add(Sample.TimeStep);
+		}
+
+		if (UnwrappedPositions.Num() == 1)
+		{
+			ResultVelocities.Add(0.0f);
+		}
+		else if (UnwrappedPositions.Num() > 1)
+		{
+			for (int32 i = 0; i < UnwrappedPositions.Num(); ++i)
+			{
+				const int32 FromIndex = (i < UnwrappedPositions.Num() - 1) ? i : (i - 1);
+				const int32 ToIndex = (i < UnwrappedPositions.Num() - 1) ? (i + 1) : i;
+				const int32 DeltaTime = FMath::Abs(TimeSteps[ToIndex] - TimeSteps[FromIndex]);
+				const float DeltaDistance = FVector::Distance(UnwrappedPositions[ToIndex], UnwrappedPositions[FromIndex]);
+				ResultVelocities.Add(DeltaTime > 0 ? (DeltaDistance / static_cast<float>(DeltaTime)) : 0.0f);
+			}
 		}
 	}
+
+	TArray<float> QueryVelocities;
+	QueryVelocities.Reserve(QueryPointsUnwrapped.Num());
+	if (QueryPointsUnwrapped.Num() == 1)
+	{
+		QueryVelocities.Add(0.0f);
+	}
+	else if (QueryPointsUnwrapped.Num() > 1)
+	{
+		const int32 QueryTimeStart = 0;
+		const int32 QueryTimeEnd = FMath::Max(NumTimeSteps - 1, 0);
+		for (int32 i = 0; i < QueryPointsUnwrapped.Num(); ++i)
+		{
+			const int32 FromIndex = (i < QueryPointsUnwrapped.Num() - 1) ? i : (i - 1);
+			const int32 ToIndex = (i < QueryPointsUnwrapped.Num() - 1) ? (i + 1) : i;
+			const int32 FromTimeStep = FMath::Min(QueryTimeStart + FromIndex, QueryTimeEnd);
+			const int32 ToTimeStep = FMath::Min(QueryTimeStart + ToIndex, QueryTimeEnd);
+			const int32 DeltaTime = FMath::Abs(ToTimeStep - FromTimeStep);
+			const float DeltaDistance = FVector::Distance(QueryPointsUnwrapped[ToIndex], QueryPointsUnwrapped[FromIndex]);
+			QueryVelocities.Add(DeltaTime > 0 ? (DeltaDistance / static_cast<float>(DeltaTime)) : 0.0f);
+		}
+	}
+
+	float VelocityMin = 0.0f;
+	float VelocityMax = 0.0f;
+	bool bHasVelocity = false;
+	const auto AccumulateVelocityRange = [&VelocityMin, &VelocityMax, &bHasVelocity](const TArray<float>& Velocities)
+	{
+		for (float Velocity : Velocities)
+		{
+			if (!bHasVelocity)
+			{
+				VelocityMin = Velocity;
+				VelocityMax = Velocity;
+				bHasVelocity = true;
+				continue;
+			}
+
+			VelocityMin = FMath::Min(VelocityMin, Velocity);
+			VelocityMax = FMath::Max(VelocityMax, Velocity);
+		}
+	};
+	AccumulateVelocityRange(QueryVelocities);
+	AccumulateVelocityRange(ResultVelocities);
 
 	// Query volume indices
 	TArray<int32> QueryVolumeIndices;
@@ -497,11 +568,17 @@ void ASampleTrajectoryNiagaraActor::TransferScenarioToNiagara(ESampleTrajectoryS
 	UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayVector(
 		NiagaraComponent, FName("QueryPoints"), QueryPointsRaw);
 
+	UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayFloat(
+		NiagaraComponent, FName("QueryVelocities"), QueryVelocities);
+
 	UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayVector(
 		NiagaraComponent, FName("ResultPoints"), ResultPoints);
 
 	UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayFloat(
 		NiagaraComponent, FName("ResultDistances"), ResultDistances);
+
+	UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayFloat(
+		NiagaraComponent, FName("ResultVelocities"), ResultVelocities);
 
 	UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayVector(
 		NiagaraComponent, FName("QueryTranslations"), QueryTranslations);
@@ -539,6 +616,8 @@ void ASampleTrajectoryNiagaraActor::TransferScenarioToNiagara(ESampleTrajectoryS
 	NiagaraComponent->SetVariableFloat(FName("QueryRadius"), QueryRadius);
 	NiagaraComponent->SetVariableFloat(FName("VisibilityRadius"), VisibilityRadius);
 	NiagaraComponent->SetVariableFloat(FName("ParticleRadius"), ParticleRadius);
+	NiagaraComponent->SetVariableFloat(FName("VelocityMin"), VelocityMin);
+	NiagaraComponent->SetVariableFloat(FName("VelocityMax"), VelocityMax);
 	NiagaraComponent->SetVariableInt(FName("QueryTimeStart"), QueryTimeStart);
 	NiagaraComponent->SetVariableInt(FName("QueryTimeEnd"), QueryTimeEnd);
 	NiagaraComponent->SetVariableInt(FName("VisTimeStart"), VisualizationTimeStart);
@@ -551,6 +630,7 @@ void ASampleTrajectoryNiagaraActor::TransferScenarioToNiagara(ESampleTrajectoryS
 	NiagaraComponent->SetVariableVec3(FName("TargetBounds_cm"), FVector(50.0f, 50.0f, 50.0f));
 	NiagaraComponent->SetVariableBool(FName("TimeRangeSensitive"), TimeRangeSensitivity);
 	NiagaraComponent->SetVariableBool(FName("ParticleVisibility"), ParticleVisibility);
+	NiagaraComponent->SetVariableBool(FName("NoShadow"), NoShadow);
 	NiagaraComponent->SetVariableFloat(FName("ParticleSize"), 0.2f);
 
 	NiagaraComponent->DeactivateImmediate();
