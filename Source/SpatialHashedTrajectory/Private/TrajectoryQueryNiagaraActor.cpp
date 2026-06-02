@@ -166,7 +166,7 @@ void ATrajectoryQueryNiagaraActor::SetVisualizationTimeRange(int32 NewTimeStart,
 }
 
 
-void ATrajectoryQueryNiagaraActor::UpdateUserParameter(int32 NewTimeStart, int32 NewTimeEnd, ETrajectoryColorEncoding NewColorEncoding, ETrajectoryDistanceFilter NewDistanceFilter, float NewParticleRadius, float NewInnerRadius, float NewQueryRadius, float NewVisibilityRadius, bool NewSensitivity, bool NewVisibility)
+void ATrajectoryQueryNiagaraActor::UpdateUserParameter(int32 NewTimeStart, int32 NewTimeEnd, ETrajectoryColorEncoding NewColorEncoding, ETrajectoryDistanceFilter NewDistanceFilter, float NewParticleRadius, float NewInnerRadius, float NewQueryRadius, float NewVisibilityRadius, bool NewSensitivity, bool NewVisibility, bool NewNoShadow)
 {
 	VisualizationTimeStart = NewTimeStart;
 	VisualizationTimeEnd = NewTimeEnd;
@@ -178,6 +178,7 @@ void ATrajectoryQueryNiagaraActor::UpdateUserParameter(int32 NewTimeStart, int32
 	VisibilityRadius = NewVisibilityRadius;
 	TimeRangeSensitivity = NewSensitivity;
 	ParticleVisibility = NewVisibility;
+	NoShadow = NewNoShadow;
 
 	if (!NiagaraComponent)
 	{
@@ -196,6 +197,7 @@ void ATrajectoryQueryNiagaraActor::UpdateUserParameter(int32 NewTimeStart, int32
 	NiagaraComponent->SetVariableFloat(FName("VisibilityRadius"), VisibilityRadius);
 	NiagaraComponent->SetVariableBool(FName("TimeRangeSensitive"), TimeRangeSensitivity);
 	NiagaraComponent->SetVariableBool(FName("ParticleVisibility"), ParticleVisibility);
+	NiagaraComponent->SetVariableBool(FName("NoShadow"), NoShadow);
 
 	UE_LOG(LogTemp, Log,
 		TEXT("ATrajectoryQueryNiagaraActor: Updated User parameter."));
@@ -799,6 +801,7 @@ void ATrajectoryQueryNiagaraActor::TransferResultsToNiagara(
 	NiagaraComponent->SetVariableFloat(FName("ParticleRadius"), ParticleRadius);
 	NiagaraComponent->SetVariableFloat(FName("VelocityMin"), VelocityMin);
 	NiagaraComponent->SetVariableFloat(FName("VelocityMax"), VelocityMax);
+	NiagaraComponent->SetVariableBool(FName("NoShadow"), NoShadow);
 	NiagaraComponent->SetVariableInt(FName("QueryTimeStart"), QueryTimeStart);
 	NiagaraComponent->SetVariableInt(FName("QueryTimeEnd"), QueryTimeEnd);
 

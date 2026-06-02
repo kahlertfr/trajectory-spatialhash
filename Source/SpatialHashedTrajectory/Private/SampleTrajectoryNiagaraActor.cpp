@@ -189,6 +189,7 @@ void ASampleTrajectoryNiagaraActor::ApplyUserSelection(const FUserTrajectorySele
 	VisibilityRadius = Selection.VisibilityRadius;
 	TimeRangeSensitivity = Selection.TimeRangeSensitive;
 	ParticleVisibility = Selection.bParticlesVisible;
+	NoShadow = Selection.NoShadow;
 
 	UpdateUserParametersOnNiagara();
 }
@@ -214,6 +215,7 @@ void ASampleTrajectoryNiagaraActor::UpdateUserParametersOnNiagara()
 	NiagaraComponent->SetVariableFloat(FName("VisibilityRadius"), VisibilityRadius);
 	NiagaraComponent->SetVariableBool(FName("TimeRangeSensitive"), TimeRangeSensitivity);
 	NiagaraComponent->SetVariableBool(FName("ParticleVisibility"), ParticleVisibility);
+	NiagaraComponent->SetVariableBool(FName("NoShadow"), NoShadow);
 }
 
 void ASampleTrajectoryNiagaraActor::BuildScenarioData()
@@ -628,6 +630,7 @@ void ASampleTrajectoryNiagaraActor::TransferScenarioToNiagara(ESampleTrajectoryS
 	NiagaraComponent->SetVariableVec3(FName("TargetBounds_cm"), FVector(50.0f, 50.0f, 50.0f));
 	NiagaraComponent->SetVariableBool(FName("TimeRangeSensitive"), TimeRangeSensitivity);
 	NiagaraComponent->SetVariableBool(FName("ParticleVisibility"), ParticleVisibility);
+	NiagaraComponent->SetVariableBool(FName("NoShadow"), NoShadow);
 	NiagaraComponent->SetVariableFloat(FName("ParticleSize"), 0.2f);
 
 	NiagaraComponent->DeactivateImmediate();

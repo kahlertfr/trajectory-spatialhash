@@ -53,7 +53,7 @@ class UNiagaraComponent;
  * (via SetVisualizationTimeRange / SetColorEncoding):
  * - int            VisTimeStart         – first timestep shown by the shader (inclusive)
  * - int            VisTimeEnd           – last timestep shown by the shader (inclusive)
- * - int            ColorEncoding        – 0 = Timestep, 1 = Velocity (see ETrajectoryColorEncoding)
+ * - int            ColorEncoding        – color mode index (see ETrajectoryColorEncoding)
  */
 UCLASS(BlueprintType, Blueprintable)
 class SPATIALHASHEDTRAJECTORY_API ATrajectoryQueryNiagaraActor : public AActor
@@ -171,6 +171,9 @@ public:
 	bool TimeRangeSensitivity = false;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visualization")
+	bool NoShadow = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visualization")
 	float ParticleRadius = 0.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visualization")
@@ -215,7 +218,7 @@ public:
 
 
 	UFUNCTION(BlueprintCallable, Category = "Trajectory Visualization")
-	void UpdateUserParameter(int32 NewTimeStart, int32 NewTimeEnd, ETrajectoryColorEncoding NewColorEncoding, ETrajectoryDistanceFilter newDistanceFilter, float NewParticleRadius, float NewInnerRadius, float NewQueryRadius, float NewVisibilityRadius, bool NewSensitivity, bool NewVisibility);
+	void UpdateUserParameter(int32 NewTimeStart, int32 NewTimeEnd, ETrajectoryColorEncoding NewColorEncoding, ETrajectoryDistanceFilter newDistanceFilter, float NewParticleRadius, float NewInnerRadius, float NewQueryRadius, float NewVisibilityRadius, bool NewSensitivity, bool NewVisibility, bool NewNoShadow);
 
 
 	/**

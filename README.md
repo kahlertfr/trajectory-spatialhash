@@ -294,9 +294,10 @@ Each entry in the manager is an `FUserTrajectorySelection` struct with ten field
 | `InnerRadius` | `float` | Inner query radius for dual-radius lookups |
 | `OuterRadius` | `float` | Outer query radius for dual-radius lookups |
 | `CollisionRadius` | `float` | Collision query radius |
-| `ColorEncoding` | `ETrajectoryColorEncoding` | Color mode (`Time`, `Distance`, `Velocity`, `VolumeImage`) |
+| `ColorEncoding` | `ETrajectoryColorEncoding` | Color mode (`Time`, `Distance`, `DistanceCategory`, `VolumeImage`, `Velocity`, `SelectorHighlight`) |
 | `DistanceFilter` | `ETrajectoryDistanceFilter` | Distance filter (`NoFilter`, `ReachesInnerRadius`, `DoesNotReachInnerRadius`, `Collision`) |
 | `bParticlesVisible` | `bool` | Whether particles are visible for the selected trajectory |
+| `NoShadow` | `bool` | Whether the selected trajectory is rendered without shadow contribution |
 
 ---
 
