@@ -44,6 +44,8 @@ class UNiagaraComponent;
  * - int            QueryTimeEnd
  * - Vector         BoundsMin            – minimum corner of the AABB enclosing all corrected query + result points
  * - Vector         BoundsMax            – maximum corner of the AABB enclosing all corrected query + result points
+ * - float          VelocityMin          – minimum velocity across QueryVelocities and ResultVelocities
+ * - float          VelocityMax          – maximum velocity across QueryVelocities and ResultVelocities
  * - Vector         PeriodicVolumeExtent – periodic box size (world units per axis); ZeroVector when non-periodic.
  *                                         Needed by the HLSL helper to compute per-sample world-position offsets.
  *

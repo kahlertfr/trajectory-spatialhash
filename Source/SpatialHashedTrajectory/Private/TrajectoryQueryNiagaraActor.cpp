@@ -584,6 +584,28 @@ void ATrajectoryQueryNiagaraActor::TransferResultsToNiagara(
 		}
 	}
 
+	float VelocityMin = 0.0f;
+	float VelocityMax = 0.0f;
+	bool bHasVelocity = false;
+	const auto AccumulateVelocityRange = [&VelocityMin, &VelocityMax, &bHasVelocity](const TArray<float>& Velocities)
+	{
+		for (float Velocity : Velocities)
+		{
+			if (!bHasVelocity)
+			{
+				VelocityMin = Velocity;
+				VelocityMax = Velocity;
+				bHasVelocity = true;
+				continue;
+			}
+
+			VelocityMin = FMath::Min(VelocityMin, Velocity);
+			VelocityMax = FMath::Max(VelocityMax, Velocity);
+		}
+	};
+	AccumulateVelocityRange(QueryVelocities);
+	AccumulateVelocityRange(ResultVelocities);
+
 	const int32 NumResultPoints = ResultPoints.Num();
 	const int32 NumResultDistances = ResultDistances.Num();
 	const int32 NumResultVelocities = ResultVelocities.Num();
@@ -775,6 +797,8 @@ void ATrajectoryQueryNiagaraActor::TransferResultsToNiagara(
 	NiagaraComponent->SetVariableFloat(FName("QueryRadius"), QueryRadius);
 	NiagaraComponent->SetVariableFloat(FName("VisibilityRadius"), VisibilityRadius);
 	NiagaraComponent->SetVariableFloat(FName("ParticleRadius"), ParticleRadius);
+	NiagaraComponent->SetVariableFloat(FName("VelocityMin"), VelocityMin);
+	NiagaraComponent->SetVariableFloat(FName("VelocityMax"), VelocityMax);
 	NiagaraComponent->SetVariableInt(FName("QueryTimeStart"), QueryTimeStart);
 	NiagaraComponent->SetVariableInt(FName("QueryTimeEnd"), QueryTimeEnd);
 
