@@ -18,8 +18,10 @@ class UNiagaraComponent;
  *
  * The following Niagara user parameters are populated when data is transferred:
  * - PositionArray  QueryPoints          – ORIGINAL (raw/wrapped) query sample positions (length = number of query points)
+ * - FloatArray     QueryVelocities      – per-query-sample velocity magnitude (parallel to QueryPoints)
  * - PositionArray  ResultPoints         – result sample positions ordered by trajectory (length = all result samples)
  * - FloatArray     ResultDistances      – per-sample distance from the query point (parallel to ResultPoints)
+ * - FloatArray     ResultVelocities     – per-result-sample velocity magnitude (parallel to ResultPoints)
  * - PositionArray  QueryTranslations    – per query point: translation from that point to the first query point (UnwrappedQueryPoints[0] - UnwrappedQueryPoints[i])
  * - QuatArray      QueryRotations       – per query point: rotation that aligns its forward vector to the first query point's forward vector
  * - Int Array      ResultTrajectoryIds  – original trajectory ID per result trajectory

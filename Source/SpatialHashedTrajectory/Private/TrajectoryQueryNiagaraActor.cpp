@@ -492,6 +492,7 @@ void ATrajectoryQueryNiagaraActor::TransferResultsToNiagara(
 
 	// ResultDistances: distance from the query point for each sample (parallel to ResultPoints)
 	TArray<float> ResultDistances;
+	TArray<float> ResultVelocities;
 
 	// ResultVolumeIndices: per-sample periodic volume index (parallel to ResultPoints).
 	// 0 = original simulation box; non-zero = periodic image.
@@ -531,20 +532,62 @@ void ATrajectoryQueryNiagaraActor::TransferResultsToNiagara(
 		ResultTrajStartIndex.Add(ResultPoints.Num());
 		ResultStartTime.Add(Result.SamplePoints.Num() > 0 ? Result.SamplePoints[0].TimeStep : 0);
 
+		TArray<FVector> UnwrappedPositions;
+		TArray<int32> TimeSteps;
+		UnwrappedPositions.Reserve(Result.SamplePoints.Num());
+		TimeSteps.Reserve(Result.SamplePoints.Num());
+
 		for (const FTrajectorySamplePoint& Sample : Result.SamplePoints)
 		{
 			ResultPoints.Add(Sample.Position);
 			ResultDistances.Add(Sample.Distance);
 			ResultVolumeIndices.Add(Sample.VolumeIndex);
+
+			UnwrappedPositions.Add(Sample.Position + DecodePeriodicVolumeIndexToOffset(Sample.VolumeIndex, CachedPeriodicExtent));
+			TimeSteps.Add(Sample.TimeStep);
+		}
+
+		if (UnwrappedPositions.Num() == 1)
+		{
+			ResultVelocities.Add(0.0f);
+		}
+		else if (UnwrappedPositions.Num() > 1)
+		{
+			for (int32 i = 0; i < UnwrappedPositions.Num(); ++i)
+			{
+				const int32 FromIndex = (i < UnwrappedPositions.Num() - 1) ? i : (i - 1);
+				const int32 ToIndex = (i < UnwrappedPositions.Num() - 1) ? (i + 1) : i;
+				const int32 DeltaTime = FMath::Abs(TimeSteps[ToIndex] - TimeSteps[FromIndex]);
+				const float DeltaDistance = FVector::Distance(UnwrappedPositions[ToIndex], UnwrappedPositions[FromIndex]);
+				ResultVelocities.Add(DeltaTime > 0 ? (DeltaDistance / static_cast<float>(DeltaTime)) : 0.0f);
+			}
+		}
+	}
+
+	TArray<float> QueryVelocities;
+	if (QueryPoints.Num() == 1)
+	{
+		QueryVelocities.Add(0.0f);
+	}
+	else if (QueryPoints.Num() > 1)
+	{
+		QueryVelocities.Reserve(QueryPoints.Num());
+		for (int32 i = 0; i < QueryPoints.Num(); ++i)
+		{
+			const int32 FromIndex = (i < QueryPoints.Num() - 1) ? i : (i - 1);
+			const int32 ToIndex = (i < QueryPoints.Num() - 1) ? (i + 1) : i;
+			QueryVelocities.Add(FVector::Distance(QueryPoints[ToIndex], QueryPoints[FromIndex]));
 		}
 	}
 
 	const int32 NumResultPoints = ResultPoints.Num();
 	const int32 NumResultDistances = ResultDistances.Num();
+	const int32 NumResultVelocities = ResultVelocities.Num();
 	const int32 NumResultVolumeIndices = ResultVolumeIndices.Num();
 
 	const bool bSampleArraysAligned =
 		NumResultPoints == NumResultDistances &&
+		NumResultPoints == NumResultVelocities &&
 		NumResultPoints == NumResultVolumeIndices;
 	const int32 NumResultTrajectoryIds = ResultTrajectoryIds.Num();
 	const int32 NumResultMinDistances = ResultMinDistances.Num();
@@ -561,10 +604,10 @@ void ATrajectoryQueryNiagaraActor::TransferResultsToNiagara(
 	{
 		UE_LOG(LogTemp, Error,
 			TEXT("ATrajectoryQueryNiagaraActor: Skipping Niagara transfer due to array alignment error. ")
-			TEXT("SampleAligned=%d (Points=%d, Distances=%d, VolumeIndices=%d), ")
+			TEXT("SampleAligned=%d (Points=%d, Distances=%d, Velocities=%d, VolumeIndices=%d), ")
 			TEXT("MetadataAligned=%d (Ids=%d, MinDist=%d, MinTime=%d, StartIdx=%d, StartTime=%d)."),
 			bSampleArraysAligned ? 1 : 0,
-			NumResultPoints, NumResultDistances, NumResultVolumeIndices,
+			NumResultPoints, NumResultDistances, NumResultVelocities, NumResultVolumeIndices,
 			bMetadataArraysAligned ? 1 : 0,
 			NumResultTrajectoryIds, NumResultMinDistances, NumResultMinDistanceTimeSteps,
 			NumResultTrajStartIndices, NumResultStartTimes);
@@ -672,12 +715,18 @@ void ATrajectoryQueryNiagaraActor::TransferResultsToNiagara(
 	UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayVector(
 		NiagaraComponent, FName("QueryPoints"), RawQueryPoints);
 
+	UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayFloat(
+		NiagaraComponent, FName("QueryVelocities"), QueryVelocities);
+
 	UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayVector(
 		NiagaraComponent, FName("ResultPoints"), ResultPoints);
 
 	// Float array: per-sample distance from the query point (parallel to ResultPoints)
 	UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayFloat(
 		NiagaraComponent, FName("ResultDistances"), ResultDistances);
+
+	UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayFloat(
+		NiagaraComponent, FName("ResultVelocities"), ResultVelocities);
 
 	// Query-relative transform arrays
 	UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayVector(

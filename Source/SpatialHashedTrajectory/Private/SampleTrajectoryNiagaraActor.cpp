@@ -426,6 +426,7 @@ void ASampleTrajectoryNiagaraActor::TransferScenarioToNiagara(ESampleTrajectoryS
 	// Build flat result arrays
 	TArray<FVector> ResultPoints;
 	TArray<float> ResultDistances;
+	TArray<float> ResultVelocities;
 	TArray<int32> ResultVolumeIndices;
 	TArray<int32> ResultTrajectoryIds;
 	TArray<float> ResultMinDistances;
@@ -461,11 +462,51 @@ void ASampleTrajectoryNiagaraActor::TransferScenarioToNiagara(ESampleTrajectoryS
 		ResultTrajStartIndex.Add(ResultPoints.Num());
 		ResultStartTime.Add(Result.SamplePoints.Num() > 0 ? Result.SamplePoints[0].TimeStep : 0);
 
+		TArray<FVector> UnwrappedPositions;
+		TArray<int32> TimeSteps;
+		UnwrappedPositions.Reserve(Result.SamplePoints.Num());
+		TimeSteps.Reserve(Result.SamplePoints.Num());
+
 		for (const FTrajectorySamplePoint& Sample : Result.SamplePoints)
 		{
 			ResultPoints.Add(Sample.Position);
 			ResultDistances.Add(Sample.Distance);
 			ResultVolumeIndices.Add(Sample.VolumeIndex);
+
+			UnwrappedPositions.Add(Sample.Position + DecodeVolumeIndexToOffset(Sample.VolumeIndex, PeriodicVolumeExtent));
+			TimeSteps.Add(Sample.TimeStep);
+		}
+
+		if (UnwrappedPositions.Num() == 1)
+		{
+			ResultVelocities.Add(0.0f);
+		}
+		else if (UnwrappedPositions.Num() > 1)
+		{
+			for (int32 i = 0; i < UnwrappedPositions.Num(); ++i)
+			{
+				const int32 FromIndex = (i < UnwrappedPositions.Num() - 1) ? i : (i - 1);
+				const int32 ToIndex = (i < UnwrappedPositions.Num() - 1) ? (i + 1) : i;
+				const int32 DeltaTime = FMath::Abs(TimeSteps[ToIndex] - TimeSteps[FromIndex]);
+				const float DeltaDistance = FVector::Distance(UnwrappedPositions[ToIndex], UnwrappedPositions[FromIndex]);
+				ResultVelocities.Add(DeltaTime > 0 ? (DeltaDistance / static_cast<float>(DeltaTime)) : 0.0f);
+			}
+		}
+	}
+
+	TArray<float> QueryVelocities;
+	if (QueryPointsUnwrapped.Num() == 1)
+	{
+		QueryVelocities.Add(0.0f);
+	}
+	else if (QueryPointsUnwrapped.Num() > 1)
+	{
+		QueryVelocities.Reserve(QueryPointsUnwrapped.Num());
+		for (int32 i = 0; i < QueryPointsUnwrapped.Num(); ++i)
+		{
+			const int32 FromIndex = (i < QueryPointsUnwrapped.Num() - 1) ? i : (i - 1);
+			const int32 ToIndex = (i < QueryPointsUnwrapped.Num() - 1) ? (i + 1) : i;
+			QueryVelocities.Add(FVector::Distance(QueryPointsUnwrapped[ToIndex], QueryPointsUnwrapped[FromIndex]));
 		}
 	}
 
@@ -497,11 +538,17 @@ void ASampleTrajectoryNiagaraActor::TransferScenarioToNiagara(ESampleTrajectoryS
 	UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayVector(
 		NiagaraComponent, FName("QueryPoints"), QueryPointsRaw);
 
+	UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayFloat(
+		NiagaraComponent, FName("QueryVelocities"), QueryVelocities);
+
 	UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayVector(
 		NiagaraComponent, FName("ResultPoints"), ResultPoints);
 
 	UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayFloat(
 		NiagaraComponent, FName("ResultDistances"), ResultDistances);
+
+	UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayFloat(
+		NiagaraComponent, FName("ResultVelocities"), ResultVelocities);
 
 	UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayVector(
 		NiagaraComponent, FName("QueryTranslations"), QueryTranslations);
