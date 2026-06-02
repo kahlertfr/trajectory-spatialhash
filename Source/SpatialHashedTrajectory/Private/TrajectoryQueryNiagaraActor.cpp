@@ -565,18 +565,22 @@ void ATrajectoryQueryNiagaraActor::TransferResultsToNiagara(
 	}
 
 	TArray<float> QueryVelocities;
+	QueryVelocities.Reserve(QueryPoints.Num());
 	if (QueryPoints.Num() == 1)
 	{
 		QueryVelocities.Add(0.0f);
 	}
 	else if (QueryPoints.Num() > 1)
 	{
-		QueryVelocities.Reserve(QueryPoints.Num());
 		for (int32 i = 0; i < QueryPoints.Num(); ++i)
 		{
 			const int32 FromIndex = (i < QueryPoints.Num() - 1) ? i : (i - 1);
 			const int32 ToIndex = (i < QueryPoints.Num() - 1) ? (i + 1) : i;
-			QueryVelocities.Add(FVector::Distance(QueryPoints[ToIndex], QueryPoints[FromIndex]));
+			const int32 FromTimeStep = FMath::Min(QueryTimeStart + FromIndex, QueryTimeEnd);
+			const int32 ToTimeStep = FMath::Min(QueryTimeStart + ToIndex, QueryTimeEnd);
+			const int32 DeltaTime = FMath::Abs(ToTimeStep - FromTimeStep);
+			const float DeltaDistance = FVector::Distance(QueryPoints[ToIndex], QueryPoints[FromIndex]);
+			QueryVelocities.Add(DeltaTime > 0 ? (DeltaDistance / static_cast<float>(DeltaTime)) : 0.0f);
 		}
 	}
 
