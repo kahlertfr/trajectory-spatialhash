@@ -22,10 +22,15 @@ enum class ETrajectoryColorEncoding : uint8
 UENUM(BlueprintType)
 enum class ETrajectoryDistanceFilter : uint8
 {
-	NoFilter UMETA(DisplayName = "No Filter"),
-	DoesNotReachInnerRadius UMETA(DisplayName = "Not Reaching Inner Radius"),
-	ReachesInnerRadius UMETA(DisplayName = "Reaching Inner Radius"),
-	StayedInnerRadius UMETA(DisplayName = "Stayed Inner Radius")
+	Inside UMETA(DisplayName = "Inside"),
+	InsideAndOutside UMETA(DisplayName = "InsideAndOutside"),
+	InsideAndPass UMETA(DisplayName = "InsideAndPass"),
+	All UMETA(DisplayName = "All"),
+	None UMETA(DisplayName = "None"),
+	Outside UMETA(DisplayName = "Outside"),
+	Pass UMETA(DisplayName = "Pass"),
+	PassAndOutside UMETA(DisplayName = "PassAndOutside")
+
 };
 
 /**
@@ -77,7 +82,7 @@ struct FUserTrajectorySelection
 
 	/** Distance-based filter mode to apply to this trajectory */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "User Selection")
-	ETrajectoryDistanceFilter DistanceFilter = ETrajectoryDistanceFilter::NoFilter;
+	ETrajectoryDistanceFilter DistanceFilter = ETrajectoryDistanceFilter::All;
 
 	/** Whether particles are visible for this selected trajectory */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "User Selection")

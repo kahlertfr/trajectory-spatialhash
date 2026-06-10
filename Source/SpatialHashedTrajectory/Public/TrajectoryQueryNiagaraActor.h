@@ -162,7 +162,7 @@ public:
 	ETrajectoryColorEncoding ColorEncoding = ETrajectoryColorEncoding::Time;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visualization")
-	ETrajectoryDistanceFilter DistanceFilter = ETrajectoryDistanceFilter::NoFilter;
+	ETrajectoryDistanceFilter DistanceFilter = ETrajectoryDistanceFilter::All;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visualization")
 	bool ParticleVisibility = true;
