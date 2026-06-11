@@ -104,7 +104,7 @@ bool ATrajectoryQueryNiagaraActor::InitializeManager()
 		Manager = NewObject<USpatialHashTableManager>(this);
 	}
 
-	GetGameInstance()->GetSubsystem<UVRLogManager>()->AddMessageF(TEXT("Initialized spatial query with cell size %f for time step %i to %i."), CellSize, QueryTimeStart, QueryTimeEnd);
+	GetGameInstance()->GetSubsystem<UVRLogManager>()->AddMessageF(TEXT("... Initialized spatial query with cell size %f."), CellSize);
 
 	const int32 LoadedCount = Manager->LoadHashTables(
 		DatasetDirectory,
@@ -113,8 +113,6 @@ bool ATrajectoryQueryNiagaraActor::InitializeManager()
 		QueryTimeEnd,
 		true  // auto-create if missing
 	);
-
-	GetGameInstance()->GetSubsystem<UVRLogManager>()->AddMessageF(TEXT("Loaded %i hash tables."), LoadedCount);
 
 	if (LoadedCount == 0)
 	{
@@ -279,12 +277,8 @@ bool ATrajectoryQueryNiagaraActor::FireAsyncQueriesWithCallback(
 		NumPositions, OuterQueryRadius, QueryTimeStart, QueryTimeEnd, BatchSize);
 
 	GetGameInstance()->GetSubsystem<UVRLogManager>()->AddMessageF(
-		TEXT("Starting batched query – %d positions, radius %.2f, t=[%d,%d], batch=%d."),
+		TEXT("... Starting batched query with %d positions, radius %.2f, t=[%d,%d], batch size=%d."),
 		NumPositions, OuterQueryRadius, QueryTimeStart, QueryTimeEnd, BatchSize);
-
-	GetGameInstance()->GetSubsystem<UVRLogManager>()->AddMessageF(
-		TEXT("Checking %d query samples for nearest neighbours."),
-		NumPositions);
 
 	TWeakObjectPtr<ATrajectoryQueryNiagaraActor> WeakThis(this);
 	TSharedRef<int32> BatchCounter             = MakeShared<int32>(0);
@@ -314,7 +308,10 @@ bool ATrajectoryQueryNiagaraActor::FireAsyncQueriesWithCallback(
 				const int32 UnhandledSamples = NumPositions - HandledQuerySamples;
 
 				This->GetGameInstance()->GetSubsystem<UVRLogManager>()->AddMessageF(
-					TEXT("Phase 1 complete – %d/%d query samples handled, %d candidate trajectories found."),
+					TEXT("Phase 1 - Gather candidates"));
+
+				This->GetGameInstance()->GetSubsystem<UVRLogManager>()->AddMessageF(
+					TEXT("... %d/%d query samples handled, %d candidate trajectories found."),
 					HandledQuerySamples, NumPositions, TotalCandidatesPhase1);
 
 				if (UnhandledSamples > 0)
@@ -324,6 +321,9 @@ bool ATrajectoryQueryNiagaraActor::FireAsyncQueriesWithCallback(
 						     "check timestep coverage for gaps in the visualization."),
 						UnhandledSamples);
 				}
+
+				This->GetGameInstance()->GetSubsystem<UVRLogManager>()->AddMessageF(
+					TEXT("Phase 2 - Check for Nearest Neighbors"));
 			}
 
 			*TotalCandidatesProcessed += BatchResults.Num();
@@ -334,7 +334,7 @@ bool ATrajectoryQueryNiagaraActor::FireAsyncQueriesWithCallback(
 				CurrentBatch, BatchResults.Num(), bIsFinalBatch ? 1 : 0);
 
 			This->GetGameInstance()->GetSubsystem<UVRLogManager>()->AddMessageF(
-				TEXT("QueryPositionsBatchedAsync: Batch %d - %d new trajectories found"),
+				TEXT("... Batch %d - %d new trajectories found"),
 				CurrentBatch, BatchResults.Num());
 
 			if (bIsFinalBatch)
@@ -344,7 +344,7 @@ bool ATrajectoryQueryNiagaraActor::FireAsyncQueriesWithCallback(
 					This->CachedResults.Num());
 
 				This->GetGameInstance()->GetSubsystem<UVRLogManager>()->AddMessageF(
-					TEXT("All batches complete – %d trajectories found in total."),
+					TEXT("Nearest Neighbor Filtering: %d trajectories found in total."),
 					This->CachedResults.Num());
 
 				// Sanity-check: verify that the number of accumulated result
@@ -354,12 +354,6 @@ bool ATrajectoryQueryNiagaraActor::FireAsyncQueriesWithCallback(
 					This->GetGameInstance()->GetSubsystem<UVRLogManager>()->AddMessageF(
 						TEXT("WARNING: Result trajectory count (%d) exceeds Phase 1 candidate count (%d) – "
 						     "possible duplicate handling."),
-						*TotalCandidatesProcessed, TotalCandidatesPhase1);
-				}
-				else
-				{
-					This->GetGameInstance()->GetSubsystem<UVRLogManager>()->AddMessageF(
-						TEXT("Check OK – %d of %d candidate trajectories produced results within the query radius."),
 						*TotalCandidatesProcessed, TotalCandidatesPhase1);
 				}
 
