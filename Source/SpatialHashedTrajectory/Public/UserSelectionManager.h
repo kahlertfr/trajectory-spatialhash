@@ -91,6 +91,10 @@ struct FUserTrajectorySelection
 	/** Whether this selection should render without shadow contribution */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "User Selection")
 	bool NoShadow = false;
+
+	/** Whether this selection should render without shadow contribution */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "User Selection")
+	bool ObjectViewWithRotation = false;
 };
 
 // ─── Delegate ─────────────────────────────────────────────────────────────────
