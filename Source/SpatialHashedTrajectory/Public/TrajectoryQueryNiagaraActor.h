@@ -154,6 +154,9 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visualization")
 	int32 VisualizationTimeEnd = 100;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visualization")
+	int32 FoundSample = 0;
+
 	/**
 	 * Color encoding mode used by the Niagara shader.
 	 * Can be changed at runtime via SetColorEncoding without re-transferring data.

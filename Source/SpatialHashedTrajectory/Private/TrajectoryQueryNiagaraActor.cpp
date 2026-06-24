@@ -739,6 +739,8 @@ void ATrajectoryQueryNiagaraActor::TransferResultsToNiagara(
 	UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayVector(
 		NiagaraComponent, FName("QueryPoints"), RawQueryPoints);
 
+	FoundSample = RawQueryPoints.Num() + ResultPoints.Num();	
+
 	UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayFloat(
 		NiagaraComponent, FName("QueryVelocities"), QueryVelocities);
 
