@@ -284,10 +284,16 @@ protected:
 	UPROPERTY(BlueprintReadOnly, Category = "Query Results")
 	FVector ResultBoundsMax;
 
-	/** Initialize the spatial hash table manager and load required hash tables */
+	/** Initialize the spatial hash table manager without performing file I/O. */
 	bool InitializeManager();
 
 private:
+	void StartPreparedQuery(FSimpleDelegate OnComplete, int32 DatasetFirstTimeStep,
+		int32 DatasetLastTimeStep, bool bIncludeWholeResultTrajectorySamples);
+	bool bQueryInProgress = false;
+	uint64 QueryGeneration = 0;
+	FSimpleDelegate PendingQueryFailure;
+
 	/** Results cached by the last completed query */
 	TArray<FSpatialHashQueryResult> CachedResults;
 

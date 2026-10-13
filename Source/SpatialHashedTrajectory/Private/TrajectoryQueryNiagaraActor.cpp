@@ -73,13 +73,8 @@ void ATrajectoryQueryNiagaraActor::BeginPlay()
 
 void ATrajectoryQueryNiagaraActor::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
-	// Cancel any in-progress query so the background worker stops as soon as
-	// possible and does not attempt to access destroyed game-thread objects.
-	if (Manager)
-	{
-		Manager->CancelActiveQuery();
-	}
-
+	// Invalidate pending table loads and stop active query workers.
+	CancelQuery();
 	Super::EndPlay(EndPlayReason);
 }
 
@@ -89,6 +84,11 @@ void ATrajectoryQueryNiagaraActor::CancelQuery()
 	{
 		Manager->CancelActiveQuery();
 	}
+	++QueryGeneration;
+	bQueryInProgress = false;
+	FSimpleDelegate Failure = PendingQueryFailure;
+	PendingQueryFailure.Unbind();
+	Failure.ExecuteIfBound();
 }
 
 bool ATrajectoryQueryNiagaraActor::InitializeManager()
@@ -106,21 +106,7 @@ bool ATrajectoryQueryNiagaraActor::InitializeManager()
 
 	GetGameInstance()->GetSubsystem<UVRLogManager>()->AddMessageF(TEXT("... Initialized spatial query with cell size %f."), CellSize);
 
-	const int32 LoadedCount = Manager->LoadHashTables(
-		DatasetDirectory,
-		CellSize,
-		QueryTimeStart,
-		QueryTimeEnd,
-		true  // auto-create if missing
-	);
 
-	if (LoadedCount == 0)
-	{
-		UE_LOG(LogTemp, Error, TEXT("ATrajectoryQueryNiagaraActor: Failed to load hash tables from '%s'."), *DatasetDirectory);
-		return false;
-	}
-
-	UE_LOG(LogTemp, Log, TEXT("ATrajectoryQueryNiagaraActor: Loaded %d hash tables."), LoadedCount);
 	return true;
 }
 
@@ -210,12 +196,62 @@ bool ATrajectoryQueryNiagaraActor::FireAsyncQueriesWithCallback(
 	FSimpleDelegate OnFailure,
 	bool bIncludeWholeResultTrajectorySamples)
 {
-	if (!InitializeManager())
+	if (bQueryInProgress)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("ATrajectoryQueryNiagaraActor: A query is already running; cancel it before starting another."));
+		OnFailure.ExecuteIfBound();
+		return false;
+	}
+	if (QueryPositions.IsEmpty() || QueryTimeStart > QueryTimeEnd || !InitializeManager())
 	{
 		OnFailure.ExecuteIfBound();
 		return false;
 	}
+	bQueryInProgress = true;
+	PendingQueryFailure = OnFailure;
+	const uint64 Generation = ++QueryGeneration;
+	TWeakObjectPtr<ATrajectoryQueryNiagaraActor> WeakThis(this);
+	// Protect against editable request properties changing while loading.
+	const FString RequestedDirectory = DatasetDirectory;
+	const float RequestedCellSize = CellSize;
+	const int32 RequestedStart = QueryTimeStart;
+	const int32 RequestedEnd = QueryTimeEnd;
+	const TArray<FVector> RequestedPositions = QueryPositions;
+	GetGameInstance()->GetSubsystem<UVRLogManager>()->AddMessageF(
+		TEXT("... Loading spatial hash tables asynchronously for t=[%d,%d]."), QueryTimeStart, QueryTimeEnd);
+	Manager->LoadHashTablesAsync(DatasetDirectory, CellSize, QueryTimeStart, QueryTimeEnd, true,
+		FOnSpatialHashLoadComplete::CreateLambda(
+			[WeakThis, Generation, OnComplete, OnFailure, bIncludeWholeResultTrajectorySamples,
+			 RequestedDirectory, RequestedCellSize, RequestedStart, RequestedEnd, RequestedPositions]
+			(const FSpatialHashLoadResult& LoadResult)
+		{
+			ATrajectoryQueryNiagaraActor* This = WeakThis.Get();
+			if (!This || This->QueryGeneration != Generation)
+			{
+				return;
+			}
+			if (LoadResult.LoadedCount == 0 || LoadResult.FailedCount > 0 || !LoadResult.ErrorMessage.IsEmpty() ||
+				This->DatasetDirectory != RequestedDirectory || This->CellSize != RequestedCellSize ||
+				This->QueryTimeStart != RequestedStart || This->QueryTimeEnd != RequestedEnd ||
+				This->QueryPositions != RequestedPositions)
+			{
+				This->bQueryInProgress = false;
+				This->PendingQueryFailure.Unbind();
+				UE_LOG(LogTemp, Error, TEXT("ATrajectoryQueryNiagaraActor: Hash-table preparation failed or request changed: %s"),
+					*LoadResult.ErrorMessage);
+				OnFailure.ExecuteIfBound();
+				return;
+			}
+			This->StartPreparedQuery(OnComplete, LoadResult.DatasetFirstTimeStep,
+				LoadResult.DatasetLastTimeStep, bIncludeWholeResultTrajectorySamples);
+		}));
+	return true;
+}
 
+void ATrajectoryQueryNiagaraActor::StartPreparedQuery(
+	FSimpleDelegate OnComplete, int32 DatasetFirstTimeStep, int32 DatasetLastTimeStep,
+	bool bIncludeWholeResultTrajectorySamples)
+{
 	// Apply the periodic volume setting from this actor to the manager so
 	// that all subsequent queries use the correct boundary conditions.
 	Manager->SetPeriodicVolume(PeriodicVolume.bIsPeriodic, PeriodicVolume.Extent);
@@ -223,13 +259,6 @@ bool ATrajectoryQueryNiagaraActor::FireAsyncQueriesWithCallback(
 	// Cache the resolved extent so TransferResultsToNiagara can pass it to
 	// Niagara as PeriodicVolumeExtent (required by the HLSL volume-index helper).
 	CachedPeriodicExtent = Manager->GetResolvedPeriodicExtent(CellSize);
-
-	if (QueryPositions.IsEmpty())
-	{
-		UE_LOG(LogTemp, Warning, TEXT("ATrajectoryQueryNiagaraActor: QueryPositions array is empty – nothing to query."));
-		OnFailure.ExecuteIfBound();
-		return false;
-	}
 
 	// ── Reset cached state so progressive updates start clean ─────────────────
 	// CachedQueryPointsRaw stores the original (wrapped) query positions so that
@@ -282,6 +311,12 @@ bool ATrajectoryQueryNiagaraActor::FireAsyncQueriesWithCallback(
 		TEXT("... Starting batched query with %d positions, radius %.2f, t=[%d,%d], batch size=%d."),
 		NumPositions, OuterQueryRadius, QueryTimeStart, QueryTimeEnd, BatchSize);
 
+	int32 OutsideDatasetSamples = 0;
+	for (int32 Time : QueryTimeSteps)
+	{
+		OutsideDatasetSamples += Time < DatasetFirstTimeStep || Time > DatasetLastTimeStep ? 1 : 0;
+	}
+	const uint64 Generation = QueryGeneration;
 	TWeakObjectPtr<ATrajectoryQueryNiagaraActor> WeakThis(this);
 	TSharedRef<int32> BatchCounter             = MakeShared<int32>(0);
 	TSharedRef<int32> TotalCandidatesProcessed = MakeShared<int32>(0);
@@ -290,12 +325,13 @@ bool ATrajectoryQueryNiagaraActor::FireAsyncQueriesWithCallback(
 	// processed.  Progressively merges results into the cache and pushes them
 	// to Niagara so the user sees updates as they arrive.
 	FOnSpatialHashBatchResult BatchCallback = FOnSpatialHashBatchResult::CreateLambda(
-		[WeakThis, OnComplete, BatchCounter, TotalCandidatesProcessed, NumPositions]
+		[WeakThis, Generation, OnComplete, BatchCounter, TotalCandidatesProcessed, NumPositions,
+		 OutsideDatasetSamples, DatasetFirstTimeStep, DatasetLastTimeStep]
 		(const TArray<FSpatialHashQueryResult>& BatchResults, bool bIsFinalBatch,
 		 int32 TotalCandidatesPhase1, int32 HandledQuerySamples)
 		{
 			ATrajectoryQueryNiagaraActor* This = WeakThis.Get();
-			if (!This)
+			if (!This || This->QueryGeneration != Generation)
 			{
 				return;
 			}
@@ -307,7 +343,14 @@ bool ATrajectoryQueryNiagaraActor::FireAsyncQueriesWithCallback(
 			// trajectories were identified.
 			if (CurrentBatch == 1)
 			{
-				const int32 UnhandledSamples = NumPositions - HandledQuerySamples;
+				const int32 UnhandledSamples = NumPositions - HandledQuerySamples - OutsideDatasetSamples;
+
+				if (OutsideDatasetSamples > 0)
+				{
+					This->GetGameInstance()->GetSubsystem<UVRLogManager>()->AddMessageF(
+						TEXT("... %d query samples outside target dataset [%d,%d]; no target data exists for those times."),
+						OutsideDatasetSamples, DatasetFirstTimeStep, DatasetLastTimeStep);
+				}
 
 				This->GetGameInstance()->GetSubsystem<UVRLogManager>()->AddMessageF(
 					TEXT("Phase 1 - Gather candidates"));
@@ -359,6 +402,8 @@ bool ATrajectoryQueryNiagaraActor::FireAsyncQueriesWithCallback(
 						*TotalCandidatesProcessed, TotalCandidatesPhase1);
 				}
 
+				This->bQueryInProgress = false;
+				This->PendingQueryFailure.Unbind();
 				OnComplete.ExecuteIfBound();
 			}
 		}
@@ -375,8 +420,6 @@ bool ATrajectoryQueryNiagaraActor::FireAsyncQueriesWithCallback(
 		bIncludeWholeResultTrajectorySamples,
 		MoveTemp(BatchCallback)
 	);
-
-	return true;
 }
 
 // ─── Result accumulation ──────────────────────────────────────────────────────
