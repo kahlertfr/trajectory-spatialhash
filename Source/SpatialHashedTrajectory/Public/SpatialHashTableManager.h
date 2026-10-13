@@ -883,7 +883,7 @@ protected:
 	 * @param OutShardFiles Output array of full paths to shard files (sorted)
 	 * @return True if successful (directory exists and shard files found), false otherwise
 	 */
-	bool GetShardFiles(const FString& DatasetDirectory, TArray<FString>& OutShardFiles) const;
+	static bool GetShardFiles(const FString& DatasetDirectory, TArray<FString>& OutShardFiles);
 
 	/**
 	 * Get or load a hash table, returning a raw pointer for use in async callbacks.
