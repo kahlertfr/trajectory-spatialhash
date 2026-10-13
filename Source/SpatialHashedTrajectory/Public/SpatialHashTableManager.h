@@ -8,6 +8,20 @@
 #include "SpatialHashTableBuilder.h"
 #include "SpatialHashTableManager.generated.h"
 
+class UTrajectoryDataLoader;
+
+/** Coverage of an asynchronous table load. Outside-dataset timesteps are not failures. */
+struct FSpatialHashLoadResult
+{
+	int32 DatasetFirstTimeStep = 0;
+	int32 DatasetLastTimeStep = -1;
+	int32 LoadedCount = 0;
+	int32 OutsideDatasetCount = 0;
+	int32 FailedCount = 0;
+	FString ErrorMessage;
+};
+DECLARE_DELEGATE_OneParam(FOnSpatialHashLoadComplete, const FSpatialHashLoadResult&);
+
 // Forward declare callback delegate types for async queries (C++ only)
 DECLARE_DELEGATE_OneParam(FOnSpatialHashQueryComplete, const TArray<FSpatialHashQueryResult>&);
 DECLARE_DELEGATE_TwoParams(FOnSpatialHashDualQueryComplete, const TArray<FSpatialHashQueryResult>&, const TArray<FSpatialHashQueryResult>&);
@@ -217,6 +231,14 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Spatial Hash")
 	int32 LoadHashTables(const FString& DatasetDirectory, float CellSize, int32 StartTimeStep, int32 EndTimeStep, bool bAutoCreate = true);
+
+	/** Read metadata, build missing tables and load entries on a worker; publish on the game thread.
+	 * Only the intersection with dataset-meta.bin's range is loaded or rebuilt.
+	 * Call on the game thread; completion is always delivered on the game thread.
+	 */
+	void LoadHashTablesAsync(const FString& DatasetDirectory, float CellSize,
+		int32 StartTimeStep, int32 EndTimeStep, bool bAutoCreate, FOnSpatialHashLoadComplete OnComplete);
+
 
 	/**
 	 * Load a single hash table from disk
@@ -690,6 +712,10 @@ protected:
 
 	/** Map of loaded hash tables */
 	TMap<FHashTableKey, TSharedPtr<FSpatialHashTable>> LoadedHashTables;
+	FString LoadedDatasetDirectory;
+	uint64 LoadGeneration = 0;
+	int32 LoadedDatasetFirstTimeStep = MIN_int32;
+	int32 LoadedDatasetLastTimeStep = MAX_int32;
 
 	/** Thread-safe flag indicating if hash table creation is in progress */
 	FThreadSafeBool bIsCreatingHashTables;
@@ -776,9 +802,9 @@ protected:
 	 * @param BaseConfig Base configuration for hash table building
 	 * @return True if hash tables were built successfully
 	 */
-	bool BuildHashTablesIncrementallyFromShards(
+	static bool BuildHashTablesIncrementallyFromShards(
 		const FString& DatasetDirectory,
-		const FSpatialHashTableBuilder::FBuildConfig& BaseConfig);
+		const FSpatialHashTableBuilder::FBuildConfig& BaseConfig, UTrajectoryDataLoader* Loader);
 
 	/**
 	 * Find trajectory positions for distance calculations

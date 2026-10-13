@@ -208,6 +208,7 @@ USpatialHashTableManager::USpatialHashTableManager()
 
 void USpatialHashTableManager::CancelActiveQuery()
 {
+	++LoadGeneration;
 	if (ActiveCancellationToken.IsValid())
 	{
 		ActiveCancellationToken->AtomicSet(true);
@@ -295,6 +296,16 @@ int32 USpatialHashTableManager::LoadHashTables(
 	int32 EndTimeStep,
 	bool bAutoCreate)
 {
+	++LoadGeneration;
+	const FString Directory = FPaths::ConvertRelativePathToFull(DatasetDirectory);
+	if (LoadedDatasetDirectory != Directory)
+	{
+		LoadedHashTables.Empty();
+		LoadedDatasetDirectory = Directory;
+		LoadedDatasetFirstTimeStep = MIN_int32;
+		LoadedDatasetLastTimeStep = MAX_int32;
+	}
+
 	if (StartTimeStep > EndTimeStep)
 	{
 		UE_LOG(LogTemp, Error, TEXT("USpatialHashTableManager::LoadHashTables: StartTimeStep (%d) must be <= EndTimeStep (%d)"),
@@ -343,6 +354,141 @@ int32 USpatialHashTableManager::LoadHashTables(
 		LoadedCount, EndTimeStep - StartTimeStep + 1, CellSize);
 
 	return LoadedCount;
+}
+
+void USpatialHashTableManager::LoadHashTablesAsync(
+	const FString& DatasetDirectory, float CellSize, int32 StartTimeStep, int32 EndTimeStep,
+	bool bAutoCreate, FOnSpatialHashLoadComplete OnComplete)
+{
+	check(IsInGameThread());
+	const uint64 Generation = ++LoadGeneration;
+	const FString Directory = FPaths::ConvertRelativePathToFull(DatasetDirectory);
+	UTrajectoryDataLoader* Loader = UTrajectoryDataLoader::Get();
+	TWeakObjectPtr<USpatialHashTableManager> WeakThis(this);
+
+	// Cache references are only manipulated on the game thread. The worker
+	// receives timestep numbers, never shared references from the UObject cache.
+	TSet<int32> CachedTimeSteps;
+	if (LoadedDatasetDirectory == Directory)
+	{
+		for (const auto& Pair : LoadedHashTables)
+		{
+			if (FMath::IsNearlyEqual(Pair.Key.CellSize, CellSize, CellSizeEpsilon))
+			{
+				CachedTimeSteps.Add(Pair.Key.TimeStep);
+			}
+		}
+	}
+
+	Async(EAsyncExecution::ThreadPool,
+		[WeakThis, Generation, Directory, CellSize, StartTimeStep, EndTimeStep,
+		 bAutoCreate, Loader, CachedTimeSteps = MoveTemp(CachedTimeSteps), OnComplete]()
+	{
+		FSpatialHashLoadResult Result;
+		TMap<int32, TUniquePtr<FSpatialHashTable>> Tables;
+		FDatasetMetaBinary Meta{};
+		IPlatformFile& Files = FPlatformFileManager::Get().GetPlatformFile();
+		TUniquePtr<IFileHandle> MetaFile(Files.OpenRead(*FPaths::Combine(Directory, TEXT("dataset-meta.bin"))));
+		if (StartTimeStep > EndTimeStep || !FMath::IsFinite(CellSize) || CellSize <= 0.0f)
+		{
+			Result.ErrorMessage = TEXT("Invalid hash-table load range or cell size.");
+		}
+		else if (!MetaFile || !MetaFile->Read(reinterpret_cast<uint8*>(&Meta), sizeof(Meta)) ||
+			FMemory::Memcmp(Meta.Magic, "TDSH", 4) != 0 || Meta.FormatVersion != 1 ||
+			Meta.EndiannessFlag != 0 || Meta.FirstTimeStep < 0 || Meta.LastTimeStep < Meta.FirstTimeStep)
+		{
+			Result.ErrorMessage = TEXT("Cannot read valid dataset-meta.bin for hash-table coverage.");
+		}
+		else
+		{
+			Result.DatasetFirstTimeStep = Meta.FirstTimeStep;
+			Result.DatasetLastTimeStep = Meta.LastTimeStep;
+			const int32 First = FMath::Max(StartTimeStep, Meta.FirstTimeStep);
+			const int32 Last = FMath::Min(EndTimeStep, Meta.LastTimeStep);
+			const int32 CoveredCount = FMath::Max(0, Last - First + 1);
+			Result.OutsideDatasetCount = EndTimeStep - StartTimeStep + 1 - CoveredCount;
+			bool bMissingFiles = false;
+			for (int32 Time = First; Time <= Last; ++Time)
+			{
+				if (!CachedTimeSteps.Contains(Time) &&
+					!Files.FileExists(*FSpatialHashTableBuilder::GetOutputFilename(Directory, CellSize, Time)))
+				{
+					bMissingFiles = true;
+					break;
+				}
+			}
+			// Out-of-range query samples must never trigger a full dataset rebuild.
+			if (bMissingFiles && bAutoCreate)
+			{
+				FSpatialHashTableBuilder::FBuildConfig Config;
+				Config.CellSize = CellSize;
+				Config.bComputeBoundingBox = true;
+				Config.BoundingBoxMargin = 1.0f;
+				Config.OutputDirectory = Directory;
+				if (!BuildHashTablesIncrementallyFromShards(Directory, Config, Loader))
+				{
+					Result.ErrorMessage = TEXT("Failed to build missing spatial hash tables.");
+				}
+			}
+			for (int32 Time = First; Time <= Last; ++Time)
+			{
+				if (CachedTimeSteps.Contains(Time))
+				{
+					++Result.LoadedCount;
+					continue;
+				}
+				auto Table = MakeUnique<FSpatialHashTable>();
+				const FString Path = FSpatialHashTableBuilder::GetOutputFilename(Directory, CellSize, Time);
+				if (!Table->LoadFromFile(Path) || Table->Header.TimeStep != static_cast<uint32>(Time) ||
+					!FMath::IsNearlyEqual(Table->Header.CellSize, CellSize, CellSizeEpsilon))
+				{
+					++Result.FailedCount;
+					UE_LOG(LogTemp, Error, TEXT("LoadHashTablesAsync: Failed table for timestep %d: %s"), Time, *Path);
+					continue;
+				}
+				Tables.Add(Time, MoveTemp(Table));
+				++Result.LoadedCount;
+			}
+			if (CoveredCount == 0)
+			{
+				Result.ErrorMessage = TEXT("Query time range does not overlap the target dataset.");
+			}
+			else if (Result.FailedCount > 0 && Result.ErrorMessage.IsEmpty())
+			{
+				Result.ErrorMessage = TEXT("Some spatial hash tables inside the dataset range could not be loaded.");
+			}
+		}
+
+		// Transfer ownership, not table contents. Only cache publication runs here.
+		AsyncTask(ENamedThreads::GameThread,
+			[WeakThis, Generation, Directory, CellSize, Result, Tables = MoveTemp(Tables), OnComplete]() mutable
+		{
+			USpatialHashTableManager* Manager = WeakThis.Get();
+			if (!Manager || Manager->LoadGeneration != Generation)
+			{
+				FSpatialHashLoadResult Cancelled;
+				Cancelled.ErrorMessage = TEXT("Hash-table load was superseded or its manager was destroyed.");
+				OnComplete.ExecuteIfBound(Cancelled);
+				return;
+			}
+			if (Manager->LoadedDatasetDirectory != Directory)
+			{
+				Manager->LoadedHashTables.Empty();
+				Manager->LoadedDatasetDirectory = Directory;
+			}
+			Manager->LoadedDatasetFirstTimeStep = Result.DatasetFirstTimeStep;
+			Manager->LoadedDatasetLastTimeStep = Result.DatasetLastTimeStep;
+			for (auto& Pair : Tables)
+			{
+				Manager->LoadedHashTables.Add(FHashTableKey(CellSize, Pair.Key),
+					MakeShareable(Pair.Value.Release()));
+			}
+			UE_LOG(LogTemp, Log, TEXT("LoadHashTablesAsync: Loaded %d tables; dataset=[%d,%d], outside=%d, failed=%d"),
+				Result.LoadedCount, Result.DatasetFirstTimeStep, Result.DatasetLastTimeStep,
+				Result.OutsideDatasetCount, Result.FailedCount);
+			OnComplete.ExecuteIfBound(Result);
+		});
+	});
 }
 
 bool USpatialHashTableManager::LoadHashTable(const FString& FilePath, float CellSize, int32 TimeStep)
@@ -556,6 +702,7 @@ int32 USpatialHashTableManager::QueryCell(
 
 void USpatialHashTableManager::UnloadHashTables(float CellSize)
 {
+	++LoadGeneration;
 	TArray<FHashTableKey> KeysToRemove;
 
 	for (const auto& Pair : LoadedHashTables)
@@ -577,6 +724,7 @@ void USpatialHashTableManager::UnloadHashTables(float CellSize)
 
 void USpatialHashTableManager::UnloadAllHashTables()
 {
+	++LoadGeneration;
 	int32 Count = LoadedHashTables.Num();
 	LoadedHashTables.Reset();
 
@@ -716,7 +864,7 @@ bool USpatialHashTableManager::TryCreateHashTables(
 	Config.OutputDirectory = DatasetDirectory;
 	
 	// Build hash tables incrementally during shard batch processing
-	if (!BuildHashTablesIncrementallyFromShards(DatasetDirectory, Config))
+	if (!BuildHashTablesIncrementallyFromShards(DatasetDirectory, Config, UTrajectoryDataLoader::Get()))
 	{
 		UE_LOG(LogTemp, Error, TEXT("USpatialHashTableManager::TryCreateHashTables: Failed to build hash tables"));
 		return false;
@@ -748,8 +896,10 @@ void USpatialHashTableManager::CreateHashTablesAsync(
 	// Use weak pointer to avoid use-after-free
 	TWeakObjectPtr<USpatialHashTableManager> WeakThis(this);
 
+	UTrajectoryDataLoader* Loader = UTrajectoryDataLoader::Get();
+
 	// Capture parameters by value for the async task
-	AsyncTask(ENamedThreads::AnyBackgroundThreadNormalTask, [WeakThis, DatasetDirectory, CellSize, StartTimeStep, EndTimeStep]()
+	AsyncTask(ENamedThreads::AnyBackgroundThreadNormalTask, [WeakThis, Loader, DatasetDirectory, CellSize, StartTimeStep, EndTimeStep]()
 	{
 		IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
 		
@@ -770,13 +920,7 @@ void USpatialHashTableManager::CreateHashTablesAsync(
 		UE_LOG(LogTemp, Log, TEXT("USpatialHashTableManager::CreateHashTablesAsync: Creating hash tables for cell size %.3f from complete dataset (processing all shards)"),
 			CellSize);
 		
-		// MEMORY OPTIMIZATION: Build hash tables incrementally per batch
-		USpatialHashTableManager* Manager = WeakThis.Get();
-		if (!Manager)
-		{
-			return;
-		}
-		
+		// Building uses captured loader resources and local state only.
 		// Setup configuration for building
 		FSpatialHashTableBuilder::FBuildConfig Config;
 		Config.CellSize = CellSize;
@@ -785,7 +929,7 @@ void USpatialHashTableManager::CreateHashTablesAsync(
 		Config.OutputDirectory = DatasetDirectory;
 		
 		// Build hash tables incrementally during shard batch processing
-		bool bSuccess = Manager->BuildHashTablesIncrementallyFromShards(DatasetDirectory, Config);
+		bool bSuccess = BuildHashTablesIncrementallyFromShards(DatasetDirectory, Config, Loader);
 		
 		// Return to game thread for final logging, loading, and cleanup
 		AsyncTask(ENamedThreads::GameThread, [WeakThis, bSuccess, CellSize, DatasetDirectory, StartTimeStep, EndTimeStep]()
@@ -797,24 +941,8 @@ void USpatialHashTableManager::CreateHashTablesAsync(
 					UE_LOG(LogTemp, Log, TEXT("USpatialHashTableManager::CreateHashTablesAsync: Successfully created hash tables for cell size %.3f"),
 						CellSize);
 					
-					// Load the newly created hash tables
-					// Note: Loading happens on game thread to safely update LoadedHashTables map.
-					// LoadFromFile() is optimized (only loads headers/entries, not trajectory IDs),
-					// but loading many hash tables could still cause a brief frame hitch.
-					// For large datasets with hundreds of timesteps, consider calling LoadHashTables()
-					// separately in smaller batches if frame time is critical.
-					UE_LOG(LogTemp, Log, TEXT("USpatialHashTableManager::CreateHashTablesAsync: Loading newly created hash tables..."));
-					int32 LoadedCount = Mgr->LoadHashTables(DatasetDirectory, CellSize, StartTimeStep, EndTimeStep, false);
-					
-					if (LoadedCount > 0)
-					{
-						UE_LOG(LogTemp, Log, TEXT("USpatialHashTableManager::CreateHashTablesAsync: Successfully loaded %d hash tables"),
-							LoadedCount);
-					}
-					else
-					{
-						UE_LOG(LogTemp, Warning, TEXT("USpatialHashTableManager::CreateHashTablesAsync: Created hash tables but failed to load them"));
-					}
+					Mgr->LoadHashTablesAsync(DatasetDirectory, CellSize, StartTimeStep, EndTimeStep,
+						false, FOnSpatialHashLoadComplete());
 				}
 				else
 				{
@@ -829,7 +957,7 @@ void USpatialHashTableManager::CreateHashTablesAsync(
 
 bool USpatialHashTableManager::BuildHashTablesIncrementallyFromShards(
 	const FString& DatasetDirectory,
-	const FSpatialHashTableBuilder::FBuildConfig& BaseConfig)
+	const FSpatialHashTableBuilder::FBuildConfig& BaseConfig, UTrajectoryDataLoader* Loader)
 {
 	// BATCH PROCESSING WITH PER-TIMESTEP HASH TABLE BUILDING
 	// This method processes shards in batches. For each batch:
@@ -843,7 +971,6 @@ bool USpatialHashTableManager::BuildHashTablesIncrementallyFromShards(
 	// hash table file. Hash tables are independent and can be built in parallel.
 	// No accumulation across batches - each batch is self-contained.
 	
-	UTrajectoryDataLoader* Loader = UTrajectoryDataLoader::Get();
 	if (!Loader)
 	{
 		UE_LOG(LogTemp, Error, TEXT("USpatialHashTableManager::BuildHashTablesIncrementallyFromShards: Failed to get TrajectoryDataLoader"));
@@ -2813,13 +2940,15 @@ void USpatialHashTableManager::QueryPositionsBatchedAsync(
 	// ResolvePeriodicExtent() accesses LoadedHashTables (game-thread-only state).
 	const FVector PeriodicExtent = ResolvePeriodicExtent(CellSize);
 	const bool bPeriodic = !PeriodicExtent.IsNearlyZero();
+	const int32 DatasetFirstTimeStep = LoadedDatasetFirstTimeStep;
+	const int32 DatasetLastTimeStep = LoadedDatasetLastTimeStep;
 
 	Async(EAsyncExecution::ThreadPool,
 		[Loader, Snapshot, DatasetDirectory,
 		 QueryPositions, QueryTimeSteps,
 		 Radius, EffectiveBatchSize, ExcludeTrajectoryId,
 		 PeriodicExtent, bPeriodic, bIncludeWholeResultTrajectorySamples,
-		 BatchCallback, CancellationToken]()
+		 BatchCallback, CancellationToken, DatasetFirstTimeStep, DatasetLastTimeStep]()
 	{
 		// Shard file list – GetShardFiles is not necessarily thread-safe.
 		TArray<FString> ShardFiles;
@@ -2875,12 +3004,19 @@ void USpatialHashTableManager::QueryPositionsBatchedAsync(
 
 		// Count the query samples whose hash table was null (unhandled).
 		FThreadSafeCounter UnhandledSampleCount(0);
+		FThreadSafeCounter OutsideDatasetSampleCount(0);
 
 		ParallelFor(QueryPositions.Num(), [&](int32 i)
 		{
 			// Abort this iteration immediately if the query was cancelled.
 			if ((bool)(*CancellationToken))
 			{
+				return;
+			}
+
+			if (QueryTimeSteps[i] < DatasetFirstTimeStep || QueryTimeSteps[i] > DatasetLastTimeStep)
+			{
+				OutsideDatasetSampleCount.Increment();
 				return;
 			}
 
@@ -2924,12 +3060,19 @@ void USpatialHashTableManager::QueryPositionsBatchedAsync(
 
 		const int32 TotalQuerySamples   = QueryPositions.Num();
 		const int32 UnhandledSamples    = UnhandledSampleCount.GetValue();
-		const int32 HandledQuerySamples = TotalQuerySamples - UnhandledSamples;
+		const int32 OutsideDatasetSamples = OutsideDatasetSampleCount.GetValue();
+		const int32 HandledQuerySamples = TotalQuerySamples - UnhandledSamples - OutsideDatasetSamples;
 		const int32 TotalCandidates     = AllCandidates.Num();
 
 		UE_LOG(LogTemp, Log,
 			TEXT("QueryPositionsBatchedAsync: Phase 1 complete – %d/%d query samples handled, %d candidate trajectories found."),
 			HandledQuerySamples, TotalQuerySamples, TotalCandidates);
+
+		if (OutsideDatasetSamples > 0)
+		{
+			UE_LOG(LogTemp, Log, TEXT("QueryPositionsBatchedAsync: %d samples outside target dataset [%d,%d]; no data to query."),
+				OutsideDatasetSamples, DatasetFirstTimeStep, DatasetLastTimeStep);
+		}
 
 		if (UnhandledSamples > 0)
 		{
