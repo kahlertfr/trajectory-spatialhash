@@ -435,6 +435,10 @@ void ASampleTrajectoryNiagaraActor::TransferScenarioToNiagara(ESampleTrajectoryS
 	TArray<int32> ResultMinDistanceTimeSteps;
 	TArray<int32> ResultTrajStartIndex;
 	TArray<int32> ResultStartTime;
+	TArray<int32> ResultSampleTimeSteps;
+	TArray<float> ResultLastDistances;
+	TArray<int32> QuerySampleTimeSteps;
+	for (int32 Index = 0; Index < QueryPointsRaw.Num(); ++Index) QuerySampleTimeSteps.Add(Index);
 
 	ResultTrajectoryIds.Reserve(Results.Num());
 	ResultMinDistances.Reserve(Results.Num());
@@ -463,6 +467,7 @@ void ASampleTrajectoryNiagaraActor::TransferScenarioToNiagara(ESampleTrajectoryS
 		ResultMinDistanceTimeSteps.Add(MinDistanceTimeStep);
 		ResultTrajStartIndex.Add(ResultPoints.Num());
 		ResultStartTime.Add(Result.SamplePoints.Num() > 0 ? Result.SamplePoints[0].TimeStep : 0);
+		ResultLastDistances.Add(Result.SamplePoints.IsEmpty() ? 0.0f : Result.SamplePoints.Last().Distance);
 
 		TArray<FVector> UnwrappedPositions;
 		TArray<int32> TimeSteps;
@@ -472,6 +477,7 @@ void ASampleTrajectoryNiagaraActor::TransferScenarioToNiagara(ESampleTrajectoryS
 		for (const FTrajectorySamplePoint& Sample : Result.SamplePoints)
 		{
 			ResultPoints.Add(Sample.Position);
+			ResultSampleTimeSteps.Add(Sample.TimeStep);
 			ResultDistances.Add(Sample.Distance);
 			ResultVolumeIndices.Add(Sample.VolumeIndex);
 
@@ -607,6 +613,9 @@ void ASampleTrajectoryNiagaraActor::TransferScenarioToNiagara(ESampleTrajectoryS
 	UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayInt32(
 		NiagaraComponent, FName("QueryVolumeIndices"), QueryVolumeIndices);
 
+	UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayInt32(NiagaraComponent, FName("QuerySampleTimeSteps"), QuerySampleTimeSteps);
+	UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayInt32(NiagaraComponent, FName("ResultSampleTimeSteps"), ResultSampleTimeSteps);
+	UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayFloat(NiagaraComponent, FName("ResultLastDistances"), ResultLastDistances);
 	const int32 QueryTimeStart = 0;
 	const int32 QueryTimeEnd = FMath::Max(NumTimeSteps - 1, 0);
 	VisualizationTimeStart = FMath::Clamp(VisualizationTimeStart, QueryTimeStart, QueryTimeEnd);
