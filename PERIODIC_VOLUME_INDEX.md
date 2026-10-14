@@ -13,6 +13,15 @@ whole-number multiple of the box size.
 The `ResultVolumeIndices` Niagara integer array encodes exactly this shift for every result
 sample point in a compact, shader-friendly format.
 
+For batched trajectory queries, result paths are unwrapped continuously through all
+available samples, including samples excluded by the radius filter. The entire retained
+path is aligned to the query's nearest periodic image at its closest-approach sample.
+Other samples preserve that continuous path instead of independently switching to the
+nearest image. Their rendering positions can therefore differ from the image used for
+minimum-image distance checks; neighborhood membership and stored distances retain their
+periodic meaning. Rerunning a query with a different time range can select a different
+alignment anchor.
+
 ---
 
 ## Virtual Volume Grid
