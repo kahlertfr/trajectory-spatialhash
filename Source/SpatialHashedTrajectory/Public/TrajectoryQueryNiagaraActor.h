@@ -8,6 +8,7 @@
 #include "UserSelectionManager.h"
 #include "TrajectoryQueryNiagaraActor.generated.h"
 
+struct FPreparedTrajectoryDisplay;
 class UNiagaraSystem;
 class UNiagaraComponent;
 
@@ -31,6 +32,10 @@ class UNiagaraComponent;
  *                                         (parallel to ResultTrajectoryIds)
  * - Int Array      ResultTrajStartIndex – start index into ResultPoints for each result trajectory
  * - Int Array      ResultStartTime      – starting timestep for each result trajectory
+ * - Int Array      QuerySampleTimeSteps – actual retained focus timesteps
+ * - Int Array      ResultSampleTimeSteps – actual retained context timesteps
+ * - Int Array      ResultQuerySampleIndices – matching focus index or INDEX_NONE
+ * - FloatArray     ResultLastDistances – original final distance per displayed trajectory
  * - Int Array      ResultVolumeIndices  – per-sample periodic volume index (parallel to ResultPoints).
  *                                         0 = original simulation box; non-zero = periodic image.
  *                                         Decoded via DecodeVolumeIndex / GetVolumeWorldOffset (see PERIODIC_VOLUME_INDEX.md).
@@ -94,7 +99,8 @@ public:
 	 * QueryPositions[i] is queried at timestep min(QueryTimeStart + i, QueryTimeEnd).
 	 * All positions are queried in parallel in the first phase of the pipeline,
 	 * and results are processed in batches of BatchSize trajectories to allow
-	 * progressive updates to the Niagara system.
+	 * progressive updates to the Niagara system. Consumed and released after the
+	 * final upload; supply the focus positions again for a subsequent query.
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Query Settings")
 	TArray<FVector> QueryPositions;
@@ -125,6 +131,21 @@ public:
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Query Settings")
 	FPeriodicVolume PeriodicVolume;
+
+
+	/** Shared temporal stride for focus and context; settings are frozen per request. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Query Settings|Sampling", meta = (ClampMin = "1"))
+	int32 SampleStride = 1;
+
+	/** Combined focus/context sample budget. Zero disables the limit. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Query Settings|Sampling", meta = (ClampMin = "0"))
+	int32 MaximumDisplayedSamples = 1000000;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Query Results")
+	int32 EffectiveSampleStride = 1;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Query Results")
+	int32 DisplayedSampleCount = 0;
 
 	// ─── Niagara Settings ─────────────────────────────────────────────────────
 
@@ -191,8 +212,9 @@ public:
 	// ─── Blueprint callable entry points ─────────────────────────────────────
 
 	/**
-	 * Push the cached query results to the attached Niagara component.
-	 * Call this after RunQuery (async) has completed (i.e. after OnSuccess fires).
+	 * Request an asynchronous upload while caches exist; after completion the final display is already uploaded.
+	 * The final display is already uploaded when OnSuccess fires; calling this
+	 * afterwards is a compatibility no-op because CPU query caches are released.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Trajectory Visualization")
 	void TransferDataToNiagara();
@@ -288,14 +310,32 @@ protected:
 	bool InitializeManager();
 
 private:
+#if WITH_DEV_AUTOMATION_TESTS
+	friend class FQuerySamplingCleanupTest;
+#endif
 	void StartPreparedQuery(FSimpleDelegate OnComplete, int32 DatasetFirstTimeStep,
 		int32 DatasetLastTimeStep, bool bIncludeWholeResultTrajectorySamples);
+
+	void UploadPreparedDisplay(const FPreparedTrajectoryDisplay& Data, bool bReactivate);
+	void ReleaseQueryCPUData();
+	bool bPreparationInProgress = false;
+	bool bDisplayDirty = false;
+	bool bAllBatchesProcessed = false;
+	bool bFinalDisplayTransferred = false;
+	int32 RequestedSampleStride = 1;
+	int32 RequestedMaximumSamples = 1000000;
+	int32 ActiveQueryTimeStart = 0;
+	int32 ActiveQueryTimeEnd = 0;
+	FSimpleDelegate PendingQueryComplete;
 	bool bQueryInProgress = false;
 	uint64 QueryGeneration = 0;
 	FSimpleDelegate PendingQueryFailure;
 
 	/** Results cached by the last completed query */
 	TArray<FSpatialHashQueryResult> CachedResults;
+	// Immutable batches let preparation snapshot references without copying all
+	// accumulated samples on the game thread. Full batches live until final upload.
+	TArray<TSharedPtr<const TArray<FSpatialHashQueryResult>, ESPMode::ThreadSafe>> CachedResultBatches;
 
 	/**
 	 * Lookup table: TrajectoryId → index into CachedResults.

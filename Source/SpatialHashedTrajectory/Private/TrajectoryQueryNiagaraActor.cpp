@@ -5,6 +5,42 @@
 #include "NiagaraFunctionLibrary.h"
 #include "NiagaraDataInterfaceArrayFunctionLibrary.h"
 #include "VRLogManager.h"
+#include "Async/Async.h"
+#include "NiagaraSystem.h"
+#include "NiagaraDataInterfaceArrayInt.h"
+#include "NiagaraDataInterfaceArrayFloat.h"
+#if WITH_DEV_AUTOMATION_TESTS
+#include "Misc/AutomationTest.h"
+#endif
+
+struct FPreparedTrajectoryDisplay
+{
+	TArray<FVector> ResultPoints;
+	TArray<float> ResultDistances;
+	TArray<float> ResultVelocities;
+	TArray<int32> ResultVolumeIndices;
+	TArray<int32> ResultTrajectoryIds;
+	TArray<float> ResultMinDistances;
+	TArray<int32> ResultMinDistanceTimeSteps;
+	TArray<int32> ResultTrajStartIndex;
+	TArray<int32> ResultStartTime;
+	TArray<float> QueryVelocities;
+	TArray<int32> QueryVolumeIndices;
+	TArray<FVector> QueryTranslations;
+	TArray<FQuat> QueryRotations;
+	TArray<FVector> RawQueryPoints;
+	TArray<int32> QuerySampleTimeSteps;
+	TArray<int32> ResultSampleTimeSteps;
+	TArray<int32> ResultQuerySampleIndices;
+	TArray<float> ResultLastDistances;
+
+	float VelocityMin = 0.0f;
+	float VelocityMax = 0.0f;
+	int32 Stride = 1;
+	FVector BoundsMin = FVector::ZeroVector;
+	FVector BoundsMax = FVector::ZeroVector;
+	FString Error;
+};
 
 // ─── File-local helpers ───────────────────────────────────────────────────────
 
@@ -36,6 +72,436 @@ static FVector DecodePeriodicVolumeIndexToOffset(int32 VolumeIndex, const FVecto
 	return FVector(ix * Extent.X, iy * Extent.Y, iz * Extent.Z);
 }
 
+
+static FPreparedTrajectoryDisplay PrepareTrajectoryDisplay(
+	const TArray<FVector>& QueryPoints, const TArray<FVector>& CachedQueryPointsRaw,
+	const TArray<FSpatialHashQueryResult>& Results, FVector CachedPeriodicExtent,
+	int32 QueryTimeStart, int32 QueryTimeEnd, int32 MinimumStride, int32 MaximumSamples)
+{
+	check(!IsInGameThread());
+	FPreparedTrajectoryDisplay Data;
+	FBox FullBounds(EForceInit::ForceInit);
+	for (const FVector& Point : QueryPoints) FullBounds += Point;
+	// ── Build flat result arrays ──────────────────────────────────────────────
+
+	// ResultPoints: all sample positions concatenated in trajectory order
+	auto& ResultPoints = Data.ResultPoints;
+
+	// ResultDistances: distance from the query point for each sample (parallel to ResultPoints)
+	auto& ResultDistances = Data.ResultDistances;
+	auto& ResultVelocities = Data.ResultVelocities;
+
+	// ResultVolumeIndices: per-sample periodic volume index (parallel to ResultPoints).
+	// 0 = original simulation box; non-zero = periodic image.
+	// Decoded in HLSL via DecodeVolumeIndex / GetVolumeWorldOffset (see PERIODIC_VOLUME_INDEX.md).
+	auto& ResultVolumeIndices = Data.ResultVolumeIndices;
+
+	// Per-trajectory metadata arrays (one entry per result trajectory)
+	auto& ResultTrajectoryIds = Data.ResultTrajectoryIds;
+	auto& ResultMinDistances = Data.ResultMinDistances;
+	auto& ResultMinDistanceTimeSteps = Data.ResultMinDistanceTimeSteps;
+	auto& ResultTrajStartIndex = Data.ResultTrajStartIndex;
+	auto& ResultStartTime = Data.ResultStartTime;
+
+	ResultTrajectoryIds.Reserve(Results.Num());
+	ResultMinDistances.Reserve(Results.Num());
+	ResultMinDistanceTimeSteps.Reserve(Results.Num());
+	ResultTrajStartIndex.Reserve(Results.Num());
+	ResultStartTime.Reserve(Results.Num());
+
+	for (const FSpatialHashQueryResult& Result : Results)
+	{
+		ResultTrajectoryIds.Add(Result.TrajectoryId);
+		float MinDistance = 0.0f;
+		int32 MinDistanceTimeStep = INDEX_NONE;
+		bool bHasMinDistance = false;
+		for (const FTrajectorySamplePoint& Sample : Result.SamplePoints)
+		{
+			if (!bHasMinDistance || Sample.Distance < MinDistance)
+			{
+				MinDistance = Sample.Distance;
+				MinDistanceTimeStep = Sample.TimeStep;
+				bHasMinDistance = true;
+			}
+		}
+		ResultMinDistances.Add(MinDistance);
+		ResultMinDistanceTimeSteps.Add(MinDistanceTimeStep);
+		ResultTrajStartIndex.Add(ResultPoints.Num());
+		ResultStartTime.Add(Result.SamplePoints.Num() > 0 ? Result.SamplePoints[0].TimeStep : 0);
+		Data.ResultLastDistances.Add(Result.SamplePoints.IsEmpty() ? 0.0f : Result.SamplePoints.Last().Distance);
+
+		TArray<FVector> UnwrappedPositions;
+		TArray<int32> TimeSteps;
+		UnwrappedPositions.Reserve(Result.SamplePoints.Num());
+		TimeSteps.Reserve(Result.SamplePoints.Num());
+
+		for (const FTrajectorySamplePoint& Sample : Result.SamplePoints)
+		{
+			Data.ResultSampleTimeSteps.Add(Sample.TimeStep);
+			ResultPoints.Add(Sample.Position);
+			ResultDistances.Add(Sample.Distance);
+			ResultVolumeIndices.Add(Sample.VolumeIndex);
+
+			UnwrappedPositions.Add(Sample.Position + DecodePeriodicVolumeIndexToOffset(Sample.VolumeIndex, CachedPeriodicExtent));
+			FullBounds += UnwrappedPositions.Last();
+			TimeSteps.Add(Sample.TimeStep);
+		}
+
+		if (UnwrappedPositions.Num() == 1)
+		{
+			ResultVelocities.Add(0.0f);
+		}
+		else if (UnwrappedPositions.Num() > 1)
+		{
+			for (int32 i = 0; i < UnwrappedPositions.Num(); ++i)
+			{
+				const int32 FromIndex = (i < UnwrappedPositions.Num() - 1) ? i : (i - 1);
+				const int32 ToIndex = (i < UnwrappedPositions.Num() - 1) ? (i + 1) : i;
+				const int32 DeltaTime = FMath::Abs(TimeSteps[ToIndex] - TimeSteps[FromIndex]);
+				const float DeltaDistance = FVector::Distance(UnwrappedPositions[ToIndex], UnwrappedPositions[FromIndex]);
+				ResultVelocities.Add(DeltaTime > 0 ? (DeltaDistance / static_cast<float>(DeltaTime)) : 0.0f);
+			}
+		}
+	}
+
+	auto& QueryVelocities = Data.QueryVelocities;
+	QueryVelocities.Reserve(QueryPoints.Num());
+	if (QueryPoints.Num() == 1)
+	{
+		QueryVelocities.Add(0.0f);
+	}
+	else if (QueryPoints.Num() > 1)
+	{
+		for (int32 i = 0; i < QueryPoints.Num(); ++i)
+		{
+			const int32 FromIndex = (i < QueryPoints.Num() - 1) ? i : (i - 1);
+			const int32 ToIndex = (i < QueryPoints.Num() - 1) ? (i + 1) : i;
+			const int32 FromTimeStep = FMath::Min(QueryTimeStart + FromIndex, QueryTimeEnd);
+			const int32 ToTimeStep = FMath::Min(QueryTimeStart + ToIndex, QueryTimeEnd);
+			const int32 DeltaTime = FMath::Abs(ToTimeStep - FromTimeStep);
+			const float DeltaDistance = FVector::Distance(QueryPoints[ToIndex], QueryPoints[FromIndex]);
+			QueryVelocities.Add(DeltaTime > 0 ? (DeltaDistance / static_cast<float>(DeltaTime)) : 0.0f);
+		}
+	}
+
+	float& VelocityMin = Data.VelocityMin;
+	float& VelocityMax = Data.VelocityMax;
+	bool bHasVelocity = false;
+	const auto AccumulateVelocityRange = [&VelocityMin, &VelocityMax, &bHasVelocity](const TArray<float>& Velocities)
+	{
+		for (float Velocity : Velocities)
+		{
+			if (!bHasVelocity)
+			{
+				VelocityMin = Velocity;
+				VelocityMax = Velocity;
+				bHasVelocity = true;
+				continue;
+			}
+
+			VelocityMin = FMath::Min(VelocityMin, Velocity);
+			VelocityMax = FMath::Max(VelocityMax, Velocity);
+		}
+	};
+	AccumulateVelocityRange(QueryVelocities);
+	AccumulateVelocityRange(ResultVelocities);
+
+	const int32 NumResultPoints = ResultPoints.Num();
+	const int32 NumResultDistances = ResultDistances.Num();
+	const int32 NumResultVelocities = ResultVelocities.Num();
+	const int32 NumResultVolumeIndices = ResultVolumeIndices.Num();
+
+	const bool bSampleArraysAligned =
+		NumResultPoints == NumResultDistances &&
+		NumResultPoints == NumResultVelocities &&
+		NumResultPoints == NumResultVolumeIndices;
+	const int32 NumResultTrajectoryIds = ResultTrajectoryIds.Num();
+	const int32 NumResultMinDistances = ResultMinDistances.Num();
+	const int32 NumResultMinDistanceTimeSteps = ResultMinDistanceTimeSteps.Num();
+	const int32 NumResultTrajStartIndices = ResultTrajStartIndex.Num();
+	const int32 NumResultStartTimes = ResultStartTime.Num();
+
+	const bool bMetadataArraysAligned =
+		NumResultTrajectoryIds == NumResultMinDistances &&
+		NumResultTrajectoryIds == NumResultMinDistanceTimeSteps &&
+		NumResultTrajectoryIds == NumResultTrajStartIndices &&
+		NumResultTrajectoryIds == NumResultStartTimes;
+	if (!bSampleArraysAligned || !bMetadataArraysAligned)
+	{
+		UE_LOG(LogTemp, Error,
+			TEXT("ATrajectoryQueryNiagaraActor: Skipping Niagara transfer due to array alignment error. ")
+			TEXT("SampleAligned=%d (Points=%d, Distances=%d, Velocities=%d, VolumeIndices=%d), ")
+			TEXT("MetadataAligned=%d (Ids=%d, MinDist=%d, MinTime=%d, StartIdx=%d, StartTime=%d)."),
+			bSampleArraysAligned ? 1 : 0,
+			NumResultPoints, NumResultDistances, NumResultVelocities, NumResultVolumeIndices,
+			bMetadataArraysAligned ? 1 : 0,
+			NumResultTrajectoryIds, NumResultMinDistances, NumResultMinDistanceTimeSteps,
+			NumResultTrajStartIndices, NumResultStartTimes);
+		Data.Error = TEXT("Sample attribute alignment failed"); return Data;
+	}
+
+	// ── Build query volume index array ───────────────────────────────────────
+	//
+	// Parallel to QueryPoints (which Niagara receives as raw/wrapped coordinates).
+	// Each element encodes how many periodic box-lengths must be added to the raw
+	// position to place it in the same continuous image as the unwrapped trajectory.
+	//
+	// When non-periodic, all indices are 0 (no offset needed).
+	// When periodic, CachedQueryPointsRaw holds the original wrapped positions and
+	// QueryPoints (the parameter) holds the unwrapped positions used for transforms.
+	Data.RawQueryPoints = CachedQueryPointsRaw.IsEmpty() ? QueryPoints : CachedQueryPointsRaw;
+	const TArray<FVector>& RawQueryPoints = Data.RawQueryPoints;
+
+	auto& QueryVolumeIndices = Data.QueryVolumeIndices;
+	QueryVolumeIndices.Reserve(RawQueryPoints.Num());
+	if (!CachedPeriodicExtent.IsNearlyZero() && !CachedQueryPointsRaw.IsEmpty())
+	{
+		// CachedQueryPointsRaw and CachedQueryPoints (the unwrapped version passed as
+		// QueryPoints) are always built together in FireAsyncQueriesWithCallback and
+		// must have the same length.
+		ensure(CachedQueryPointsRaw.Num() == QueryPoints.Num());
+
+		for (int32 i = 0; i < RawQueryPoints.Num(); ++i)
+		{
+			const FVector& Raw       = RawQueryPoints[i];
+			const FVector& Unwrapped = QueryPoints[i];
+			// Compute the per-axis hop count: how many box-lengths to ADD to Raw
+			// to reach the Unwrapped image (identical to ComputeVolumeIndex(Raw, Unwrapped)).
+			const int32 ix = (CachedPeriodicExtent.X > 0.0f)
+				? FMath::RoundToInt((Unwrapped.X - Raw.X) / CachedPeriodicExtent.X) : 0;
+			const int32 iy = (CachedPeriodicExtent.Y > 0.0f)
+				? FMath::RoundToInt((Unwrapped.Y - Raw.Y) / CachedPeriodicExtent.Y) : 0;
+			const int32 iz = (CachedPeriodicExtent.Z > 0.0f)
+				? FMath::RoundToInt((Unwrapped.Z - Raw.Z) / CachedPeriodicExtent.Z) : 0;
+			QueryVolumeIndices.Add((ix & 0xFF) | ((iy & 0xFF) << 8) | ((iz & 0xFF) << 16));
+		}
+	}
+	else
+	{
+		QueryVolumeIndices.Init(0, RawQueryPoints.Num());
+	}
+
+	// ── Build query-relative transform arrays ────────────────────────────────
+	//
+	// Transforms are computed from the UNWRAPPED query positions (the QueryPoints
+	// parameter) so that translations and rotations are continuous across periodic
+	// boundaries.  The shader reconstructs the unwrapped world position as:
+	//   UnwrappedWorldPos[i] = RawQueryPoints[i] + GetVolumeWorldOffset(QueryVolumeIndices[i], PeriodicVolumeExtent)
+	// which equals QueryPoints[i], so the transforms remain consistent.
+	//
+	// For each query sample point i:
+	//   QueryTranslations[i] = QueryPoints[0] - QueryPoints[i]
+	//   QueryRotations[i]    = rotation that aligns the forward vector at i to
+	//                          the forward vector at 0.
+	//
+	// The forward vector at point i is the normalised direction from
+	// QueryPoints[i] to QueryPoints[i+1].  For the last point the direction
+	// from the penultimate point is reused.  When only one point is present
+	// FVector::ForwardVector is used as a neutral fallback.
+
+	auto& QueryTranslations = Data.QueryTranslations;
+	auto& QueryRotations = Data.QueryRotations;
+
+	if (QueryPoints.Num() > 0)
+	{
+		QueryTranslations.Reserve(QueryPoints.Num());
+		QueryRotations.Reserve(QueryPoints.Num());
+
+		// Returns the normalised forward vector for sample index i.
+		auto GetForwardAt = [&QueryPoints](int32 i) -> FVector
+		{
+			if (QueryPoints.Num() == 1)
+			{
+				return FVector::ForwardVector;
+			}
+			// Clamp so the last point reuses the direction of the penultimate one.
+			const int32 From = FMath::Min(i,     QueryPoints.Num() - 2);
+			const int32 To   = FMath::Min(i + 1, QueryPoints.Num() - 1);
+			const FVector Dir = (QueryPoints[To] - QueryPoints[From]).GetSafeNormal();
+			return Dir.IsNearlyZero() ? FVector::ForwardVector : Dir;
+		};
+
+		const FVector FirstForward = GetForwardAt(0);
+
+		for (int32 i = 0; i < QueryPoints.Num(); ++i)
+		{
+			const FVector CurForward = GetForwardAt(i);
+			QueryTranslations.Add(QueryPoints[0] - QueryPoints[i]);
+			//if (i >0)
+			//	UE_LOG(LogTemp, Log,
+			//	TEXT("%d with %f"), i,  QueryTranslations[i].Length() - QueryTranslations[i-1].Length());
+
+			QueryRotations.Add(FQuat::FindBetweenNormals(CurForward, FirstForward));
+		}
+	}
+
+
+	for (int32 Index = 0; Index < QueryPoints.Num(); ++Index)
+	{
+		Data.QuerySampleTimeSteps.Add(FMath::Min(QueryTimeStart + Index, QueryTimeEnd));
+	}
+	const auto KeepTime = [QueryTimeStart](int32 Time, int64 Stride)
+	{
+		return (static_cast<int64>(Time) - QueryTimeStart) % Stride == 0;
+	};
+	int64 Stride = FMath::Max(1, MinimumStride);
+	for (;;)
+	{
+		int64 Count = 0;
+		for (int32 Time : Data.QuerySampleTimeSteps) Count += KeepTime(Time, Stride);
+		for (int32 Time : Data.ResultSampleTimeSteps) Count += KeepTime(Time, Stride);
+		if (MaximumSamples <= 0 || Count <= MaximumSamples) break;
+		if (Stride > MAX_int32 / 2)
+		{
+			Data.Error = TEXT("The sample budget cannot be satisfied by shared temporal reduction");
+			return Data;
+		}
+		Stride *= 2;
+	}
+	Data.Stride = static_cast<int32>(Stride);
+	TArray<int32> QueryIndices;
+	TMap<int32, int32> FocusAtTime;
+	for (int32 Index = 0; Index < Data.QuerySampleTimeSteps.Num(); ++Index)
+	{
+		if (KeepTime(Data.QuerySampleTimeSteps[Index], Stride))
+		{
+			FocusAtTime.Add(Data.QuerySampleTimeSteps[Index], QueryIndices.Num());
+			QueryIndices.Add(Index);
+		}
+	}
+	const auto Select = [](auto& Array, const TArray<int32>& Indices)
+	{
+		using FArray = typename TDecay<decltype(Array)>::Type;
+		FArray Selected;
+		Selected.Reserve(Indices.Num());
+		for (int32 Index : Indices) Selected.Add(Array[Index]);
+		Array = MoveTemp(Selected);
+	};
+	Select(Data.RawQueryPoints, QueryIndices);
+	Select(Data.QuerySampleTimeSteps, QueryIndices);
+	Select(Data.QueryVolumeIndices, QueryIndices);
+	Select(Data.QueryVelocities, QueryIndices);
+	Select(Data.QueryTranslations, QueryIndices);
+	Select(Data.QueryRotations, QueryIndices);
+	TArray<int32> ResultIndices, TrajectoryIndices, Starts, StartTimes;
+	for (int32 Trajectory = 0; Trajectory < Data.ResultTrajectoryIds.Num(); ++Trajectory)
+	{
+		const int32 Start = Data.ResultTrajStartIndex[Trajectory];
+		const int32 End = Trajectory + 1 < Data.ResultTrajectoryIds.Num()
+			? Data.ResultTrajStartIndex[Trajectory + 1] : Data.ResultPoints.Num();
+		const int32 ReducedStart = ResultIndices.Num();
+		for (int32 Index = Start; Index < End; ++Index)
+		{
+			if (!KeepTime(Data.ResultSampleTimeSteps[Index], Stride)) continue;
+			ResultIndices.Add(Index);
+			const int32* FocusIndex = FocusAtTime.Find(Data.ResultSampleTimeSteps[Index]);
+			Data.ResultQuerySampleIndices.Add(FocusIndex ? *FocusIndex : INDEX_NONE);
+		}
+		if (ResultIndices.Num() > ReducedStart)
+		{
+			TrajectoryIndices.Add(Trajectory);
+			Starts.Add(ReducedStart);
+			StartTimes.Add(Data.ResultSampleTimeSteps[ResultIndices[ReducedStart]]);
+		}
+	}
+	Select(Data.ResultPoints, ResultIndices);
+	Select(Data.ResultDistances, ResultIndices);
+	Select(Data.ResultVelocities, ResultIndices);
+	Select(Data.ResultVolumeIndices, ResultIndices);
+	Select(Data.ResultSampleTimeSteps, ResultIndices);
+	Select(Data.ResultTrajectoryIds, TrajectoryIndices);
+	Select(Data.ResultMinDistances, TrajectoryIndices);
+	Select(Data.ResultMinDistanceTimeSteps, TrajectoryIndices);
+	Select(Data.ResultLastDistances, TrajectoryIndices);
+	Data.ResultTrajStartIndex = MoveTemp(Starts);
+	Data.ResultStartTime = MoveTemp(StartTimes);
+	Data.BoundsMin = FullBounds.IsValid ? FullBounds.Min : FVector::ZeroVector;
+	Data.BoundsMax = FullBounds.IsValid ? FullBounds.Max : FVector::ZeroVector;
+	return Data;
+}
+
+#if WITH_DEV_AUTOMATION_TESTS
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSharedTrajectorySamplingTest,
+	"TrajectoryBLab.Query.SharedTemporalSampling",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FSharedTrajectorySamplingTest::RunTest(const FString& Parameters)
+{
+	const auto Prepare = [](int32 Stride, int32 Limit)
+	{
+		return Async(EAsyncExecution::ThreadPool, [Stride, Limit]()
+		{
+			TArray<FVector> Focus = {FVector(0,0,0), FVector(1,0,0), FVector(4,0,0), FVector(9,0,0), FVector(16,0,0)};
+			FSpatialHashQueryResult Context(17);
+			Context.SamplePoints = {FTrajectorySamplePoint(FVector(1,1,0), 11, 4.0f),
+				FTrajectorySamplePoint(FVector(4,1,0), 12, 0.25f),
+				FTrajectorySamplePoint(FVector(16,1,0), 14, 8.0f),
+				FTrajectorySamplePoint(FVector(25,1,0), 15, 2.0f)};
+			return PrepareTrajectoryDisplay(Focus, Focus, {Context}, FVector::ZeroVector, 10, 14, Stride, Limit);
+		}).Get();
+	};
+	const auto Reduced = Prepare(2, 0);
+	TestTrue(TEXT("Preparation succeeds"), Reduced.Error.IsEmpty());
+	TestEqual(TEXT("Focus sample count"), Reduced.RawQueryPoints.Num(), 3);
+	TestEqual(TEXT("Unequal starts and missing times use shared grid"), Reduced.ResultSampleTimeSteps[0], 12);
+	TestEqual(TEXT("Result maps to same retained focus time"), Reduced.ResultQuerySampleIndices[0], 1);
+	TestEqual(TEXT("Full-resolution velocity survives reduction"), Reduced.QueryVelocities[0], 1.0f);
+	TestEqual(TEXT("Original final distance retained despite removed endpoint"), Reduced.ResultLastDistances[0], 2.0f);
+	TestEqual(TEXT("Original minimum retained"), Reduced.ResultMinDistances[0], 0.25f);
+	const auto Capped = Prepare(1, 3);
+	TestTrue(TEXT("Budget includes focus and context"), Capped.RawQueryPoints.Num() + Capped.ResultPoints.Num() <= 3);
+	TestEqual(TEXT("Automatic doubling"), Capped.Stride, 4);
+	const auto Full = Prepare(1, 0);
+	TestEqual(TEXT("Stride one preserves all samples"), Full.RawQueryPoints.Num() + Full.ResultPoints.Num(), 9);
+	const auto Impossible = Prepare(1, 1);
+	// There is only one focus sample on the origin; at a sufficiently large stride this fits.
+	TestTrue(TEXT("Very small feasible budget"), Impossible.Error.IsEmpty());
+	const auto Coincident = Async(EAsyncExecution::ThreadPool, []()
+	{
+		TArray<FVector> Focus = {FVector::ZeroVector};
+		FSpatialHashQueryResult Context(8);
+		Context.SamplePoints.Add(FTrajectorySamplePoint(FVector::ZeroVector, 10, 0.0f));
+		return PrepareTrajectoryDisplay(Focus, Focus, {Context}, FVector::ZeroVector, 10, 10, 1, 1);
+	}).Get();
+	TestFalse(TEXT("Impossible coincident-time cap is rejected"), Coincident.Error.IsEmpty());
+	const auto Empty = Async(EAsyncExecution::ThreadPool, []()
+	{
+		return PrepareTrajectoryDisplay({}, {}, {}, FVector::ZeroVector, 10, 10, 1, 1);
+	}).Get();
+	TestTrue(TEXT("Empty result is safe"), Empty.Error.IsEmpty());
+	return true;
+}
+#endif
+
+// The cleanup contract is independent of Niagara's internal CPU copies.
+#if WITH_DEV_AUTOMATION_TESTS
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FQuerySamplingCleanupTest,
+	"TrajectoryBLab.Query.SamplingCleanup",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FQuerySamplingCleanupTest::RunTest(const FString& Parameters)
+{
+	auto* Actor = NewObject<ATrajectoryQueryNiagaraActor>();
+	Actor->CachedQueryPoints.Add(FVector::ZeroVector);
+	Actor->CachedQueryPointsRaw.Add(FVector::ZeroVector);
+	Actor->CachedResults.Add(FSpatialHashQueryResult(5));
+	Actor->CachedResultsIndex.Add(5, 0);
+	Actor->CachedQueryPositionIndices.Add(0);
+	TSharedPtr<TArray<FSpatialHashQueryResult>, ESPMode::ThreadSafe> Batch = MakeShared<TArray<FSpatialHashQueryResult>, ESPMode::ThreadSafe>();
+	Batch->Add(FSpatialHashQueryResult(7));
+	Actor->CachedResultBatches.Add(Batch);
+	TWeakPtr<TArray<FSpatialHashQueryResult>, ESPMode::ThreadSafe> WeakBatch = Batch;
+	Batch.Reset();
+	TestTrue(TEXT("Complete batches are retained before cleanup"), WeakBatch.IsValid());
+	Actor->ReleaseQueryCPUData();
+	TestFalse(TEXT("Cleanup releases complete batches"), WeakBatch.IsValid());
+	TestEqual(TEXT("Focus allocation released"), Actor->CachedQueryPoints.GetAllocatedSize(), SIZE_T(0));
+	TestEqual(TEXT("Raw focus allocation released"), Actor->CachedQueryPointsRaw.GetAllocatedSize(), SIZE_T(0));
+	TestEqual(TEXT("Result allocation released"), Actor->CachedResults.GetAllocatedSize(), SIZE_T(0));
+	TestEqual(TEXT("Batch references released"), Actor->CachedResultBatches.GetAllocatedSize(), SIZE_T(0));
+	return true;
+}
+#endif
 
 ATrajectoryQueryNiagaraActor::ATrajectoryQueryNiagaraActor()
 {
@@ -85,6 +551,10 @@ void ATrajectoryQueryNiagaraActor::CancelQuery()
 		Manager->CancelActiveQuery();
 	}
 	++QueryGeneration;
+	bPreparationInProgress = false;
+	bDisplayDirty = false;
+	PendingQueryComplete.Unbind();
+	ReleaseQueryCPUData();
 	bQueryInProgress = false;
 	FSimpleDelegate Failure = PendingQueryFailure;
 	PendingQueryFailure.Unbind();
@@ -114,6 +584,7 @@ bool ATrajectoryQueryNiagaraActor::InitializeManager()
 
 void ATrajectoryQueryNiagaraActor::TransferDataToNiagara()
 {
+	if (bFinalDisplayTransferred) return;
 	if (CachedQueryPoints.IsEmpty())
 	{
 		UE_LOG(LogTemp, Warning,
@@ -126,7 +597,7 @@ void ATrajectoryQueryNiagaraActor::TransferDataToNiagara()
 void ATrajectoryQueryNiagaraActor::RunQueryAndUpdateNiagara()
 {
 	FireAsyncQueriesWithCallback(
-		FSimpleDelegate::CreateUObject(this, &ATrajectoryQueryNiagaraActor::TransferDataToNiagara));
+		FSimpleDelegate());
 }
 
 void ATrajectoryQueryNiagaraActor::SetVisualizationTimeRange(int32 NewTimeStart, int32 NewTimeEnd)
@@ -202,11 +673,36 @@ bool ATrajectoryQueryNiagaraActor::FireAsyncQueriesWithCallback(
 		OnFailure.ExecuteIfBound();
 		return false;
 	}
+	if (!NiagaraComponent ||
+		!UNiagaraFunctionLibrary::GetDataInterface<UNiagaraDataInterfaceArrayInt32>(NiagaraComponent, TEXT("QuerySampleTimeSteps")) ||
+		!UNiagaraFunctionLibrary::GetDataInterface<UNiagaraDataInterfaceArrayInt32>(NiagaraComponent, TEXT("ResultSampleTimeSteps")) ||
+		!UNiagaraFunctionLibrary::GetDataInterface<UNiagaraDataInterfaceArrayFloat>(NiagaraComponent, TEXT("ResultLastDistances")))
+	{
+		UE_LOG(LogTemp, Error, TEXT("The assigned query Niagara system needs the synchronized sampling array contract. Run UpgradeQuerySampling or migrate the custom system."));
+		OnFailure.ExecuteIfBound();
+		return false;
+	}
 	if (QueryPositions.IsEmpty() || QueryTimeStart > QueryTimeEnd || !InitializeManager())
 	{
 		OnFailure.ExecuteIfBound();
 		return false;
 	}
+	if (!NiagaraComponent)
+	{
+		UE_LOG(LogTemp, Error, TEXT("Query display requires an initialized Niagara component."));
+		OnFailure.ExecuteIfBound();
+		return false;
+	}
+
+	RequestedSampleStride = FMath::Max(1, SampleStride);
+	RequestedMaximumSamples = FMath::Max(0, MaximumDisplayedSamples);
+	ActiveQueryTimeStart = QueryTimeStart;
+	ActiveQueryTimeEnd = QueryTimeEnd;
+	EffectiveSampleStride = RequestedSampleStride;
+	DisplayedSampleCount = 0;
+	bAllBatchesProcessed = false;
+	bFinalDisplayTransferred = false;
+	PendingQueryComplete = OnComplete;
 	bQueryInProgress = true;
 	PendingQueryFailure = OnFailure;
 	const uint64 Generation = ++QueryGeneration;
@@ -235,11 +731,9 @@ bool ATrajectoryQueryNiagaraActor::FireAsyncQueriesWithCallback(
 				This->QueryTimeStart != RequestedStart || This->QueryTimeEnd != RequestedEnd ||
 				This->QueryPositions != RequestedPositions)
 			{
-				This->bQueryInProgress = false;
-				This->PendingQueryFailure.Unbind();
 				UE_LOG(LogTemp, Error, TEXT("ATrajectoryQueryNiagaraActor: Hash-table preparation failed or request changed: %s"),
 					*LoadResult.ErrorMessage);
-				OnFailure.ExecuteIfBound();
+				This->CancelQuery();
 				return;
 			}
 			This->StartPreparedQuery(OnComplete, LoadResult.DatasetFirstTimeStep,
@@ -271,6 +765,7 @@ void ATrajectoryQueryNiagaraActor::StartPreparedQuery(
 		? Manager->GetUnwrappedPositions(QueryPositions, CellSize)
 		: QueryPositions;
 	CachedResults.Empty();
+	CachedResultBatches.Empty();
 	CachedResultsIndex.Empty();
 	CachedQueryPositionIndices.Empty();
 	bBoundsValid    = false;
@@ -374,6 +869,7 @@ void ATrajectoryQueryNiagaraActor::StartPreparedQuery(
 			*TotalCandidatesProcessed += BatchResults.Num();
 
 			This->AppendBatchResults(BatchResults);
+			if (!bIsFinalBatch) This->TransferResultsToNiagara(This->CachedQueryPoints, This->CachedResults, true);
 
 			UE_LOG(LogTemp, Log, TEXT("QueryPositionsBatchedAsync: Batch %d – %d trajectories in results (bFinal=%d)"),
 				CurrentBatch, BatchResults.Num(), bIsFinalBatch ? 1 : 0);
@@ -386,11 +882,11 @@ void ATrajectoryQueryNiagaraActor::StartPreparedQuery(
 			{
 				UE_LOG(LogTemp, Log,
 					TEXT("ATrajectoryQueryNiagaraActor: All batches complete – %d trajectories found in total."),
-					This->CachedResults.Num());
+					This->CachedResultsIndex.Num());
 
 				This->GetGameInstance()->GetSubsystem<UVRLogManager>()->AddMessageF(
 					TEXT("Nearest Neighbor Filtering: %d trajectories found in total."),
-					This->CachedResults.Num());
+					This->CachedResultsIndex.Num());
 
 				// Sanity-check: verify that the number of accumulated result
 				// trajectories does not exceed the Phase 1 candidate count.
@@ -402,9 +898,8 @@ void ATrajectoryQueryNiagaraActor::StartPreparedQuery(
 						*TotalCandidatesProcessed, TotalCandidatesPhase1);
 				}
 
-				This->bQueryInProgress = false;
-				This->PendingQueryFailure.Unbind();
-				OnComplete.ExecuteIfBound();
+				This->bAllBatchesProcessed = true;
+				This->TransferResultsToNiagara(This->CachedQueryPoints, This->CachedResults, true);
 			}
 		}
 	);
@@ -435,51 +930,25 @@ void ATrajectoryQueryNiagaraActor::AppendBatchResults(
 	// Each candidate trajectory appears in at most one batch, so simple
 	// appending is safe.  Skip any duplicate trajectory IDs that could arise
 	// from rare hash-table overlap edge cases.
+	auto UniqueBatch = MakeShared<TArray<FSpatialHashQueryResult>, ESPMode::ThreadSafe>();
 	for (const FSpatialHashQueryResult& Result : BatchResults)
 	{
 		if (CachedResultsIndex.Contains(Result.TrajectoryId))
 		{
 			continue; // already present from an earlier batch
 		}
-		CachedResultsIndex.Add(Result.TrajectoryId, CachedResults.Num());
-		CachedResults.Add(Result);
+		CachedResultsIndex.Add(Result.TrajectoryId, CachedResultsIndex.Num());
+		UniqueBatch->Add(Result);
 	}
+	if (!UniqueBatch->IsEmpty()) CachedResultBatches.Add(UniqueBatch);
 
-	// Incrementally expand the bounding box over the new samples.
-	FBox Bounds(bBoundsValid ? FBox(ResultBoundsMin, ResultBoundsMax) : FBox(EForceInit::ForceInit));
-	if (!bBoundsValid)
-	{
-		// Include all query positions in the bounding box on the first update.
-		for (const FVector& QP : CachedQueryPoints)
-		{
-			Bounds += QP;
-		}
-	}
-	for (const FSpatialHashQueryResult& Result : BatchResults)
-	{
-		for (const FTrajectorySamplePoint& Sample : Result.SamplePoints)
-		{
-			// Expand the bounding box using the corrected world-space position so
-			// that particles in periodic images are accounted for correctly.
-			Bounds += Sample.Position + DecodePeriodicVolumeIndexToOffset(Sample.VolumeIndex, CachedPeriodicExtent);
-		}
-	}
-	if (Bounds.IsValid)
-	{
-		bBoundsValid    = true;
-		ResultBoundsMin = Bounds.Min;
-		ResultBoundsMax = Bounds.Max;
-	}
+	// Bounds and all display attributes are computed by the preparation worker.
 
-	// Push the full accumulated result set to Niagara for a progressive visual
-	// update.  Pass false so the Niagara system is not deactivated and restarted
-	// on each batch, allowing the already-running emitter to pick up the updated
-	// arrays on its next tick without discarding in-flight particles.
-	TransferResultsToNiagara(CachedQueryPoints, CachedResults, true);
+	bDisplayDirty = true;
 
 	UE_LOG(LogTemp, Log,
 		TEXT("ATrajectoryQueryNiagaraActor: Batch appended – %d new trajectories, %d total, bounds [%s]–[%s]."),
-		BatchResults.Num(), CachedResults.Num(),
+		BatchResults.Num(), CachedResultsIndex.Num(),
 		*ResultBoundsMin.ToString(), *ResultBoundsMax.ToString());
 }
 
@@ -513,268 +982,105 @@ void ATrajectoryQueryNiagaraActor::StoreQueryResults(
 		Results.Num(), *ResultBoundsMin.ToString(), *ResultBoundsMax.ToString());
 }
 
-void ATrajectoryQueryNiagaraActor::TransferResultsToNiagara(
-	const TArray<FVector>& QueryPoints,
-	const TArray<FSpatialHashQueryResult>& Results,
-	bool bReactivate)
+void ATrajectoryQueryNiagaraActor::ReleaseQueryCPUData()
 {
-	if (!NiagaraComponent)
+	CachedResults.Empty();
+	CachedResultBatches.Empty();
+	CachedResultsIndex.Empty();
+	CachedQueryPoints.Empty();
+	CachedQueryPointsRaw.Empty();
+	CachedQueryPositionIndices.Empty();
+}
+
+void ATrajectoryQueryNiagaraActor::TransferResultsToNiagara(
+	const TArray<FVector>& QueryPoints, const TArray<FSpatialHashQueryResult>& Results, bool bReactivate)
+{
+	check(IsInGameThread());
+	bDisplayDirty = true;
+	if (bPreparationInProgress) return;
+	bPreparationInProgress = true;
+	bDisplayDirty = false;
+	const uint64 Generation = QueryGeneration;
+	const int32 Start = ActiveQueryTimeStart, End = ActiveQueryTimeEnd;
+	const int32 Stride = EffectiveSampleStride, Limit = RequestedMaximumSamples;
+	const FVector Extent = CachedPeriodicExtent;
+	TWeakObjectPtr<ATrajectoryQueryNiagaraActor> WeakThis(this);
+	Async(EAsyncExecution::ThreadPool,
+		[WeakThis, Generation, Start, End, Stride, Limit, Extent, bReactivate,
+		 Points = QueryPoints, Raw = CachedQueryPointsRaw, FullResults = Results,
+		 Batches = CachedResultBatches]() mutable
 	{
-		UE_LOG(LogTemp, Warning,
-			TEXT("ATrajectoryQueryNiagaraActor: No NiagaraComponent available. "
-			     "Assign a NiagaraSystem asset to this actor."));
-		return;
-	}
-
-	// ── Build flat result arrays ──────────────────────────────────────────────
-
-	// ResultPoints: all sample positions concatenated in trajectory order
-	TArray<FVector> ResultPoints;
-
-	// ResultDistances: distance from the query point for each sample (parallel to ResultPoints)
-	TArray<float> ResultDistances;
-	TArray<float> ResultVelocities;
-
-	// ResultVolumeIndices: per-sample periodic volume index (parallel to ResultPoints).
-	// 0 = original simulation box; non-zero = periodic image.
-	// Decoded in HLSL via DecodeVolumeIndex / GetVolumeWorldOffset (see PERIODIC_VOLUME_INDEX.md).
-	TArray<int32> ResultVolumeIndices;
-
-	// Per-trajectory metadata arrays (one entry per result trajectory)
-	TArray<int32> ResultTrajectoryIds;
-	TArray<float> ResultMinDistances;
-	TArray<int32> ResultMinDistanceTimeSteps;
-	TArray<int32> ResultTrajStartIndex;
-	TArray<int32> ResultStartTime;
-
-	ResultTrajectoryIds.Reserve(Results.Num());
-	ResultMinDistances.Reserve(Results.Num());
-	ResultMinDistanceTimeSteps.Reserve(Results.Num());
-	ResultTrajStartIndex.Reserve(Results.Num());
-	ResultStartTime.Reserve(Results.Num());
-
-	for (const FSpatialHashQueryResult& Result : Results)
-	{
-		ResultTrajectoryIds.Add(Result.TrajectoryId);
-		float MinDistance = 0.0f;
-		int32 MinDistanceTimeStep = INDEX_NONE;
-		bool bHasMinDistance = false;
-		for (const FTrajectorySamplePoint& Sample : Result.SamplePoints)
+		for (const auto& Batch : Batches) FullResults.Append(*Batch);
+		TSharedPtr<FPreparedTrajectoryDisplay, ESPMode::ThreadSafe> Prepared = MakeShared<FPreparedTrajectoryDisplay, ESPMode::ThreadSafe>(
+			PrepareTrajectoryDisplay(Points, Raw, FullResults, Extent, Start, End, Stride, Limit));
+		Points.Empty(); Raw.Empty(); FullResults.Empty(); Batches.Empty();
+		AsyncTask(ENamedThreads::GameThread, [WeakThis, Generation, Prepared = MoveTemp(Prepared), bReactivate]() mutable
 		{
-			if (!bHasMinDistance || Sample.Distance < MinDistance)
+			auto* This = WeakThis.Get();
+			if (!This || This->QueryGeneration != Generation) return;
+			This->bPreparationInProgress = false;
+			if (!This->NiagaraComponent)
 			{
-				MinDistance = Sample.Distance;
-				MinDistanceTimeStep = Sample.TimeStep;
-				bHasMinDistance = true;
+				This->CancelQuery();
+				return;
 			}
-		}
-		ResultMinDistances.Add(MinDistance);
-		ResultMinDistanceTimeSteps.Add(MinDistanceTimeStep);
-		ResultTrajStartIndex.Add(ResultPoints.Num());
-		ResultStartTime.Add(Result.SamplePoints.Num() > 0 ? Result.SamplePoints[0].TimeStep : 0);
-
-		TArray<FVector> UnwrappedPositions;
-		TArray<int32> TimeSteps;
-		UnwrappedPositions.Reserve(Result.SamplePoints.Num());
-		TimeSteps.Reserve(Result.SamplePoints.Num());
-
-		for (const FTrajectorySamplePoint& Sample : Result.SamplePoints)
-		{
-			ResultPoints.Add(Sample.Position);
-			ResultDistances.Add(Sample.Distance);
-			ResultVolumeIndices.Add(Sample.VolumeIndex);
-
-			UnwrappedPositions.Add(Sample.Position + DecodePeriodicVolumeIndexToOffset(Sample.VolumeIndex, CachedPeriodicExtent));
-			TimeSteps.Add(Sample.TimeStep);
-		}
-
-		if (UnwrappedPositions.Num() == 1)
-		{
-			ResultVelocities.Add(0.0f);
-		}
-		else if (UnwrappedPositions.Num() > 1)
-		{
-			for (int32 i = 0; i < UnwrappedPositions.Num(); ++i)
+			if (!Prepared->Error.IsEmpty())
 			{
-				const int32 FromIndex = (i < UnwrappedPositions.Num() - 1) ? i : (i - 1);
-				const int32 ToIndex = (i < UnwrappedPositions.Num() - 1) ? (i + 1) : i;
-				const int32 DeltaTime = FMath::Abs(TimeSteps[ToIndex] - TimeSteps[FromIndex]);
-				const float DeltaDistance = FVector::Distance(UnwrappedPositions[ToIndex], UnwrappedPositions[FromIndex]);
-				ResultVelocities.Add(DeltaTime > 0 ? (DeltaDistance / static_cast<float>(DeltaTime)) : 0.0f);
+				UE_LOG(LogTemp, Error, TEXT("Query display preparation failed: %s"), *Prepared->Error);
+				This->CancelQuery();
+				return;
 			}
-		}
-	}
-
-	TArray<float> QueryVelocities;
-	QueryVelocities.Reserve(QueryPoints.Num());
-	if (QueryPoints.Num() == 1)
-	{
-		QueryVelocities.Add(0.0f);
-	}
-	else if (QueryPoints.Num() > 1)
-	{
-		for (int32 i = 0; i < QueryPoints.Num(); ++i)
-		{
-			const int32 FromIndex = (i < QueryPoints.Num() - 1) ? i : (i - 1);
-			const int32 ToIndex = (i < QueryPoints.Num() - 1) ? (i + 1) : i;
-			const int32 FromTimeStep = FMath::Min(QueryTimeStart + FromIndex, QueryTimeEnd);
-			const int32 ToTimeStep = FMath::Min(QueryTimeStart + ToIndex, QueryTimeEnd);
-			const int32 DeltaTime = FMath::Abs(ToTimeStep - FromTimeStep);
-			const float DeltaDistance = FVector::Distance(QueryPoints[ToIndex], QueryPoints[FromIndex]);
-			QueryVelocities.Add(DeltaTime > 0 ? (DeltaDistance / static_cast<float>(DeltaTime)) : 0.0f);
-		}
-	}
-
-	float VelocityMin = 0.0f;
-	float VelocityMax = 0.0f;
-	bool bHasVelocity = false;
-	const auto AccumulateVelocityRange = [&VelocityMin, &VelocityMax, &bHasVelocity](const TArray<float>& Velocities)
-	{
-		for (float Velocity : Velocities)
-		{
-			if (!bHasVelocity)
+			This->UploadPreparedDisplay(*Prepared, bReactivate);
+			This->EffectiveSampleStride = Prepared->Stride;
+			This->DisplayedSampleCount = Prepared->RawQueryPoints.Num() + Prepared->ResultPoints.Num();
+			Prepared.Reset(); // SetNiagaraArray* has copied all application-owned buffers.
+			// Publish this valid progressive snapshot before preparing newer batches.
+			// A final callback cannot complete until the latest snapshot is uploaded.
+			if (This->bDisplayDirty)
 			{
-				VelocityMin = Velocity;
-				VelocityMax = Velocity;
-				bHasVelocity = true;
-				continue;
+				This->TransferResultsToNiagara(This->CachedQueryPoints, This->CachedResults, bReactivate);
+				return;
 			}
-
-			VelocityMin = FMath::Min(VelocityMin, Velocity);
-			VelocityMax = FMath::Max(VelocityMax, Velocity);
-		}
-	};
-	AccumulateVelocityRange(QueryVelocities);
-	AccumulateVelocityRange(ResultVelocities);
-
-	const int32 NumResultPoints = ResultPoints.Num();
-	const int32 NumResultDistances = ResultDistances.Num();
-	const int32 NumResultVelocities = ResultVelocities.Num();
-	const int32 NumResultVolumeIndices = ResultVolumeIndices.Num();
-
-	const bool bSampleArraysAligned =
-		NumResultPoints == NumResultDistances &&
-		NumResultPoints == NumResultVelocities &&
-		NumResultPoints == NumResultVolumeIndices;
-	const int32 NumResultTrajectoryIds = ResultTrajectoryIds.Num();
-	const int32 NumResultMinDistances = ResultMinDistances.Num();
-	const int32 NumResultMinDistanceTimeSteps = ResultMinDistanceTimeSteps.Num();
-	const int32 NumResultTrajStartIndices = ResultTrajStartIndex.Num();
-	const int32 NumResultStartTimes = ResultStartTime.Num();
-
-	const bool bMetadataArraysAligned =
-		NumResultTrajectoryIds == NumResultMinDistances &&
-		NumResultTrajectoryIds == NumResultMinDistanceTimeSteps &&
-		NumResultTrajectoryIds == NumResultTrajStartIndices &&
-		NumResultTrajectoryIds == NumResultStartTimes;
-	if (!bSampleArraysAligned || !bMetadataArraysAligned)
-	{
-		UE_LOG(LogTemp, Error,
-			TEXT("ATrajectoryQueryNiagaraActor: Skipping Niagara transfer due to array alignment error. ")
-			TEXT("SampleAligned=%d (Points=%d, Distances=%d, Velocities=%d, VolumeIndices=%d), ")
-			TEXT("MetadataAligned=%d (Ids=%d, MinDist=%d, MinTime=%d, StartIdx=%d, StartTime=%d)."),
-			bSampleArraysAligned ? 1 : 0,
-			NumResultPoints, NumResultDistances, NumResultVelocities, NumResultVolumeIndices,
-			bMetadataArraysAligned ? 1 : 0,
-			NumResultTrajectoryIds, NumResultMinDistances, NumResultMinDistanceTimeSteps,
-			NumResultTrajStartIndices, NumResultStartTimes);
-		return;
-	}
-
-	// ── Build query volume index array ───────────────────────────────────────
-	//
-	// Parallel to QueryPoints (which Niagara receives as raw/wrapped coordinates).
-	// Each element encodes how many periodic box-lengths must be added to the raw
-	// position to place it in the same continuous image as the unwrapped trajectory.
-	//
-	// When non-periodic, all indices are 0 (no offset needed).
-	// When periodic, CachedQueryPointsRaw holds the original wrapped positions and
-	// QueryPoints (the parameter) holds the unwrapped positions used for transforms.
-	const TArray<FVector>& RawQueryPoints = CachedQueryPointsRaw.IsEmpty() ? QueryPoints : CachedQueryPointsRaw;
-
-	TArray<int32> QueryVolumeIndices;
-	QueryVolumeIndices.Reserve(RawQueryPoints.Num());
-	if (!CachedPeriodicExtent.IsNearlyZero() && !CachedQueryPointsRaw.IsEmpty())
-	{
-		// CachedQueryPointsRaw and CachedQueryPoints (the unwrapped version passed as
-		// QueryPoints) are always built together in FireAsyncQueriesWithCallback and
-		// must have the same length.
-		ensure(CachedQueryPointsRaw.Num() == QueryPoints.Num());
-
-		for (int32 i = 0; i < RawQueryPoints.Num(); ++i)
-		{
-			const FVector& Raw       = RawQueryPoints[i];
-			const FVector& Unwrapped = QueryPoints[i];
-			// Compute the per-axis hop count: how many box-lengths to ADD to Raw
-			// to reach the Unwrapped image (identical to ComputeVolumeIndex(Raw, Unwrapped)).
-			const int32 ix = (CachedPeriodicExtent.X > 0.0f)
-				? FMath::RoundToInt((Unwrapped.X - Raw.X) / CachedPeriodicExtent.X) : 0;
-			const int32 iy = (CachedPeriodicExtent.Y > 0.0f)
-				? FMath::RoundToInt((Unwrapped.Y - Raw.Y) / CachedPeriodicExtent.Y) : 0;
-			const int32 iz = (CachedPeriodicExtent.Z > 0.0f)
-				? FMath::RoundToInt((Unwrapped.Z - Raw.Z) / CachedPeriodicExtent.Z) : 0;
-			QueryVolumeIndices.Add((ix & 0xFF) | ((iy & 0xFF) << 8) | ((iz & 0xFF) << 16));
-		}
-	}
-	else
-	{
-		QueryVolumeIndices.Init(0, RawQueryPoints.Num());
-	}
-
-	// ── Build query-relative transform arrays ────────────────────────────────
-	//
-	// Transforms are computed from the UNWRAPPED query positions (the QueryPoints
-	// parameter) so that translations and rotations are continuous across periodic
-	// boundaries.  The shader reconstructs the unwrapped world position as:
-	//   UnwrappedWorldPos[i] = RawQueryPoints[i] + GetVolumeWorldOffset(QueryVolumeIndices[i], PeriodicVolumeExtent)
-	// which equals QueryPoints[i], so the transforms remain consistent.
-	//
-	// For each query sample point i:
-	//   QueryTranslations[i] = QueryPoints[0] - QueryPoints[i]
-	//   QueryRotations[i]    = rotation that aligns the forward vector at i to
-	//                          the forward vector at 0.
-	//
-	// The forward vector at point i is the normalised direction from
-	// QueryPoints[i] to QueryPoints[i+1].  For the last point the direction
-	// from the penultimate point is reused.  When only one point is present
-	// FVector::ForwardVector is used as a neutral fallback.
-
-	TArray<FVector> QueryTranslations;
-	TArray<FQuat>   QueryRotations;
-
-	if (QueryPoints.Num() > 0)
-	{
-		QueryTranslations.Reserve(QueryPoints.Num());
-		QueryRotations.Reserve(QueryPoints.Num());
-
-		// Returns the normalised forward vector for sample index i.
-		auto GetForwardAt = [&QueryPoints](int32 i) -> FVector
-		{
-			if (QueryPoints.Num() == 1)
+			if (This->bAllBatchesProcessed)
 			{
-				return FVector::ForwardVector;
+				This->ReleaseQueryCPUData();
+				This->QueryPositions.Empty(); // Query input is consumed; next request supplies its focus samples again.
+				This->bFinalDisplayTransferred = true;
+				This->bQueryInProgress = false;
+				This->PendingQueryFailure.Unbind();
+				FSimpleDelegate Complete = This->PendingQueryComplete;
+				This->PendingQueryComplete.Unbind();
+				Complete.ExecuteIfBound();
 			}
-			// Clamp so the last point reuses the direction of the penultimate one.
-			const int32 From = FMath::Min(i,     QueryPoints.Num() - 2);
-			const int32 To   = FMath::Min(i + 1, QueryPoints.Num() - 1);
-			const FVector Dir = (QueryPoints[To] - QueryPoints[From]).GetSafeNormal();
-			return Dir.IsNearlyZero() ? FVector::ForwardVector : Dir;
-		};
+		});
+	});
+}
 
-		const FVector FirstForward = GetForwardAt(0);
-
-		for (int32 i = 0; i < QueryPoints.Num(); ++i)
-		{
-			const FVector CurForward = GetForwardAt(i);
-			QueryTranslations.Add(QueryPoints[0] - QueryPoints[i]);
-			//if (i >0)
-			//	UE_LOG(LogTemp, Log,
-			//	TEXT("%d with %f"), i,  QueryTranslations[i].Length() - QueryTranslations[i-1].Length());
-
-			QueryRotations.Add(FQuat::FindBetweenNormals(CurForward, FirstForward));
-		}
-	}
-
+void ATrajectoryQueryNiagaraActor::UploadPreparedDisplay(const FPreparedTrajectoryDisplay& Data, bool bReactivate)
+{
+	check(IsInGameThread());
+	if (!NiagaraComponent) return;
+	ResultBoundsMin = Data.BoundsMin;
+	ResultBoundsMax = Data.BoundsMax;
+	const auto& ResultPoints = Data.ResultPoints;
+	const auto& ResultDistances = Data.ResultDistances;
+	const auto& ResultVelocities = Data.ResultVelocities;
+	const auto& ResultVolumeIndices = Data.ResultVolumeIndices;
+	const auto& ResultTrajectoryIds = Data.ResultTrajectoryIds;
+	const auto& ResultMinDistances = Data.ResultMinDistances;
+	const auto& ResultMinDistanceTimeSteps = Data.ResultMinDistanceTimeSteps;
+	const auto& ResultTrajStartIndex = Data.ResultTrajStartIndex;
+	const auto& ResultStartTime = Data.ResultStartTime;
+	const auto& QueryVelocities = Data.QueryVelocities;
+	const auto& QueryVolumeIndices = Data.QueryVolumeIndices;
+	const auto& QueryTranslations = Data.QueryTranslations;
+	const auto& QueryRotations = Data.QueryRotations;
+	const auto& RawQueryPoints = Data.RawQueryPoints;
+	const auto& QuerySampleTimeSteps = Data.QuerySampleTimeSteps;
+	const auto& ResultSampleTimeSteps = Data.ResultSampleTimeSteps;
+	const auto& ResultQuerySampleIndices = Data.ResultQuerySampleIndices;
+	const auto& ResultLastDistances = Data.ResultLastDistances;
+	const float VelocityMin = Data.VelocityMin, VelocityMax = Data.VelocityMax;
 	// ── Transfer to Niagara user parameters ──────────────────────────────────
 
 	// QueryPoints: raw (wrapped) simulation coordinates, consistent with ResultPoints.
@@ -833,6 +1139,10 @@ void ATrajectoryQueryNiagaraActor::TransferResultsToNiagara(
 	UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayInt32(
 		NiagaraComponent, FName("QueryVolumeIndices"), QueryVolumeIndices);
 
+	UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayInt32(NiagaraComponent, FName("QuerySampleTimeSteps"), QuerySampleTimeSteps);
+	UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayInt32(NiagaraComponent, FName("ResultSampleTimeSteps"), ResultSampleTimeSteps);
+	UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayInt32(NiagaraComponent, FName("ResultQuerySampleIndices"), ResultQuerySampleIndices);
+	UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayFloat(NiagaraComponent, FName("ResultLastDistances"), ResultLastDistances);
 	// Scalar user parameters
 	NiagaraComponent->SetVariableFloat(FName("InnerRadius"), InnerRadius);
 	NiagaraComponent->SetVariableFloat(FName("QueryRadius"), QueryRadius);
@@ -842,8 +1152,8 @@ void ATrajectoryQueryNiagaraActor::TransferResultsToNiagara(
 	NiagaraComponent->SetVariableFloat(FName("VelocityMax"), VelocityMax);
 	NiagaraComponent->SetVariableBool(FName("NoShadow"), NoShadow);
 	NiagaraComponent->SetVariableBool(FName("ObjectViewWithRotation"), ObjectViewWithRotation);
-	NiagaraComponent->SetVariableInt(FName("QueryTimeStart"), QueryTimeStart);
-	NiagaraComponent->SetVariableInt(FName("QueryTimeEnd"), QueryTimeEnd);
+	NiagaraComponent->SetVariableInt(FName("QueryTimeStart"), ActiveQueryTimeStart);
+	NiagaraComponent->SetVariableInt(FName("QueryTimeEnd"), ActiveQueryTimeEnd);
 
 	// Visualization range – default to the full query range on initial transfer
 	NiagaraComponent->SetVariableInt(FName("VisTimeStart"), VisualizationTimeStart);
@@ -875,6 +1185,6 @@ void ATrajectoryQueryNiagaraActor::TransferResultsToNiagara(
 		TEXT("ATrajectoryQueryNiagaraActor: Niagara system updated – "
 		     "%d query points, %d result points across %d trajectories. "
 		     "Bounds: [%s] – [%s]."),
-		QueryPoints.Num(), ResultPoints.Num(), Results.Num(),
+		RawQueryPoints.Num(), ResultPoints.Num(), ResultTrajectoryIds.Num(),
 		*ResultBoundsMin.ToString(), *ResultBoundsMax.ToString());
 }
