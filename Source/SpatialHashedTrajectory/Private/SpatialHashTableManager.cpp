@@ -144,14 +144,7 @@ namespace
 		Unwrapped.Add(Positions[0]);
 		for (int32 i = 1; i < Positions.Num(); ++i)
 		{
-			FVector Delta = Positions[i] - Unwrapped[i - 1];
-			if (Extent.X > 0.0f && FMath::Abs(Delta.X) > Extent.X * 0.5f)
-				Delta.X -= FMath::Sign(Delta.X) * Extent.X;
-			if (Extent.Y > 0.0f && FMath::Abs(Delta.Y) > Extent.Y * 0.5f)
-				Delta.Y -= FMath::Sign(Delta.Y) * Extent.Y;
-			if (Extent.Z > 0.0f && FMath::Abs(Delta.Z) > Extent.Z * 0.5f)
-				Delta.Z -= FMath::Sign(Delta.Z) * Extent.Z;
-			Unwrapped.Add(Unwrapped[i - 1] + Delta);
+			Unwrapped.Add(ApplyMinImageCorrection(Positions[i], Unwrapped.Last(), Extent));
 		}
 		return Unwrapped;
 	}
@@ -3335,6 +3328,15 @@ void USpatialHashTableManager::QueryPositionsBatchedAsync(
 				FSpatialHashQueryResult Result(static_cast<int32>(TrajData.TrajectoryId));
 				Result.SamplePoints.Reserve(TrajData.Positions.Num());
 				bool bHasSampleInsideRadius = false;
+				TArray<FVector> ContinuousResultPositions;
+				FVector PreviousContinuousPosition = FVector::ZeroVector;
+				bool bHasPreviousPosition = false;
+				FVector AlignmentOffset = FVector::ZeroVector;
+				float AlignmentDistanceSq = FLT_MAX;
+				if (bPeriodic)
+				{
+					ContinuousResultPositions.Reserve(TrajData.Positions.Num());
+				}
 
 				for (int32 i = 0; i < TrajData.Positions.Num(); ++i)
 				{
@@ -3347,18 +3349,24 @@ void USpatialHashTableManager::QueryPositionsBatchedAsync(
 					const int32    GlobalTimeStep = TrajData.StartTimeStep + i;
 					const FVector* QueryPos       = QueryPosAtTimeStep.Find(GlobalTimeStep);
 					float DistSq = FLT_MAX;
-					int32 VolumeIndex = 0;
+					FVector ReferencePosition = Pos;
+					// Unwrap every available sample, including samples omitted by the
+					// radius filter, so re-entry does not lose accumulated box crossings.
+					const FVector ContinuousPosition = bPeriodic && bHasPreviousPosition
+						? ApplyMinImageCorrection(Pos, PreviousContinuousPosition, PeriodicExtent)
+						: Pos;
+					PreviousContinuousPosition = ContinuousPosition;
+					bHasPreviousPosition = true;
 
 					if (QueryPos)
 					{
 						if (bPeriodic)
 						{
 							// Use the minimum-image convention for the radius check so that
-							// samples near a periodic boundary are not missed.  Original
-							// simulation coordinates are preserved in the result — the
-							// rendering layer handles the periodic volume and boundary jumps.
+							// samples near a periodic boundary are not missed. Rendering
+							// alignment is determined separately for the continuous path.
 							DistSq = PeriodicDistSq(*QueryPos, Pos, PeriodicExtent);
-							VolumeIndex = ComputeVolumeIndex(Pos, *QueryPos, PeriodicExtent);
+							ReferencePosition = *QueryPos;
 						}
 						else
 						{
@@ -3369,7 +3377,7 @@ void USpatialHashTableManager::QueryPositionsBatchedAsync(
 					{
 						// No same-timestep query sample exists (e.g. sparse query trajectory).
 						// Use the nearest query sample across the trajectory to provide
-						// meaningful distance and periodic volume-index values.
+						// meaningful distance and a possible alignment anchor.
 						float BestDistSq = FLT_MAX;
 						FVector BestQueryPos = FVector::ZeroVector;
 						for (const FVector& CandidateQueryPos : UnwrappedQueryPositions)
@@ -3387,7 +3395,7 @@ void USpatialHashTableManager::QueryPositionsBatchedAsync(
 						DistSq = BestDistSq;
 						if (bPeriodic)
 						{
-							VolumeIndex = ComputeVolumeIndex(Pos, BestQueryPos, PeriodicExtent);
+							ReferencePosition = BestQueryPos;
 						}
 					}
 
@@ -3405,8 +3413,31 @@ void USpatialHashTableManager::QueryPositionsBatchedAsync(
 					Sample.Position = Pos; // Original simulation coordinates.
 					Sample.TimeStep = GlobalTimeStep;
 					Sample.Distance = FMath::Sqrt(DistSq);
-					Sample.VolumeIndex = VolumeIndex;
+					Sample.VolumeIndex = 0;
 					Result.SamplePoints.Add(Sample);
+					if (bPeriodic)
+					{
+						ContinuousResultPositions.Add(ContinuousPosition);
+						if (DistSq < AlignmentDistanceSq)
+						{
+							AlignmentDistanceSq = DistSq;
+							AlignmentOffset = ApplyMinImageCorrection(Pos, ReferencePosition, PeriodicExtent)
+								- ContinuousPosition;
+						}
+					}
+				}
+
+				// Align the entire continuous path at its closest approach. Choosing
+				// the nearest image independently at each timestep makes ribbons jump
+				// by a box length when the relative separation crosses half the extent.
+				if (bPeriodic)
+				{
+					for (int32 SampleIndex = 0; SampleIndex < Result.SamplePoints.Num(); ++SampleIndex)
+					{
+						FTrajectorySamplePoint& Sample = Result.SamplePoints[SampleIndex];
+						Sample.VolumeIndex = ComputeVolumeIndex(Sample.Position,
+							ContinuousResultPositions[SampleIndex] + AlignmentOffset, PeriodicExtent);
+					}
 				}
 
 				if (bIncludeWholeResultTrajectorySamples && !bHasSampleInsideRadius)
