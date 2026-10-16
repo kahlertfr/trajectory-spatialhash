@@ -85,11 +85,11 @@ public:
 	ETrajectoryContextFilterMode ContextFilterMode = ETrajectoryContextFilterMode::Neighborhood;
 
 	/** Source dataset of the focus trajectory; required with QueryTrajectoryId for self-exclusion. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Query Settings")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Query Settings", meta = (ExposeOnSpawn = "true"))
 	FString QueryDatasetDirectory;
 
 	/** Original focus ID in QueryDatasetDirectory. -1 denotes a synthetic/unknown focus. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Query Settings")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Query Settings", meta = (ExposeOnSpawn = "true"))
 	int64 QueryTrajectoryId = -1;
 
 	/** Resolves dataset identity before translating the focus ID into a context exclusion. */

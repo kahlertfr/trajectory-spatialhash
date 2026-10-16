@@ -8,6 +8,24 @@
 #include "HAL/PlatformTime.h"
 
 #if WITH_DEV_AUTOMATION_TESTS
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSelectionSourceIdentityTest, "TrajectoryData.Identity.SelectionManagerSourceId",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FSelectionSourceIdentityTest::RunTest(const FString& Parameters)
+{
+	auto* Manager = NewObject<UUserSelectionManager>();
+	FUserTrajectorySelection Selection;
+	Selection.TrajectoryId = 3000000001LL;
+	Manager->AddSelection(Selection);
+	FUserTrajectorySelection Found;
+	TestTrue(TEXT("Source ID resolves without int32 truncation"), Manager->GetSelectionByTrajectoryId(3000000001LL, Found));
+	TestEqual(TEXT("Selection retains original ID"), Found.TrajectoryId, 3000000001LL);
+	TestFalse(TEXT("Array index is not treated as source ID"), Manager->GetSelectionByTrajectoryId(0, Found));
+	Selection.TrajectoryId = -1;
+	Manager->AddSelection(Selection);
+	TestEqual(TEXT("Invalid slider selection is ignored"), Manager->GetSelections().Num(), 1);
+	return true;
+}
+
 namespace
 {
 	template<typename T>

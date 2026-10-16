@@ -11,7 +11,7 @@ TArray<FUserTrajectorySelection> UUserSelectionManager::GetSelections() const
 	return Selections;
 }
 
-bool UUserSelectionManager::GetSelectionByTrajectoryId(int32 TrajectoryId, FUserTrajectorySelection& OutSelection) const
+bool UUserSelectionManager::GetSelectionByTrajectoryId(int64 TrajectoryId, FUserTrajectorySelection& OutSelection) const
 {
 	for (const FUserTrajectorySelection& Entry : Selections)
 	{
@@ -28,6 +28,7 @@ bool UUserSelectionManager::GetSelectionByTrajectoryId(int32 TrajectoryId, FUser
 
 void UUserSelectionManager::AddSelection(FUserTrajectorySelection Selection)
 {
+	if (Selection.TrajectoryId < 0) return;
 	if (UpdateSelectionByTrajectoryId(Selection.TrajectoryId, Selection))
 		return;
 
@@ -46,7 +47,7 @@ bool UUserSelectionManager::UpdateSelection(int32 Index, FUserTrajectorySelectio
 	return true;
 }
 
-bool UUserSelectionManager::UpdateSelectionByTrajectoryId(int32 TrajectoryId, FUserTrajectorySelection Selection)
+bool UUserSelectionManager::UpdateSelectionByTrajectoryId(int64 TrajectoryId, FUserTrajectorySelection Selection)
 {
 	for (FUserTrajectorySelection& Entry : Selections)
 	{

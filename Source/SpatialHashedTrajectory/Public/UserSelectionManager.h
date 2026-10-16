@@ -46,7 +46,7 @@ struct FUserTrajectorySelection
 
 	/** Identifier of the selected trajectory */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "User Selection")
-	int32 TrajectoryId = 0;
+	int64 TrajectoryId = 0;
 
 	/** First time step of the selection range (inclusive) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "User Selection")
@@ -152,7 +152,7 @@ public:
 	 * @return true if a matching selection was found, false otherwise.
 	 */
 	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "User Selection")
-	bool GetSelectionByTrajectoryId(int32 TrajectoryId, FUserTrajectorySelection& OutSelection) const;
+	bool GetSelectionByTrajectoryId(int64 TrajectoryId, FUserTrajectorySelection& OutSelection) const;
 
 	// ─── Selection Mutation ───────────────────────────────────────────────────
 
@@ -177,7 +177,7 @@ public:
 	 * @return true if a matching selection was found and updated, false otherwise.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "User Selection")
-	bool UpdateSelectionByTrajectoryId(int32 TrajectoryId, FUserTrajectorySelection Selection);
+	bool UpdateSelectionByTrajectoryId(int64 TrajectoryId, FUserTrajectorySelection Selection);
 
 	/**
 	 * Remove the selection at Index and notify all listeners.
