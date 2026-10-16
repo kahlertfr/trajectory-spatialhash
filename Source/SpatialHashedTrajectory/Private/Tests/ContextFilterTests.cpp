@@ -106,28 +106,41 @@ namespace
 				}), bMetadataOnly);
 				return false;
 			}
-			if (Stage == 9)
+			if (Stage == 13)
 			{
 				Manager->RemoveFromRoot();
 				IFileManager::Get().DeleteDirectory(*Directory, false, true);
 				return true;
 			}
 			bWaiting = true;
-			const bool bAll = Stage < 5 || Stage == 8;
-			const bool bWhole = Stage == 2;
+			const bool bAll = Stage < 5 || Stage == 8 || Stage == 9 || Stage == 11;
+			const bool bWhole = Stage == 2 || Stage >= 9;
 			const bool bPeriodic = Stage == 4;
 			const int64 Excluded = Stage == 3 || Stage == 7 ? -1 : 7;
 			Manager->SetPeriodicVolume(bPeriodic, FVector(100));
-			const TArray<FVector> Query = {FVector(0.1f, 0, 0), FVector(0.2f, 0, 0), FVector(0.3f, 0, 0)};
-			const TArray<int32> Times = Stage == 8 ? TArray<int32>{5, 6, 7} : TArray<int32>{0, 1, 2};
+			const bool bShortFocus = Stage >= 9;
+			const int32 ShortFocusTime = Stage >= 11 ? 2 : 0;
+			const TArray<FVector> Query = bShortFocus
+				? TArray<FVector>{FVector(0.1f * (ShortFocusTime + 1), 0, 0)}
+				: TArray<FVector>{FVector(0.1f, 0, 0), FVector(0.2f, 0, 0), FVector(0.3f, 0, 0)};
+			const TArray<int32> Times = bShortFocus ? TArray<int32>{ShortFocusTime}
+				: Stage == 8 ? TArray<int32>{5, 6, 7} : TArray<int32>{0, 1, 2};
 			auto Results = MakeShared<TMap<int32, FSpatialHashQueryResult>>();
 			Manager->QueryPositionsBatchedAsync(Directory, Query, Times, 1, 10, 1, Excluded, bWhole,
-				FOnSpatialHashBatchResult::CreateLambda([Self = StaticCastSharedRef<FContextScenarios>(AsShared()), Results, bAll, bPeriodic, Excluded]
+				FOnSpatialHashBatchResult::CreateLambda([Self = StaticCastSharedRef<FContextScenarios>(AsShared()), Results, bAll, bPeriodic, Excluded, bShortFocus, Times]
 				(const TArray<FSpatialHashQueryResult>& Batch, bool bFinal, int32 Candidates, int32 Handled)
 				{
 					Self->Test->TestTrue(TEXT("Callbacks run on game thread"), IsInGameThread());
 					Self->Test->TestTrue(TEXT("At most one trajectory per batch"), Batch.Num() <= 1);
-					for (const auto& Result : Batch) Results->Add(Result.TrajectoryId, Result);
+					for (const auto& Result : Batch)
+					{
+						Results->Add(Result.TrajectoryId, Result);
+						for (const auto& Sample : Result.SamplePoints)
+						{
+							Self->Test->TestTrue(TEXT("Result sample is inside the query trajectory's time range"),
+								Sample.TimeStep >= Times[0] && Sample.TimeStep <= Times.Last());
+						}
+					}
 					if (!bFinal) return;
 					const int32 Expected = Self->Stage == 8 ? 0 : (bAll ? 2 : 1) + (Excluded < 0 ? 1 : 0);
 					Self->Test->TestEqual(TEXT("Correct result membership"), Results->Num(), Expected);
@@ -136,7 +149,11 @@ namespace
 					{
 						const auto* Sparse = Results->Find(8);
 						Self->Test->TestNotNull(TEXT("Near sparse trajectory retained"), Sparse);
-						if (Sparse) Self->Test->TestEqual(TEXT("Missing sample remains omitted"), Sparse->SamplePoints.Num(), 2);
+						if (Sparse) Self->Test->TestEqual(TEXT("Retain only available samples within focus times"), Sparse->SamplePoints.Num(), bShortFocus ? 1 : 2);
+						if (bShortFocus && Results->Contains(9))
+						{
+							Self->Test->TestEqual(TEXT("Whole context history is clipped to short focus"), (*Results)[9].SamplePoints.Num(), 1);
+						}
 						Self->Test->TestEqual(TEXT("Distant trajectory retained only in all-context mode"), Results->Contains(9), bAll);
 						if (bPeriodic && Results->Contains(9))
 						{

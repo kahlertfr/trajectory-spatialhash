@@ -25,6 +25,13 @@ Both values of `bIncludeWholeResultTrajectorySamples` retain all available sampl
 within the requested time range in this mode. No samples are interpolated.
 Trajectories with no available samples in that range produce no result.
 
+In both modes, the inclusive result time range is determined by the minimum and
+maximum query-sample timesteps. A longer configured `QueryTimeEnd` does not extend
+it beyond the last supplied query sample. **Whole trajectory** disables spatial
+sample clipping for matching trajectories; it never extends their result samples
+before the query begins or after it ends. Shards may contain samples outside that
+interval, but those samples are discarded before results are assembled.
+
 Distances, periodic image indices, velocity, display sampling, sample budgets,
 bounds, progressive uploads, and cancellation keep their existing behavior. If
 periodic extent is left at zero, all-context mode derives it from dataset metadata;
