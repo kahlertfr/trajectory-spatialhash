@@ -34,6 +34,7 @@ public:
 	 * or QueryPositions array).
 	 *
 	 * @param TargetActor  The actor whose QueryPositions and query settings to use.
+	 *                    Set ContextFilterMode, QueryDatasetDirectory and QueryTrajectoryId before calling.
 	 * @param bIncludeWholeResultTrajectorySamples  True: keep whole trajectories for matching results.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Trajectory Visualization",

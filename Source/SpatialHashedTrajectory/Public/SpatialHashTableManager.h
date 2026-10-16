@@ -18,6 +18,7 @@ struct FSpatialHashLoadResult
 	int32 LoadedCount = 0;
 	int32 OutsideDatasetCount = 0;
 	int32 FailedCount = 0;
+	FVector DatasetExtent = FVector::ZeroVector;
 	FString ErrorMessage;
 };
 DECLARE_DELEGATE_OneParam(FOnSpatialHashLoadComplete, const FSpatialHashLoadResult&);
@@ -31,7 +32,7 @@ DECLARE_DELEGATE_TwoParams(FOnSpatialHashDualQueryComplete, const TArray<FSpatia
  * @param Results                  Trajectories found in this batch.
  * @param bFinalBatch              True when this is the last (or only) batch.
  * @param TotalCandidatesPhase1    Total candidate trajectories collected during Phase 1 (nearest-neighbour lookup). Constant across all batch invocations.
- * @param HandledQuerySamples      Number of query samples that had a loaded hash table and were actually queried. Constant across all batch invocations.
+ * @param HandledQuerySamples      Number of covered query samples. -1 reports an all-context input/read failure.
  */
 DECLARE_DELEGATE_FourParams(FOnSpatialHashBatchResult,
 	const TArray<FSpatialHashQueryResult>& /*Results*/,
@@ -235,9 +236,11 @@ public:
 	/** Read metadata, build missing tables and load entries on a worker; publish on the game thread.
 	 * Only the intersection with dataset-meta.bin's range is loaded or rebuilt.
 	 * Call on the game thread; completion is always delivered on the game thread.
+	 * bMetadataOnly skips all hash access/building and permits disjoint time ranges.
 	 */
 	void LoadHashTablesAsync(const FString& DatasetDirectory, float CellSize,
-		int32 StartTimeStep, int32 EndTimeStep, bool bAutoCreate, FOnSpatialHashLoadComplete OnComplete);
+		int32 StartTimeStep, int32 EndTimeStep, bool bAutoCreate, FOnSpatialHashLoadComplete OnComplete,
+		bool bMetadataOnly = false);
 
 
 	/**
@@ -598,6 +601,9 @@ public:
 	 *                            for each trajectory that has at least one point within Radius.
 	 *                            When false, include only sample points that are within Radius.
 	 * @param BatchCallback        Invoked on the game thread after each batch completes.
+	 * @param bAllContextTrajectories Enumerate dataset-trajmeta.bin instead of spatial hashes; bypass
+	 *                            radius rejection for trajectories and samples. The requested time range
+	 *                            still applies. Distances and periodic attributes are still calculated.
 	 */
 	void QueryPositionsBatchedAsync(
 		const FString& DatasetDirectory,
@@ -608,7 +614,7 @@ public:
 		int32 BatchSize,
 		int64 ExcludeTrajectoryId,
 		bool bIncludeWholeResultTrajectorySamples,
-		FOnSpatialHashBatchResult BatchCallback);
+		FOnSpatialHashBatchResult BatchCallback, bool bAllContextTrajectories = false);
 
 	/**
 	 * Cancel any in-progress batched query started by QueryPositionsBatchedAsync.

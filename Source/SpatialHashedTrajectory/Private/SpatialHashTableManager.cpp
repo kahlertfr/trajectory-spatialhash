@@ -351,7 +351,7 @@ int32 USpatialHashTableManager::LoadHashTables(
 
 void USpatialHashTableManager::LoadHashTablesAsync(
 	const FString& DatasetDirectory, float CellSize, int32 StartTimeStep, int32 EndTimeStep,
-	bool bAutoCreate, FOnSpatialHashLoadComplete OnComplete)
+	bool bAutoCreate, FOnSpatialHashLoadComplete OnComplete, bool bMetadataOnly)
 {
 	check(IsInGameThread());
 	const uint64 Generation = ++LoadGeneration;
@@ -375,14 +375,14 @@ void USpatialHashTableManager::LoadHashTablesAsync(
 
 	Async(EAsyncExecution::ThreadPool,
 		[WeakThis, Generation, Directory, CellSize, StartTimeStep, EndTimeStep,
-		 bAutoCreate, Loader, CachedTimeSteps = MoveTemp(CachedTimeSteps), OnComplete]()
+		 bAutoCreate, bMetadataOnly, Loader, CachedTimeSteps = MoveTemp(CachedTimeSteps), OnComplete]()
 	{
 		FSpatialHashLoadResult Result;
 		TMap<int32, TUniquePtr<FSpatialHashTable>> Tables;
 		FDatasetMetaBinary Meta{};
 		IPlatformFile& Files = FPlatformFileManager::Get().GetPlatformFile();
 		TUniquePtr<IFileHandle> MetaFile(Files.OpenRead(*FPaths::Combine(Directory, TEXT("dataset-meta.bin"))));
-		if (StartTimeStep > EndTimeStep || !FMath::IsFinite(CellSize) || CellSize <= 0.0f)
+		if (StartTimeStep > EndTimeStep || (!bMetadataOnly && (!FMath::IsFinite(CellSize) || CellSize <= 0.0f)))
 		{
 			Result.ErrorMessage = TEXT("Invalid hash-table load range or cell size.");
 		}
@@ -396,12 +396,23 @@ void USpatialHashTableManager::LoadHashTablesAsync(
 		{
 			Result.DatasetFirstTimeStep = Meta.FirstTimeStep;
 			Result.DatasetLastTimeStep = Meta.LastTimeStep;
+			Result.DatasetExtent = FVector(Meta.BBoxMax[0] - Meta.BBoxMin[0],
+				Meta.BBoxMax[1] - Meta.BBoxMin[1], Meta.BBoxMax[2] - Meta.BBoxMin[2]);
 			const int32 First = FMath::Max(StartTimeStep, Meta.FirstTimeStep);
 			const int32 Last = FMath::Min(EndTimeStep, Meta.LastTimeStep);
 			const int32 CoveredCount = FMath::Max(0, Last - First + 1);
 			Result.OutsideDatasetCount = EndTimeStep - StartTimeStep + 1 - CoveredCount;
+			if (bMetadataOnly)
+			{
+				const int64 IndexSize = Files.FileSize(*FPaths::Combine(Directory, TEXT("dataset-trajmeta.bin")));
+				if (IndexSize < 0 || IndexSize % sizeof(FTrajectoryMetaBinary) != 0 ||
+					static_cast<uint64>(IndexSize / sizeof(FTrajectoryMetaBinary)) != Meta.TrajectoryCount)
+				{
+					Result.ErrorMessage = TEXT("Missing, incomplete or inconsistent dataset-trajmeta.bin for all-context query.");
+				}
+			}
 			bool bMissingFiles = false;
-			for (int32 Time = First; Time <= Last; ++Time)
+			for (int32 Time = First; !bMetadataOnly && Time <= Last; ++Time)
 			{
 				if (!CachedTimeSteps.Contains(Time) &&
 					!Files.FileExists(*FSpatialHashTableBuilder::GetOutputFilename(Directory, CellSize, Time)))
@@ -423,7 +434,7 @@ void USpatialHashTableManager::LoadHashTablesAsync(
 					Result.ErrorMessage = TEXT("Failed to build missing spatial hash tables.");
 				}
 			}
-			for (int32 Time = First; Time <= Last; ++Time)
+			for (int32 Time = First; !bMetadataOnly && Time <= Last; ++Time)
 			{
 				if (CachedTimeSteps.Contains(Time))
 				{
@@ -442,7 +453,7 @@ void USpatialHashTableManager::LoadHashTablesAsync(
 				Tables.Add(Time, MoveTemp(Table));
 				++Result.LoadedCount;
 			}
-			if (CoveredCount == 0)
+			if (!bMetadataOnly && CoveredCount == 0)
 			{
 				Result.ErrorMessage = TEXT("Query time range does not overlap the target dataset.");
 			}
@@ -2876,7 +2887,7 @@ void USpatialHashTableManager::QueryPositionsBatchedAsync(
 	int32 BatchSize,
 	int64 ExcludeTrajectoryId,
 	bool bIncludeWholeResultTrajectorySamples,
-	FOnSpatialHashBatchResult BatchCallback)
+	FOnSpatialHashBatchResult BatchCallback, bool bAllContextTrajectories)
 {
 	if (QueryPositions.IsEmpty() || QueryTimeSteps.Num() != QueryPositions.Num())
 	{
@@ -2940,17 +2951,28 @@ void USpatialHashTableManager::QueryPositionsBatchedAsync(
 		[Loader, Snapshot, DatasetDirectory,
 		 QueryPositions, QueryTimeSteps,
 		 Radius, EffectiveBatchSize, ExcludeTrajectoryId,
-		 PeriodicExtent, bPeriodic, bIncludeWholeResultTrajectorySamples,
+		 PeriodicExtent, bPeriodic, bIncludeWholeResultTrajectorySamples, bAllContextTrajectories,
 		 BatchCallback, CancellationToken, DatasetFirstTimeStep, DatasetLastTimeStep]()
 	{
 		// Shard file list – GetShardFiles is not necessarily thread-safe.
 		TArray<FString> ShardFiles;
 		if (!GetShardFiles(DatasetDirectory, ShardFiles))
 		{
-			UE_LOG(LogTemp, Warning, TEXT("USpatialHashTableManager::QueryPositionsBatchedAsync: No shard files found in %s"), *DatasetDirectory);
-			AsyncTask(ENamedThreads::GameThread, [BatchCallback]()
+			const bool bEmptyContext = bAllContextTrajectories &&
+				FPlatformFileManager::Get().GetPlatformFile().FileSize(
+					*FPaths::Combine(DatasetDirectory, TEXT("dataset-trajmeta.bin"))) == 0;
+			if (bEmptyContext)
 			{
-				BatchCallback.ExecuteIfBound(TArray<FSpatialHashQueryResult>(), true, 0, 0);
+				AsyncTask(ENamedThreads::GameThread, [BatchCallback, Count = QueryPositions.Num()]()
+				{
+					BatchCallback.ExecuteIfBound(TArray<FSpatialHashQueryResult>(), true, 0, Count);
+				});
+				return;
+			}
+			UE_LOG(LogTemp, Warning, TEXT("USpatialHashTableManager::QueryPositionsBatchedAsync: No shard files found in %s"), *DatasetDirectory);
+			AsyncTask(ENamedThreads::GameThread, [BatchCallback, bAllContextTrajectories]()
+			{
+				BatchCallback.ExecuteIfBound(TArray<FSpatialHashQueryResult>(), true, 0, bAllContextTrajectories ? -1 : 0);
 			});
 			return;
 		}
@@ -2999,6 +3021,57 @@ void USpatialHashTableManager::QueryPositionsBatchedAsync(
 		FThreadSafeCounter UnhandledSampleCount(0);
 		FThreadSafeCounter OutsideDatasetSampleCount(0);
 
+		if (bAllContextTrajectories)
+		{
+			for (const int32 Time : QueryTimeSteps)
+			{
+				if (Time < DatasetFirstTimeStep || Time > DatasetLastTimeStep)
+				{
+					OutsideDatasetSampleCount.Increment();
+				}
+			}
+			// Read the trajectory index directly: no spatial hashes or radius qualification.
+			// Stream records so candidate discovery does not duplicate the full index in memory.
+			IPlatformFile& Files = FPlatformFileManager::Get().GetPlatformFile();
+			TUniquePtr<IFileHandle> Index(Files.OpenRead(*FPaths::Combine(DatasetDirectory, TEXT("dataset-trajmeta.bin"))));
+			if (!Index || Index->Size() % sizeof(FTrajectoryMetaBinary) != 0)
+			{
+				UE_LOG(LogTemp, Error, TEXT("All-context query requires a valid dataset-trajmeta.bin."));
+				AsyncTask(ENamedThreads::GameThread, [BatchCallback]()
+				{
+					BatchCallback.ExecuteIfBound(TArray<FSpatialHashQueryResult>(), true, 0, -1);
+				});
+				return;
+			}
+			int32 First = MAX_int32;
+			int32 Last = MIN_int32;
+			for (const int32 Time : QueryTimeSteps)
+			{
+				First = FMath::Min(First, Time);
+				Last = FMath::Max(Last, Time);
+			}
+			const int64 Count = Index->Size() / sizeof(FTrajectoryMetaBinary);
+			for (int64 Record = 0; Record < Count && !(bool)(*CancellationToken); ++Record)
+			{
+				FTrajectoryMetaBinary Meta{};
+				if (!Index->Read(reinterpret_cast<uint8*>(&Meta), sizeof(Meta)))
+				{
+					UE_LOG(LogTemp, Error, TEXT("Failed to read context trajectory index."));
+					AsyncTask(ENamedThreads::GameThread, [BatchCallback]()
+					{
+						BatchCallback.ExecuteIfBound(TArray<FSpatialHashQueryResult>(), true, 0, -1);
+					});
+					return;
+				}
+				if (Meta.TrajectoryId != static_cast<uint64>(ExcludeTrajectoryId) &&
+					Meta.StartTimeStep <= Last && Meta.EndTimeStep >= First)
+				{
+					AllCandidates.Add(static_cast<int64>(Meta.TrajectoryId),
+						TPair<int32, int32>(FMath::Max(First, Meta.StartTimeStep), FMath::Min(Last, Meta.EndTimeStep)));
+				}
+			}
+		}
+		else
 		ParallelFor(QueryPositions.Num(), [&](int32 i)
 		{
 			// Abort this iteration immediately if the query was cancelled.
@@ -3373,7 +3446,7 @@ void USpatialHashTableManager::QueryPositionsBatchedAsync(
 							DistSq = FVector::DistSquared(*QueryPos, Pos);
 						}
 					}
-					else if (bIncludeWholeResultTrajectorySamples && UnwrappedQueryPositions.Num() > 0)
+					else if ((bAllContextTrajectories || bIncludeWholeResultTrajectorySamples) && UnwrappedQueryPositions.Num() > 0)
 					{
 						// No same-timestep query sample exists (e.g. sparse query trajectory).
 						// Use the nearest query sample across the trajectory to provide
@@ -3404,7 +3477,7 @@ void USpatialHashTableManager::QueryPositionsBatchedAsync(
 						bHasSampleInsideRadius = true;
 					}
 
-					if (!bIncludeWholeResultTrajectorySamples && DistSq > RadiusSq)
+					if (!bAllContextTrajectories && !bIncludeWholeResultTrajectorySamples && DistSq > RadiusSq)
 					{
 						continue;
 					}
@@ -3440,7 +3513,7 @@ void USpatialHashTableManager::QueryPositionsBatchedAsync(
 					}
 				}
 
-				if (bIncludeWholeResultTrajectorySamples && !bHasSampleInsideRadius)
+				if (!bAllContextTrajectories && bIncludeWholeResultTrajectorySamples && !bHasSampleInsideRadius)
 				{
 					Result.SamplePoints.Reset();
 				}

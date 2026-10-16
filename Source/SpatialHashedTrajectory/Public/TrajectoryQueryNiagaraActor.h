@@ -12,6 +12,12 @@ struct FPreparedTrajectoryDisplay;
 class UNiagaraSystem;
 class UNiagaraComponent;
 
+UENUM(BlueprintType)
+enum class ETrajectoryContextFilterMode : uint8
+{
+	Neighborhood,
+	AllContextTrajectories
+};
 
 
 /**
@@ -73,6 +79,21 @@ public:
 	/** Path to the dataset directory containing shard files */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Query Settings")
 	FString DatasetDirectory;
+
+	/** Spatial neighborhood or every context trajectory within the requested time range. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Query Settings")
+	ETrajectoryContextFilterMode ContextFilterMode = ETrajectoryContextFilterMode::Neighborhood;
+
+	/** Source dataset of the focus trajectory; required with QueryTrajectoryId for self-exclusion. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Query Settings")
+	FString QueryDatasetDirectory;
+
+	/** Original focus ID in QueryDatasetDirectory. -1 denotes a synthetic/unknown focus. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Query Settings")
+	int64 QueryTrajectoryId = -1;
+
+	/** Resolves dataset identity before translating the focus ID into a context exclusion. */
+	int64 GetExcludedContextTrajectoryId() const;
 
 	/** Cell size used when loading / querying spatial hash tables */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Query Settings")
@@ -325,6 +346,9 @@ private:
 	int32 RequestedSampleStride = 1;
 	int32 RequestedMaximumSamples = 1000000;
 	int32 ActiveQueryTimeStart = 0;
+	ETrajectoryContextFilterMode ActiveContextFilterMode = ETrajectoryContextFilterMode::Neighborhood;
+	int64 ActiveExcludedTrajectoryId = -1;
+	FVector ActiveContextExtent = FVector::ZeroVector;
 	int32 ActiveQueryTimeEnd = 0;
 	FSimpleDelegate PendingQueryComplete;
 	bool bQueryInProgress = false;

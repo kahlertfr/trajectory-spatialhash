@@ -6,6 +6,7 @@
 #include "NiagaraDataInterfaceArrayFunctionLibrary.h"
 #include "VRLogManager.h"
 #include "Async/Async.h"
+#include "Misc/Paths.h"
 #include "NiagaraSystem.h"
 #include "NiagaraDataInterfaceArrayInt.h"
 #include "NiagaraDataInterfaceArrayFloat.h"
@@ -662,6 +663,21 @@ void ATrajectoryQueryNiagaraActor::UpdateUserParameter(int32 NewTimeStart, int32
 
 // ─── Core async pipeline ──────────────────────────────────────────────────────
 
+int64 ATrajectoryQueryNiagaraActor::GetExcludedContextTrajectoryId() const
+{
+	if (QueryTrajectoryId < 0 || QueryDatasetDirectory.IsEmpty() || DatasetDirectory.IsEmpty())
+	{
+		return -1;
+	}
+	FString FocusDirectory = FPaths::ConvertRelativePathToFull(QueryDatasetDirectory);
+	FString ContextDirectory = FPaths::ConvertRelativePathToFull(DatasetDirectory);
+	FPaths::NormalizeDirectoryName(FocusDirectory);
+	FPaths::NormalizeDirectoryName(ContextDirectory);
+	FPaths::CollapseRelativeDirectories(FocusDirectory);
+	FPaths::CollapseRelativeDirectories(ContextDirectory);
+	return FPaths::IsSamePath(FocusDirectory, ContextDirectory) ? QueryTrajectoryId : -1;
+}
+
 bool ATrajectoryQueryNiagaraActor::FireAsyncQueriesWithCallback(
 	FSimpleDelegate OnComplete,
 	FSimpleDelegate OnFailure,
@@ -695,6 +711,15 @@ bool ATrajectoryQueryNiagaraActor::FireAsyncQueriesWithCallback(
 	}
 
 	RequestedSampleStride = FMath::Max(1, SampleStride);
+	if (QueryTrajectoryId >= 0 && QueryDatasetDirectory.IsEmpty())
+	{
+		UE_LOG(LogTemp, Error, TEXT("Set QueryDatasetDirectory with QueryTrajectoryId to identify the focus trajectory."));
+		OnFailure.ExecuteIfBound();
+		return false;
+	}
+	ActiveContextFilterMode = ContextFilterMode;
+	ActiveExcludedTrajectoryId = GetExcludedContextTrajectoryId();
+	ActiveContextExtent = FVector::ZeroVector;
 	RequestedMaximumSamples = FMath::Max(0, MaximumDisplayedSamples);
 	ActiveQueryTimeStart = QueryTimeStart;
 	ActiveQueryTimeEnd = QueryTimeEnd;
@@ -714,7 +739,7 @@ bool ATrajectoryQueryNiagaraActor::FireAsyncQueriesWithCallback(
 	const int32 RequestedEnd = QueryTimeEnd;
 	const TArray<FVector> RequestedPositions = QueryPositions;
 	GetGameInstance()->GetSubsystem<UVRLogManager>()->AddMessageF(
-		TEXT("... Loading spatial hash tables asynchronously for t=[%d,%d]."), QueryTimeStart, QueryTimeEnd);
+		TEXT("... Preparing context data asynchronously for t=[%d,%d]."), QueryTimeStart, QueryTimeEnd);
 	Manager->LoadHashTablesAsync(DatasetDirectory, CellSize, QueryTimeStart, QueryTimeEnd, true,
 		FOnSpatialHashLoadComplete::CreateLambda(
 			[WeakThis, Generation, OnComplete, OnFailure, bIncludeWholeResultTrajectorySamples,
@@ -726,7 +751,8 @@ bool ATrajectoryQueryNiagaraActor::FireAsyncQueriesWithCallback(
 			{
 				return;
 			}
-			if (LoadResult.LoadedCount == 0 || LoadResult.FailedCount > 0 || !LoadResult.ErrorMessage.IsEmpty() ||
+			const bool bAllContext = This->ActiveContextFilterMode == ETrajectoryContextFilterMode::AllContextTrajectories;
+			if ((!bAllContext && LoadResult.LoadedCount == 0) || LoadResult.FailedCount > 0 || !LoadResult.ErrorMessage.IsEmpty() ||
 				This->DatasetDirectory != RequestedDirectory || This->CellSize != RequestedCellSize ||
 				This->QueryTimeStart != RequestedStart || This->QueryTimeEnd != RequestedEnd ||
 				This->QueryPositions != RequestedPositions)
@@ -736,9 +762,10 @@ bool ATrajectoryQueryNiagaraActor::FireAsyncQueriesWithCallback(
 				This->CancelQuery();
 				return;
 			}
+			This->ActiveContextExtent = LoadResult.DatasetExtent;
 			This->StartPreparedQuery(OnComplete, LoadResult.DatasetFirstTimeStep,
 				LoadResult.DatasetLastTimeStep, bIncludeWholeResultTrajectorySamples);
-		}));
+		}), ActiveContextFilterMode == ETrajectoryContextFilterMode::AllContextTrajectories);
 	return true;
 }
 
@@ -748,7 +775,9 @@ void ATrajectoryQueryNiagaraActor::StartPreparedQuery(
 {
 	// Apply the periodic volume setting from this actor to the manager so
 	// that all subsequent queries use the correct boundary conditions.
-	Manager->SetPeriodicVolume(PeriodicVolume.bIsPeriodic, PeriodicVolume.Extent);
+	const FVector Extent = ActiveContextFilterMode == ETrajectoryContextFilterMode::AllContextTrajectories &&
+		PeriodicVolume.Extent.IsNearlyZero() ? ActiveContextExtent : PeriodicVolume.Extent;
+	Manager->SetPeriodicVolume(PeriodicVolume.bIsPeriodic, Extent);
 
 	// Cache the resolved extent so TransferResultsToNiagara can pass it to
 	// Niagara as PeriodicVolumeExtent (required by the HLSL volume-index helper).
@@ -832,6 +861,11 @@ void ATrajectoryQueryNiagaraActor::StartPreparedQuery(
 			}
 
 			const int32 CurrentBatch = ++(*BatchCounter);
+			if (HandledQuerySamples < 0)
+			{
+				This->CancelQuery();
+				return;
+			}
 
 			// On the first batch, log Phase 1 summary to VRLogger so the user
 			// can see how many query samples were handled and how many candidate
@@ -863,7 +897,9 @@ void ATrajectoryQueryNiagaraActor::StartPreparedQuery(
 				}
 
 				This->GetGameInstance()->GetSubsystem<UVRLogManager>()->AddMessageF(
-					TEXT("Phase 2 - Check for Nearest Neighbors"));
+						This->ActiveContextFilterMode == ETrajectoryContextFilterMode::AllContextTrajectories
+							? TEXT("Phase 2 - Prepare all context trajectories")
+							: TEXT("Phase 2 - Check for Nearest Neighbors"));
 			}
 
 			*TotalCandidatesProcessed += BatchResults.Num();
@@ -911,9 +947,10 @@ void ATrajectoryQueryNiagaraActor::StartPreparedQuery(
 		OuterQueryRadius,
 		CellSize,
 		BatchSize,
-		-1LL, // no trajectory to exclude
+		ActiveExcludedTrajectoryId,
 		bIncludeWholeResultTrajectorySamples,
-		MoveTemp(BatchCallback)
+		MoveTemp(BatchCallback),
+		ActiveContextFilterMode == ETrajectoryContextFilterMode::AllContextTrajectories
 	);
 }
 
