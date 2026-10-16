@@ -11,6 +11,7 @@
 struct FPreparedTrajectoryDisplay;
 class UNiagaraSystem;
 class UNiagaraComponent;
+class UBoxComponent;
 
 UENUM(BlueprintType)
 enum class ETrajectoryContextFilterMode : uint8
@@ -298,6 +299,15 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Trajectory Visualization")
 	void CancelQuery();
 
+	/** Fit the object-view collision box; store the returned reference transform in RelativeVisOrigin. */
+	UFUNCTION(BlueprintCallable, Category = "Trajectory Visualization")
+	FTransform RefreshObjectViewCollisionBox(UBoxComponent* Box, USceneComponent* Axes,
+		FTransform ReferenceOrigin, FVector TargetSize, bool bInitialize = false);
+
+	/** Legacy Blueprint compatibility: returns the interaction transform unchanged. Placement is applied in Niagara. */
+	UFUNCTION(BlueprintPure, Category = "Trajectory Visualization")
+	FTransform GetObjectViewRenderTransform(FTransform InteractionTransform) const;
+
 protected:
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
@@ -331,8 +341,13 @@ protected:
 	bool InitializeManager();
 
 private:
+	FBox ObjectViewBounds{ForceInit};
+	FBox RotatedObjectViewBounds{ForceInit};
+	FVector ObjectViewCenterOffset = FVector::ZeroVector;
+	FVector ObjectViewPlacementOffset = FVector::ZeroVector;
 #if WITH_DEV_AUTOMATION_TESTS
 	friend class FQuerySamplingCleanupTest;
+	friend class FObjectViewBoundsTest;
 #endif
 	void StartPreparedQuery(FSimpleDelegate OnComplete, int32 DatasetFirstTimeStep,
 		int32 DatasetLastTimeStep, bool bIncludeWholeResultTrajectorySamples);

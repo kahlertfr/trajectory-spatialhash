@@ -2,6 +2,7 @@
 
 #include "TrajectoryQueryNiagaraActor.h"
 #include "NiagaraComponent.h"
+#include "Components/BoxComponent.h"
 #include "NiagaraFunctionLibrary.h"
 #include "NiagaraDataInterfaceArrayFunctionLibrary.h"
 #include "VRLogManager.h"
@@ -39,6 +40,8 @@ struct FPreparedTrajectoryDisplay
 	float VelocityMax = 0.0f;
 	int32 Stride = 1;
 	FVector BoundsMin = FVector::ZeroVector;
+	FBox ObjectBounds{ForceInit};
+	FBox RotatedObjectBounds{ForceInit};
 	FVector BoundsMax = FVector::ZeroVector;
 	FString Error;
 };
@@ -337,6 +340,26 @@ static FPreparedTrajectoryDisplay PrepareTrajectoryDisplay(
 	}
 
 
+	// Match Niagara's object view before reducing samples: unwrap, translate,
+	// and optionally apply the inverse uploaded quaternion about the first query point.
+	if (!QueryPoints.IsEmpty())
+	{
+		const FVector Pivot = QueryPoints[0];
+		Data.ObjectBounds += Pivot;
+		Data.RotatedObjectBounds += Pivot;
+		for (const FSpatialHashQueryResult& Result : Results)
+		{
+			for (const FTrajectorySamplePoint& Sample : Result.SamplePoints)
+			{
+				const int32 Index = FMath::Clamp(Sample.TimeStep - QueryTimeStart, 0, QueryPoints.Num() - 1);
+				const FVector Position = Sample.Position + DecodePeriodicVolumeIndexToOffset(Sample.VolumeIndex, CachedPeriodicExtent);
+				const FVector Aligned = Position + QueryTranslations[Index];
+				Data.ObjectBounds += Aligned;
+				Data.RotatedObjectBounds += Pivot + QueryRotations[Index].Inverse().RotateVector(Aligned - Pivot);
+			}
+		}
+	}
+
 	for (int32 Index = 0; Index < QueryPoints.Num(); ++Index)
 	{
 		Data.QuerySampleTimeSteps.Add(FMath::Min(QueryTimeStart + Index, QueryTimeEnd));
@@ -422,6 +445,67 @@ static FPreparedTrajectoryDisplay PrepareTrajectoryDisplay(
 }
 
 #if WITH_DEV_AUTOMATION_TESTS
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FObjectViewBoundsTest,
+	"TrajectoryBLab.Query.ObjectViewBounds",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FObjectViewBoundsTest::RunTest(const FString& Parameters)
+{
+	const auto Data = Async(EAsyncExecution::ThreadPool, []()
+	{
+		// Nonzero pivot, a turn, and a periodic image exercise all alignment steps.
+		TArray<FVector> Focus = { FVector(10, 20, 0), FVector(12, 20, 0), FVector(12, 22, 0) };
+		FSpatialHashQueryResult Result(1);
+		Result.SamplePoints = { FTrajectorySamplePoint(FVector(13, 22, 0), 101, 0.0f) };
+		Result.SamplePoints[0].VolumeIndex = 1;
+		return PrepareTrajectoryDisplay(Focus, Focus, {Result}, FVector(100,100,100), 100, 102, 2, 0);
+	}).Get();
+	TestTrue(TEXT("Translated bounds use unwrapped positions and the query at the sample time"),
+		Data.ObjectBounds.Max.Equals(FVector(111, 22, 0)));
+	TestTrue(TEXT("Rotation matches Niagara inverse quaternion around nonzero reference pivot"),
+		Data.RotatedObjectBounds.Min.Equals(FVector(8, 20, 0)) &&
+		Data.RotatedObjectBounds.Max.Equals(FVector(10, 121, 0)));
+	TestEqual(TEXT("Full bounds survive reduction of the only result sample"), Data.ResultPoints.Num(), 0);
+	auto* Actor = NewObject<ATrajectoryQueryNiagaraActor>();
+	Actor->NiagaraComponent = NewObject<UNiagaraComponent>(Actor);
+	auto* Box = NewObject<UBoxComponent>(Actor);
+	Actor->ResultBoundsMin = FVector::ZeroVector;
+	Actor->ResultBoundsMax = FVector(10, 20, 30);
+	Actor->ObjectViewBounds = FBox(FVector::ZeroVector, FVector(2, 4, 6));
+	Actor->RotatedObjectViewBounds = FBox(FVector(-2, -4, 0), FVector(2, 4, 6));
+	Actor->ObjectViewWithRotation = false;
+	const FTransform Reference(FVector(100, 200, 30));
+	Box->SetWorldTransform(Reference);
+	const FTransform Origin = Actor->RefreshObjectViewCollisionBox(Box, nullptr, Reference, FVector(60), true);
+	TestTrue(TEXT("Object center uses aligned bounds and a fixed bottom anchor"), Origin.GetLocation().Equals(FVector(92, 224, 14)));
+	TestTrue(TEXT("Box receives local half extents in display units"), Box->GetUnscaledBoxExtent().Equals(FVector(2, 6, 4)));
+	const FTransform Repeated = Actor->RefreshObjectViewCollisionBox(Box, nullptr, Origin, FVector(60), false);
+	TestTrue(TEXT("Repeated refresh does not accumulate offsets"), Repeated.Equals(Origin));
+	const FTransform Grab(FQuat(FVector::UpVector, 0.7), FVector(80, 40, 20), FVector(1.5));
+	Box->SetWorldTransform(Origin * Grab);
+	Actor->ObjectViewWithRotation = true;
+	const FTransform RotatedOrigin = Actor->RefreshObjectViewCollisionBox(Box, nullptr, Origin, FVector(60), false);
+	TestTrue(TEXT("Rotation toggle preserves interaction transform"), Box->GetComponentTransform().Equals(RotatedOrigin * Grab));
+	// Shift the aligned bounds vertically without changing their height. The bottom
+	// and the box center must stay fixed; rendered samples receive the inverse shift.
+	Box->SetWorldTransform(Reference);
+	Actor->ObjectViewWithRotation = false;
+	Actor->ObjectViewBounds = FBox(FVector(0, 10, 0), FVector(2, 14, 6));
+	const FTransform Anchored = Actor->RefreshObjectViewCollisionBox(Box, nullptr, Reference, FVector(60), true);
+	TestTrue(TEXT("Vertical alignment does not move the bottom anchor"), Anchored.GetLocation().Equals(FVector(92, 224, 14)));
+	TestEqual(TEXT("Bottom stays at original path origin below path half-height"),
+		Anchored.GetLocation().Z - Box->GetUnscaledBoxExtent().Z, 10.0);
+	TestTrue(TEXT("Placement is published directly to Niagara without a grab update"),
+		FVector(Actor->NiagaraComponent->GetOverrideParameters().GetParameterValue<FVector3f>(
+			FNiagaraVariable(FNiagaraTypeDefinition::GetVec3Def(), TEXT("User.ObjectViewPlacementOffset")))).Equals(FVector(0, 0, -20)));
+	TestTrue(TEXT("Legacy grab helper does not apply placement twice"), Actor->GetObjectViewRenderTransform(Grab).Equals(Grab));
+	const FVector Original(2, 3, 40);
+	const FVector Rendered = Grab.TransformPosition(Original + Actor->ObjectViewPlacementOffset);
+	TestTrue(TEXT("Probe inverse removes placement after undoing grabbing"),
+		(Grab.InverseTransformPosition(Rendered) - Actor->ObjectViewPlacementOffset).Equals(Original));
+	return true;
+}
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSharedTrajectorySamplingTest,
 	"TrajectoryBLab.Query.SharedTemporalSampling",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
@@ -1029,6 +1113,43 @@ void ATrajectoryQueryNiagaraActor::ReleaseQueryCPUData()
 	CachedQueryPositionIndices.Empty();
 }
 
+FTransform ATrajectoryQueryNiagaraActor::RefreshObjectViewCollisionBox(
+	UBoxComponent* Box, USceneComponent* Axes, FTransform ReferenceOrigin,
+	FVector TargetSize, bool bInitialize)
+{
+	if (!Box) return ReferenceOrigin;
+	const FBox& Bounds = ObjectViewWithRotation ? RotatedObjectViewBounds : ObjectViewBounds;
+	if (!Bounds.IsValid) return ReferenceOrigin;
+	const FVector PathSize = ResultBoundsMax - ResultBoundsMin;
+	const double Scale = PathSize.GetMax() > UE_SMALL_NUMBER ? TargetSize.GetMax() / PathSize.GetMax() : 1.0;
+	const FVector Delta = Bounds.GetCenter() - (ResultBoundsMin + ResultBoundsMax) * 0.5;
+	const FVector GeometricOffset = FVector(Delta.X, -Delta.Z, Delta.Y) * Scale;
+	FVector Offset = GeometricOffset;
+	// ReferenceOrigin is the path box center plus the object view's horizontal
+	// layout offset. Keep its original bottom fixed and let this box grow upward.
+	Offset.Z = (Bounds.GetSize().Y - PathSize.Y) * Scale * 0.5;
+	ObjectViewPlacementOffset = FVector(0, 0, Offset.Z - GeometricOffset.Z);
+	if (NiagaraComponent)
+		NiagaraComponent->SetVariableVec3(TEXT("ObjectViewPlacementOffset"), ObjectViewPlacementOffset);
+	FTransform NewOrigin = ReferenceOrigin;
+	NewOrigin.AddToTranslation(Offset - (bInitialize ? FVector::ZeroVector : ObjectViewCenterOffset));
+	// Keep the current grab transform while changing the collision reference center.
+	const FTransform Interaction = ReferenceOrigin.Inverse() * Box->GetComponentTransform();
+	Box->SetWorldTransform(NewOrigin * Interaction);
+	const FVector Size = Bounds.GetSize();
+	Box->SetBoxExtent(FVector(Size.X, Size.Z, Size.Y) * FMath::Abs(Scale) * 0.5, true);
+	if (Axes) Axes->SetRelativeLocation(-FVector(PathSize.X, PathSize.Z, PathSize.Y) * Scale * 0.5 - Offset);
+	ObjectViewCenterOffset = Offset;
+	return NewOrigin;
+}
+
+FTransform ATrajectoryQueryNiagaraActor::GetObjectViewRenderTransform(FTransform InteractionTransform) const
+{
+	// Compatibility with previously saved Blueprints. Placement is now read by
+	// Niagara's particle update, independently of conditional grab-matrix updates.
+	return InteractionTransform;
+}
+
 void ATrajectoryQueryNiagaraActor::TransferResultsToNiagara(
 	const TArray<FVector>& QueryPoints, const TArray<FSpatialHashQueryResult>& Results, bool bReactivate)
 {
@@ -1098,6 +1219,8 @@ void ATrajectoryQueryNiagaraActor::UploadPreparedDisplay(const FPreparedTrajecto
 	check(IsInGameThread());
 	if (!NiagaraComponent) return;
 	ResultBoundsMin = Data.BoundsMin;
+	ObjectViewBounds = Data.ObjectBounds;
+	RotatedObjectViewBounds = Data.RotatedObjectBounds;
 	ResultBoundsMax = Data.BoundsMax;
 	const auto& ResultPoints = Data.ResultPoints;
 	const auto& ResultDistances = Data.ResultDistances;
