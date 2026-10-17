@@ -19,6 +19,7 @@ struct FPreparedTrajectoryDisplay
 {
 	TArray<FVector> ResultPoints;
 	TArray<float> ResultDistances;
+	TArray<float> ResultDisplayDistances;
 	TArray<float> ResultVelocities;
 	TArray<int32> ResultVolumeIndices;
 	TArray<int32> ResultTrajectoryIds;
@@ -147,6 +148,10 @@ static FPreparedTrajectoryDisplay PrepareTrajectoryDisplay(
 			ResultVolumeIndices.Add(Sample.VolumeIndex);
 
 			UnwrappedPositions.Add(Sample.Position + DecodePeriodicVolumeIndexToOffset(Sample.VolumeIndex, CachedPeriodicExtent));
+			// Match Niagara's temporal endpoint clamping before display reduction.
+			const int32 FocusIndex = FMath::Clamp(Sample.TimeStep - QueryTimeStart, 0, QueryPoints.Num() - 1);
+			Data.ResultDisplayDistances.Add(QueryPoints.IsValidIndex(FocusIndex)
+				? FVector::Distance(UnwrappedPositions.Last(), QueryPoints[FocusIndex]) : FLT_MAX);
 			FullBounds += UnwrappedPositions.Last();
 			TimeSteps.Add(Sample.TimeStep);
 		}
@@ -217,6 +222,7 @@ static FPreparedTrajectoryDisplay PrepareTrajectoryDisplay(
 
 	const bool bSampleArraysAligned =
 		NumResultPoints == NumResultDistances &&
+		NumResultPoints == Data.ResultDisplayDistances.Num() &&
 		NumResultPoints == NumResultVelocities &&
 		NumResultPoints == NumResultVolumeIndices;
 	const int32 NumResultTrajectoryIds = ResultTrajectoryIds.Num();
@@ -430,6 +436,7 @@ static FPreparedTrajectoryDisplay PrepareTrajectoryDisplay(
 	}
 	Select(Data.ResultPoints, ResultIndices);
 	Select(Data.ResultDistances, ResultIndices);
+	Select(Data.ResultDisplayDistances, ResultIndices);
 	Select(Data.ResultVelocities, ResultIndices);
 	Select(Data.ResultVolumeIndices, ResultIndices);
 	Select(Data.ResultSampleTimeSteps, ResultIndices);
@@ -503,6 +510,39 @@ bool FObjectViewBoundsTest::RunTest(const FString& Parameters)
 	const FVector Rendered = Grab.TransformPosition(Original + Actor->ObjectViewPlacementOffset);
 	TestTrue(TEXT("Probe inverse removes placement after undoing grabbing"),
 		(Grab.InverseTransformPosition(Rendered) - Actor->ObjectViewPlacementOffset).Equals(Original));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDisplayedDistanceTest,
+	"TrajectoryBLab.Query.DisplayedDistance",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FDisplayedDistanceTest::RunTest(const FString& Parameters)
+{
+	const auto Data = Async(EAsyncExecution::ThreadPool, []()
+	{
+		TArray<FVector> Focus = { FVector(0, 8.5, 0), FVector(0, 9, 0), FVector(0, 9.5, 0) };
+		FSpatialHashQueryResult Result(1);
+		Result.SamplePoints = { FTrajectorySamplePoint(FVector(0, 5, 0), 100, 3.5f),
+			FTrajectorySamplePoint(FVector(0, 4.5, 0), 101, 4.5f),
+			FTrajectorySamplePoint(FVector(0, 4, 0), 102, 5.5f) };
+		for (auto& Sample : Result.SamplePoints) Sample.VolumeIndex = 1 << 8;
+		return PrepareTrajectoryDisplay(Focus, Focus, {Result}, FVector(5.5, 11, 5.5), 100, 102, 2, 0);
+	}).Get();
+	TestEqual(TEXT("Displayed distances stay aligned after reduction"), Data.ResultDisplayDistances.Num(), Data.ResultPoints.Num());
+	TestEqual(TEXT("Visibility measures the selected image"), Data.ResultDisplayDistances[0], 7.5f);
+	TestEqual(TEXT("Same timestep focus lookup survives stride two"), Data.ResultDisplayDistances[1], 5.5f);
+	TestEqual(TEXT("Analytical distance is preserved"), Data.ResultDistances[0], 3.5f);
+	TestEqual(TEXT("Analytical minimum is preserved"), Data.ResultMinDistances[0], 3.5f);
+	TestTrue(TEXT("A radius of four rejects a distant image despite periodic proximity"),
+		Data.ResultDistances[0] <= 4 && Data.ResultDisplayDistances[0] > 4);
+	const auto NonPeriodic = Async(EAsyncExecution::ThreadPool, []()
+	{
+		FSpatialHashQueryResult Result(2);
+		Result.SamplePoints.Add(FTrajectorySamplePoint(FVector(3, 4, 0), 100, 5));
+		return PrepareTrajectoryDisplay({FVector::ZeroVector}, {}, {Result}, FVector::ZeroVector, 100, 100, 1, 0);
+	}).Get();
+	TestEqual(TEXT("Nonperiodic distance is unchanged"), NonPeriodic.ResultDisplayDistances[0], NonPeriodic.ResultDistances[0]);
 	return true;
 }
 
@@ -1224,6 +1264,7 @@ void ATrajectoryQueryNiagaraActor::UploadPreparedDisplay(const FPreparedTrajecto
 	ResultBoundsMax = Data.BoundsMax;
 	const auto& ResultPoints = Data.ResultPoints;
 	const auto& ResultDistances = Data.ResultDistances;
+	const auto& ResultDisplayDistances = Data.ResultDisplayDistances;
 	const auto& ResultVelocities = Data.ResultVelocities;
 	const auto& ResultVolumeIndices = Data.ResultVolumeIndices;
 	const auto& ResultTrajectoryIds = Data.ResultTrajectoryIds;
@@ -1257,6 +1298,8 @@ void ATrajectoryQueryNiagaraActor::UploadPreparedDisplay(const FPreparedTrajecto
 	// Float array: per-sample distance from the query point (parallel to ResultPoints)
 	UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayFloat(
 		NiagaraComponent, FName("ResultDistances"), ResultDistances);
+	UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayFloat(
+		NiagaraComponent, FName("ResultDisplayDistances"), ResultDisplayDistances);
 
 	UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayFloat(
 		NiagaraComponent, FName("ResultVelocities"), ResultVelocities);
