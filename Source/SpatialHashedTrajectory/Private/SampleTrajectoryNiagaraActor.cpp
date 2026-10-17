@@ -428,6 +428,7 @@ void ASampleTrajectoryNiagaraActor::TransferScenarioToNiagara(ESampleTrajectoryS
 	// Build flat result arrays
 	TArray<FVector> ResultPoints;
 	TArray<float> ResultDistances;
+	TArray<float> ResultDisplayDistances;
 	TArray<float> ResultVelocities;
 	TArray<int32> ResultVolumeIndices;
 	TArray<int32> ResultTrajectoryIds;
@@ -482,6 +483,9 @@ void ASampleTrajectoryNiagaraActor::TransferScenarioToNiagara(ESampleTrajectoryS
 			ResultVolumeIndices.Add(Sample.VolumeIndex);
 
 			UnwrappedPositions.Add(Sample.Position + DecodeVolumeIndexToOffset(Sample.VolumeIndex, PeriodicVolumeExtent));
+			const int32 FocusIndex = FMath::Clamp(Sample.TimeStep, 0, QueryPointsUnwrapped.Num() - 1);
+			ResultDisplayDistances.Add(QueryPointsUnwrapped.IsValidIndex(FocusIndex)
+				? FVector::Distance(UnwrappedPositions.Last(), QueryPointsUnwrapped[FocusIndex]) : FLT_MAX);
 			TimeSteps.Add(Sample.TimeStep);
 		}
 
@@ -582,6 +586,8 @@ void ASampleTrajectoryNiagaraActor::TransferScenarioToNiagara(ESampleTrajectoryS
 
 	UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayFloat(
 		NiagaraComponent, FName("ResultDistances"), ResultDistances);
+	UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayFloat(
+		NiagaraComponent, FName("ResultDisplayDistances"), ResultDisplayDistances);
 
 	UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayFloat(
 		NiagaraComponent, FName("ResultVelocities"), ResultVelocities);

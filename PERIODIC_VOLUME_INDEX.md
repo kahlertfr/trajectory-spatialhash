@@ -22,6 +22,17 @@ minimum-image distance checks; neighborhood membership and stored distances reta
 periodic meaning. Rerunning a query with a different time range can select a different
 alignment anchor.
 
+Visibility-radius clipping uses `ResultDisplayDistances`: the Euclidean distance
+between the result's selected unwrapped image and the unwrapped focus position at
+the same timestep, calculated before display sampling. Times outside focus coverage
+use the nearest temporal endpoint, matching the renderer. This distance stays in
+source coordinate units; common view translations and rotations do not change it.
+`ResultDistances`, trajectory minima and final distances retain minimum-image
+periodic semantics for query membership, coloring and category classification.
+Both result Niagara systems read the display-distance array only for the outer
+visibility-radius test. Custom result systems must add and connect the new float
+array `User.ResultDisplayDistances` to their visibility filter.
+
 ---
 
 ## Virtual Volume Grid
