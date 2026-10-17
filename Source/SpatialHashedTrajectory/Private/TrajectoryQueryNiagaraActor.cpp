@@ -1,6 +1,8 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "TrajectoryQueryNiagaraActor.h"
+#include "VisibleSampleBoxComponent.h"
+#include "UObject/UnrealType.h"
 #include "NiagaraComponent.h"
 #include "Components/BoxComponent.h"
 #include "NiagaraFunctionLibrary.h"
@@ -658,6 +660,7 @@ void ATrajectoryQueryNiagaraActor::BeginPlay()
 			EAttachLocation::KeepRelativeOffset,
 			false  // do not auto-activate – we push data first
 		);
+		NiagaraComponent->SetVariableObject(TEXT("User.VisibleBoundsReceiver"),this);
 		NiagaraComponent->Deactivate();
 	}
 }
@@ -675,6 +678,7 @@ void ATrajectoryQueryNiagaraActor::CancelQuery()
 	{
 		Manager->CancelActiveQuery();
 	}
+	++VisibleBoundsRevision;
 	++QueryGeneration;
 	bPreparationInProgress = false;
 	bDisplayDirty = false;
@@ -727,6 +731,7 @@ void ATrajectoryQueryNiagaraActor::RunQueryAndUpdateNiagara()
 
 void ATrajectoryQueryNiagaraActor::SetVisualizationTimeRange(int32 NewTimeStart, int32 NewTimeEnd)
 {
+	++VisibleBoundsRevision;
 	VisualizationTimeStart = NewTimeStart;
 	VisualizationTimeEnd   = NewTimeEnd;
 
@@ -751,6 +756,7 @@ void ATrajectoryQueryNiagaraActor::UpdateUserParameter(int32 NewTimeStart, int32
 	VisualizationTimeStart = NewTimeStart;
 	VisualizationTimeEnd = NewTimeEnd;
 	ColorEncoding = NewColorEncoding;
+	++VisibleBoundsRevision;
 	DistanceFilter = NewDistanceFilter;
 	ParticleRadius = NewParticleRadius;
 	InnerRadius = NewInnerRadius;
@@ -854,7 +860,8 @@ bool ATrajectoryQueryNiagaraActor::FireAsyncQueriesWithCallback(
 	PendingQueryComplete = OnComplete;
 	bQueryInProgress = true;
 	PendingQueryFailure = OnFailure;
-	const uint64 Generation = ++QueryGeneration;
+	const uint64 Generation = ++VisibleBoundsRevision;
+	++QueryGeneration;
 	TWeakObjectPtr<ATrajectoryQueryNiagaraActor> WeakThis(this);
 	// Protect against editable request properties changing while loading.
 	const FString RequestedDirectory = DatasetDirectory;
@@ -1258,6 +1265,7 @@ void ATrajectoryQueryNiagaraActor::UploadPreparedDisplay(const FPreparedTrajecto
 {
 	check(IsInGameThread());
 	if (!NiagaraComponent) return;
+	++VisibleBoundsRevision;
 	ResultBoundsMin = Data.BoundsMin;
 	ObjectViewBounds = Data.ObjectBounds;
 	RotatedObjectViewBounds = Data.RotatedObjectBounds;
@@ -1390,4 +1398,28 @@ void ATrajectoryQueryNiagaraActor::UploadPreparedDisplay(const FPreparedTrajecto
 		     "Bounds: [%s] – [%s]."),
 		RawQueryPoints.Num(), ResultPoints.Num(), ResultTrajectoryIds.Num(),
 		*ResultBoundsMin.ToString(), *ResultBoundsMax.ToString());
+}
+
+void ATrajectoryQueryNiagaraActor::ReceiveVisibleBounds(uint64 Revision, const FBox& Path, const FBox& Object)
+{
+	if (Revision != VisibleBoundsRevision || IsActorBeingDestroyed())
+		return;
+	VisiblePathBounds = Path;
+	VisibleObjectBounds = Object;
+	// The Blueprint retains the reference transforms used to build its grab matrices.
+	// Read those references, not the currently grabbed component transforms.
+	const auto Apply = [this](const TCHAR* BoxName, const TCHAR* OriginName, const FBox& Bounds)
+	{
+		const auto* BoxProperty = FindFProperty<FObjectPropertyBase>(GetClass(), BoxName);
+		const auto* OriginProperty = FindFProperty<FStructProperty>(GetClass(), OriginName);
+		if (!BoxProperty || !OriginProperty || OriginProperty->Struct != TBaseStructure<FTransform>::Get())
+			return;
+		auto* Box = Cast<UVisibleSampleBoxComponent>(BoxProperty->GetObjectPropertyValue_InContainer(this));
+		if (!Box)
+			return;
+		const FTransform& Origin = *OriginProperty->ContainerPtrToValuePtr<FTransform>(this);
+		Box->SetVisibleSampleBounds(Bounds.IsValid ? Bounds.TransformBy(Origin.Inverse()) : FBox(ForceInit));
+	};
+	Apply(TEXT("PathVisBox"), TEXT("PathVisOrigin"), Path);
+	Apply(TEXT("RelativeVisBox"), TEXT("RelativeVisOrigin"), Object);
 }

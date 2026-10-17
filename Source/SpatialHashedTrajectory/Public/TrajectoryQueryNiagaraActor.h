@@ -308,7 +308,27 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Trajectory Visualization")
 	FTransform GetObjectViewRenderTransform(FTransform InteractionTransform) const;
 
-protected:
+  public:
+	const FBox& GetVisiblePathBounds() const
+	{
+		return VisiblePathBounds;
+	}
+	const FBox& GetVisibleObjectBounds() const
+	{
+		return VisibleObjectBounds;
+	}
+	uint64 GetVisibleBoundsRevision() const
+	{
+		return VisibleBoundsRevision;
+	}
+	void ReceiveVisibleBounds(uint64 Revision, const FBox& Path, const FBox& Object);
+
+  private:
+	uint64 VisibleBoundsRevision = 1;
+	FBox VisiblePathBounds{ForceInit};
+	FBox VisibleObjectBounds{ForceInit};
+
+  protected:
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 

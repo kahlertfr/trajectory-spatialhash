@@ -39,7 +39,8 @@ public class SpatialHashedTrajectory : ModuleRules
 		PrivateDependencyModuleNames.AddRange(
 			new string[]
 			{
-				// ... add private dependencies that you statically link with here ...	
+				"RenderCore",
+				"RHI"
 			}
 			);
 		
