@@ -85,13 +85,22 @@ public:
 	float ParticleRadius = 0.5f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visualization")
-	float InnerRadius = 0.6f;
+	float BehaviorRadius = 0.6f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visualization")
 	float QueryRadius = 0.5f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visualization")
-	float VisibilityRadius = 1.0f;
+	float CollisionRadius = 0.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visualization", meta = (DisplayName = "Inner Radius", ClampMin = "0"))
+	float ZoneInnerRadius = 0.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visualization", meta = (ClampMin = "0"))
+	float MiddleRadius = 0.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visualization", meta = (Bitmask, BitmaskEnum = "/Script/SpatialHashedTrajectory.ETrajectoryVisibilityZone"))
+	int32 VisibleZonesMask = TrajectoryVisibility::AllZones;
 
 	// ─── User Selection Settings ─────────────────────────────────────────────
 

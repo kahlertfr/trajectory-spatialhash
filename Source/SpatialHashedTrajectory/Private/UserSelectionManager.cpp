@@ -29,6 +29,7 @@ bool UUserSelectionManager::GetSelectionByTrajectoryId(int64 TrajectoryId, FUser
 void UUserSelectionManager::AddSelection(FUserTrajectorySelection Selection)
 {
 	if (Selection.TrajectoryId < 0) return;
+	Selection.NormalizeVisibility();
 	if (UpdateSelectionByTrajectoryId(Selection.TrajectoryId, Selection))
 		return;
 
@@ -42,6 +43,7 @@ bool UUserSelectionManager::UpdateSelection(int32 Index, FUserTrajectorySelectio
 	{
 		return false;
 	}
+	Selection.NormalizeVisibility();
 	Selections[Index] = MoveTemp(Selection);
 	NotifyListeners();
 	return true;
@@ -53,6 +55,7 @@ bool UUserSelectionManager::UpdateSelectionByTrajectoryId(int64 TrajectoryId, FU
 	{
 		if (Entry.TrajectoryId == TrajectoryId)
 		{
+			Selection.NormalizeVisibility();
 			Entry = MoveTemp(Selection);
 			NotifyListeners();
 			return true;
@@ -148,6 +151,10 @@ void UUserSelectionManager::RefreshFromProviders()
 		TArray<FUserTrajectorySelection> Provided =
 			ITrajectorySelectionProvider::Execute_GetProvidedSelections(Provider);
 
+		for (FUserTrajectorySelection& Selection : Provided)
+		{
+			Selection.NormalizeVisibility();
+		}
 		Selections.Append(MoveTemp(Provided));
 	}
 

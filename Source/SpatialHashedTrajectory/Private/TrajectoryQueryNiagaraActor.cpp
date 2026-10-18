@@ -746,16 +746,20 @@ void ATrajectoryQueryNiagaraActor::SetVisualizationTimeRange(int32 NewTimeStart,
 }
 
 
-void ATrajectoryQueryNiagaraActor::UpdateUserParameter(int32 NewTimeStart, int32 NewTimeEnd, ETrajectoryColorEncoding NewColorEncoding, ETrajectoryDistanceFilter NewDistanceFilter, float NewParticleRadius, float NewInnerRadius, float NewQueryRadius, float NewVisibilityRadius, bool NewSensitivity, bool NewVisibility, bool NewNoShadow, bool NewObjectViewWithRotation)
+void ATrajectoryQueryNiagaraActor::UpdateUserParameter(int32 NewTimeStart, int32 NewTimeEnd, ETrajectoryColorEncoding NewColorEncoding, ETrajectoryDistanceFilter NewDistanceFilter, float NewParticleRadius, float NewBehaviorRadius, float NewQueryRadius, float NewCollisionRadius, float NewZoneInnerRadius, float NewMiddleRadius, int32 NewVisibleZonesMask, bool NewSensitivity, bool NewVisibility, bool NewNoShadow, bool NewObjectViewWithRotation)
 {
 	VisualizationTimeStart = NewTimeStart;
 	VisualizationTimeEnd = NewTimeEnd;
 	ColorEncoding = NewColorEncoding;
 	DistanceFilter = NewDistanceFilter;
 	ParticleRadius = NewParticleRadius;
-	InnerRadius = NewInnerRadius;
+	BehaviorRadius = NewBehaviorRadius;
 	QueryRadius = NewQueryRadius;
-	VisibilityRadius = NewVisibilityRadius;
+	CollisionRadius = NewCollisionRadius;
+	ZoneInnerRadius = NewZoneInnerRadius;
+	MiddleRadius = NewMiddleRadius;
+	VisibleZonesMask = NewVisibleZonesMask;
+	TrajectoryVisibility::Normalize(CollisionRadius, ZoneInnerRadius, MiddleRadius, VisibleZonesMask);
 	TimeRangeSensitivity = NewSensitivity;
 	ParticleVisibility = NewVisibility;
 	NoShadow = NewNoShadow;
@@ -773,9 +777,13 @@ void ATrajectoryQueryNiagaraActor::UpdateUserParameter(int32 NewTimeStart, int32
 	NiagaraComponent->SetVariableInt(FName("ColorEncoding"), static_cast<int32>(ColorEncoding));
 	NiagaraComponent->SetVariableInt(FName("DistanceFilter"), static_cast<int32>(DistanceFilter));
 	NiagaraComponent->SetVariableFloat(FName("ParticleRadius"), ParticleRadius);
-	NiagaraComponent->SetVariableFloat(FName("InnerRadius"), InnerRadius);
+	NiagaraComponent->SetVariableFloat(FName("BehaviorRadius"), BehaviorRadius);
 	NiagaraComponent->SetVariableFloat(FName("QueryRadius"), QueryRadius);
-	NiagaraComponent->SetVariableFloat(FName("VisibilityRadius"), VisibilityRadius);
+	TrajectoryVisibility::Normalize(CollisionRadius, ZoneInnerRadius, MiddleRadius, VisibleZonesMask);
+	NiagaraComponent->SetVariableFloat(FName("CollisionRadius"), CollisionRadius);
+	NiagaraComponent->SetVariableFloat(FName("InnerRadius"), ZoneInnerRadius);
+	NiagaraComponent->SetVariableFloat(FName("MiddleRadius"), MiddleRadius);
+	NiagaraComponent->SetVariableInt(FName("VisibleZonesMask"), VisibleZonesMask);
 	NiagaraComponent->SetVariableBool(FName("TimeRangeSensitive"), TimeRangeSensitivity);
 	NiagaraComponent->SetVariableBool(FName("ParticleVisibility"), ParticleVisibility);
 	NiagaraComponent->SetVariableBool(FName("NoShadow"), NoShadow);
@@ -1347,9 +1355,13 @@ void ATrajectoryQueryNiagaraActor::UploadPreparedDisplay(const FPreparedTrajecto
 	UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayInt32(NiagaraComponent, FName("ResultQuerySampleIndices"), ResultQuerySampleIndices);
 	UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayFloat(NiagaraComponent, FName("ResultLastDistances"), ResultLastDistances);
 	// Scalar user parameters
-	NiagaraComponent->SetVariableFloat(FName("InnerRadius"), InnerRadius);
+	NiagaraComponent->SetVariableFloat(FName("BehaviorRadius"), BehaviorRadius);
 	NiagaraComponent->SetVariableFloat(FName("QueryRadius"), QueryRadius);
-	NiagaraComponent->SetVariableFloat(FName("VisibilityRadius"), VisibilityRadius);
+	TrajectoryVisibility::Normalize(CollisionRadius, ZoneInnerRadius, MiddleRadius, VisibleZonesMask);
+	NiagaraComponent->SetVariableFloat(FName("CollisionRadius"), CollisionRadius);
+	NiagaraComponent->SetVariableFloat(FName("InnerRadius"), ZoneInnerRadius);
+	NiagaraComponent->SetVariableFloat(FName("MiddleRadius"), MiddleRadius);
+	NiagaraComponent->SetVariableInt(FName("VisibleZonesMask"), VisibleZonesMask);
 	NiagaraComponent->SetVariableFloat(FName("ParticleRadius"), ParticleRadius);
 	NiagaraComponent->SetVariableFloat(FName("VelocityMin"), VelocityMin);
 	NiagaraComponent->SetVariableFloat(FName("VelocityMax"), VelocityMax);

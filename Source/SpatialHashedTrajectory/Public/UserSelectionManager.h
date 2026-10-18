@@ -8,6 +8,31 @@
 
 // ─── Data Type ────────────────────────────────────────────────────────────────
 
+/** Bit values shared with Niagara; combinations are stored in an int32. */
+UENUM(BlueprintType, meta = (Bitflags, UseEnumValuesAsMaskValuesInEditor = "true"))
+enum class ETrajectoryVisibilityZone : uint8
+{
+	None = 0 UMETA(Hidden),
+	Collision = 1,
+	Inner = 2,
+	Middle = 4,
+	Outer = 8
+};
+ENUM_CLASS_FLAGS(ETrajectoryVisibilityZone);
+
+/** Shared validation at selection storage and Niagara transfer boundaries. */
+namespace TrajectoryVisibility
+{
+	constexpr int32 AllZones = 15;
+
+	inline void Normalize(float& Collision, float& Inner, float& Middle, int32& Mask)
+	{
+		Collision = FMath::IsFinite(Collision) ? FMath::Max(0.f, Collision) : 0.f;
+		Inner = FMath::IsFinite(Inner) ? FMath::Max(Collision, Inner) : Collision;
+		Middle = FMath::IsFinite(Middle) ? FMath::Max(Inner, Middle) : Inner;
+		Mask &= AllZones;
+	}
+}
 UENUM(BlueprintType)
 enum class ETrajectoryColorEncoding : uint8
 {
@@ -36,8 +61,7 @@ enum class ETrajectoryDistanceFilter : uint8
 /**
  * Represents one user trajectory selection.
  *
- * Stores the trajectory to examine together with the time window and three
- * query radii used for spatial hash lookups.
+ * Stores trajectory identity, time, query/behavior/particle radii, and visibility zones.
  */
 USTRUCT(BlueprintType)
 struct FUserTrajectorySelection
@@ -60,17 +84,32 @@ struct FUserTrajectorySelection
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "User Selection")
 	bool TimeRangeSensitive = false;
 
-	/** Inner query radius */
+	/** Threshold used for trajectory behavior classification, independent of visibility zones. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "User Selection")
-	float InnerRadius = 0.f;
+	float BehaviorRadius = 0.f;
 
 	/** Query radius */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "User Selection")
 	float QueryRadius = 0.f;
 
-	/** Visibility radius */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "User Selection")
-	float VisibilityRadius = 0.f;
+	/** Distances use source coordinate units; equality belongs to the next zone. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "User Selection|Visibility", meta = (ClampMin = "0"))
+	float CollisionRadius = 0.f;
+
+	/** Internal name avoids redirecting legacy behavior values into the new zone radius. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "User Selection|Visibility", meta = (DisplayName = "Inner Radius", ClampMin = "0"))
+	float ZoneInnerRadius = 0.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "User Selection|Visibility", meta = (ClampMin = "0"))
+	float MiddleRadius = 0.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "User Selection|Visibility", meta = (Bitmask, BitmaskEnum = "/Script/SpatialHashedTrajectory.ETrajectoryVisibilityZone"))
+	int32 VisibleZonesMask = TrajectoryVisibility::AllZones;
+
+	void NormalizeVisibility()
+	{
+		TrajectoryVisibility::Normalize(CollisionRadius, ZoneInnerRadius, MiddleRadius, VisibleZonesMask);
+	}
 
 	/** Particle radius */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "User Selection")

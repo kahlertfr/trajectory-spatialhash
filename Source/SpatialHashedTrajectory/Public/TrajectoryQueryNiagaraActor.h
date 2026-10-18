@@ -223,13 +223,22 @@ public:
 	float ParticleRadius = 0.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visualization")
-	float InnerRadius = 0.0f;
+	float BehaviorRadius = 0.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visualization")
 	float QueryRadius = 0.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visualization")
-	float VisibilityRadius = 0.0f;
+	float CollisionRadius = 0.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visualization", meta = (DisplayName = "Inner Radius", ClampMin = "0"))
+	float ZoneInnerRadius = 0.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visualization", meta = (ClampMin = "0"))
+	float MiddleRadius = 0.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visualization", meta = (Bitmask, BitmaskEnum = "/Script/SpatialHashedTrajectory.ETrajectoryVisibilityZone"))
+	int32 VisibleZonesMask = TrajectoryVisibility::AllZones;
 
 	// ─── Blueprint callable entry points ─────────────────────────────────────
 
@@ -265,7 +274,7 @@ public:
 
 
 	UFUNCTION(BlueprintCallable, Category = "Trajectory Visualization")
-	void UpdateUserParameter(int32 NewTimeStart, int32 NewTimeEnd, ETrajectoryColorEncoding NewColorEncoding, ETrajectoryDistanceFilter newDistanceFilter, float NewParticleRadius, float NewInnerRadius, float NewQueryRadius, float NewVisibilityRadius, bool NewSensitivity, bool NewVisibility, bool NewNoShadow, bool NewObjectViewWithRotation);
+	void UpdateUserParameter(int32 NewTimeStart, int32 NewTimeEnd, ETrajectoryColorEncoding NewColorEncoding, ETrajectoryDistanceFilter newDistanceFilter, float NewParticleRadius, float NewBehaviorRadius, float NewQueryRadius, float NewCollisionRadius, float NewZoneInnerRadius, float NewMiddleRadius, int32 NewVisibleZonesMask, bool NewSensitivity, bool NewVisibility, bool NewNoShadow, bool NewObjectViewWithRotation);
 
 
 	/**
