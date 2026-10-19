@@ -65,4 +65,49 @@ bool FVisibleBoundsRevisionTest::RunTest(const FString& Parameters)
 		Actor->GetVisiblePathBounds().Equals(Stale) && !Actor->GetVisibleObjectBounds().IsValid);
 	return true;
 }
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVisibleBoundsPlacementTest, "TrajectoryBLab.Query.VisibleBounds.WorldPlacement",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FVisibleBoundsPlacementTest::RunTest(const FString& Parameters)
+{
+	const FBox PathSamples(FVector(-6, 2, 0), FVector(14, 14, 40));
+	const FBox ObjectSamples(FVector(55, -4, 10), FVector(75, 8, 30));
+	// Include a large-world placement to catch accidental cancellation of the
+	// simulation origin, along with rotation and uniform actor scale.
+	for (const FTransform SimulationToWorld : {
+		FTransform(FVector(1200, -800, 350)),
+		FTransform(FRotator(15, 35, -10), FVector(1200, -800, 350), FVector(1.5)),
+		FTransform(FVector(3000000, -2000000, 350))})
+	{
+		auto* Path = NewObject<UVisibleSampleBoxComponent>();
+		auto* Object = NewObject<UVisibleSampleBoxComponent>();
+		const FTransform PathReference = FTransform(FVector(0, 0, 20)) * SimulationToWorld;
+		const FTransform ObjectReference = FTransform(FVector(60, 0, 20)) * SimulationToWorld;
+		Path->SetWorldTransform(PathReference);
+		Object->SetWorldTransform(ObjectReference);
+		Path->SetVisibleSampleBoundsFromSimulation(PathSamples, SimulationToWorld, PathReference);
+		Object->SetVisibleSampleBoundsFromSimulation(ObjectSamples, SimulationToWorld, ObjectReference);
+		TestTrue(TEXT("Path collision follows displayed samples away from world origin"),
+			Path->CalcBounds(PathReference).Origin.Equals(SimulationToWorld.TransformPosition(PathSamples.GetCenter()), 0.001));
+		TestTrue(TEXT("Object collision follows its independent displayed samples"),
+			Object->CalcBounds(ObjectReference).Origin.Equals(SimulationToWorld.TransformPosition(ObjectSamples.GetCenter()), 0.001));
+		TestTrue(TEXT("Fitting keeps both reference transforms unchanged"),
+			Path->GetComponentTransform().Equals(PathReference) && Object->GetComponentTransform().Equals(ObjectReference));
+
+		const FBox PathBefore = Path->CalcBounds(PathReference).GetBox();
+		const FTransform Grab(FRotator(10, -25, 5), FVector(80, 40, 20), FVector(2));
+		const FTransform GrabbedObject = ObjectReference * Grab;
+		Object->SetWorldTransform(GrabbedObject);
+		Object->SetVisibleSampleBoundsFromSimulation(ObjectSamples, SimulationToWorld, ObjectReference);
+		// ObjectSamples' center is (65,2,20), with reference pivot (60,0,20).
+		const FVector ExpectedCenter = GrabbedObject.TransformPosition(FVector(5, 2, 0));
+		TestTrue(TEXT("Refitting a grabbed/scaled object uses the reference rather than current component transform"),
+			Object->CalcBounds(GrabbedObject).Origin.Equals(ExpectedCenter, 0.001));
+		TestTrue(TEXT("Object refitting leaves path geometry and pivot unchanged"),
+			Path->CalcBounds(PathReference).GetBox().Equals(PathBefore) && Path->GetComponentTransform().Equals(PathReference));
+		Object->SetVisibleSampleBoundsFromSimulation(FBox(ForceInit), SimulationToWorld, ObjectReference);
+		TestEqual(TEXT("Empty simulation bounds still disable collision"), Object->GetCollisionEnabled(), ECollisionEnabled::NoCollision);
+	}
+	return true;
+}
 #endif

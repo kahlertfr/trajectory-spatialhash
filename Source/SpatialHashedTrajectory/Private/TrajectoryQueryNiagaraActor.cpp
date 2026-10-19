@@ -1452,9 +1452,14 @@ void ATrajectoryQueryNiagaraActor::ReceiveVisibleBounds(uint64 Revision, const F
 		return;
 	VisiblePathBounds = Path;
 	VisibleObjectBounds = Object;
+	// All contributing emitters in the supplied systems use local space. Their
+	// pre-grab bounds must first inherit Niagara's world placement, just as the
+	// rendered samples do. The saved Blueprint references below are world-space.
+	const FTransform SimulationToWorld = NiagaraComponent
+		? NiagaraComponent->GetComponentTransform() : GetActorTransform();
 	// The Blueprint retains the reference transforms used to build its grab matrices.
 	// Read those references, not the currently grabbed component transforms.
-	const auto Apply = [this](const TCHAR* BoxName, const TCHAR* OriginName, const FBox& Bounds)
+	const auto Apply = [this, &SimulationToWorld](const TCHAR* BoxName, const TCHAR* OriginName, const FBox& Bounds)
 	{
 		const auto* BoxProperty = FindFProperty<FObjectPropertyBase>(GetClass(), BoxName);
 		const auto* OriginProperty = FindFProperty<FStructProperty>(GetClass(), OriginName);
@@ -1464,7 +1469,7 @@ void ATrajectoryQueryNiagaraActor::ReceiveVisibleBounds(uint64 Revision, const F
 		if (!Box)
 			return;
 		const FTransform& Origin = *OriginProperty->ContainerPtrToValuePtr<FTransform>(this);
-		Box->SetVisibleSampleBounds(Bounds.IsValid ? Bounds.TransformBy(Origin.Inverse()) : FBox(ForceInit));
+		Box->SetVisibleSampleBoundsFromSimulation(Bounds, SimulationToWorld, Origin);
 	};
 	Apply(TEXT("PathVisBox"), TEXT("PathVisOrigin"), Path);
 	Apply(TEXT("RelativeVisBox"), TEXT("RelativeVisOrigin"), Object);

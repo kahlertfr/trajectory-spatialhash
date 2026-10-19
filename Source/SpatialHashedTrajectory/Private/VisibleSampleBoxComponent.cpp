@@ -1,6 +1,18 @@
 #include "VisibleSampleBoxComponent.h"
 #include "PhysicsEngine/BodySetup.h"
 
+void UVisibleSampleBoxComponent::SetVisibleSampleBoundsFromSimulation(
+	const FBox& SimulationBounds, const FTransform& SimulationToWorld, const FTransform& ReferenceToWorld)
+{
+	// The reduction runs before grabbing and exports Niagara local-space positions.
+	// Blueprint reference origins are world-space transforms. Compose the conversion
+	// before transforming the AABB, avoiding an extra world-axis-aligned enclosure.
+	const FMatrix SimulationToReference =
+		SimulationToWorld.ToMatrixWithScale() * ReferenceToWorld.ToInverseMatrixWithScale();
+	SetVisibleSampleBounds(SimulationBounds.IsValid
+		? SimulationBounds.TransformBy(SimulationToReference) : FBox(ForceInit));
+}
+
 void UVisibleSampleBoxComponent::SetVisibleSampleBounds(const FBox& LocalBounds)
 {
 	if (!bSavedCollision)

@@ -46,7 +46,15 @@ controls must not invalidate the current query's loading or batch callbacks.
 `PathVisOrigin`, and `RelativeVisOrigin`. The two component templates now use
 `UVisibleSampleBoxComponent`, a UBoxComponent subclass. The C++ receiver reads
 those existing Blueprint references and converts the pre-grab bounds into each
-reference frame. Renaming these four Blueprint fields requires updating the
+reference frame. All contributing emitters in the supplied systems use local
+space: the conversion is Niagara component local-to-world followed by the
+inverse saved world-space reference origin. Compose these matrices before
+transforming the box so a rotated intermediate world AABB cannot inflate it.
+Applying just the inverse origin incorrectly cancels the visualization's world
+placement and fits collision near world origin. Use the Niagara component's
+transform, not just the actor transform, because it may have an attachment offset.
+The current grabbed box transform must not replace the saved reference origin.
+Renaming these four Blueprint fields requires updating the
 receiver contract. Custom result Blueprints must provide the same fields and
 component subclass to use automatic fitting.
 
@@ -76,11 +84,14 @@ their newer zone/filter modules. Both Blueprint box templates were changed to
 the new component class and their variable nodes refreshed.
 
 The UE 5.6 TrajectoryBLabEditor target builds. The result Blueprint and both
-Niagara systems compile, including D3D12/SM6 GPU shaders. The seven query tests
+Niagara systems compile, including D3D12/SM6 GPU shaders. The eight query tests
 pass, covering signed-coordinate reduction, collision pivot and independent
 scaling, stale readbacks after cancellation, stable object-view placement under
 a scaled/rotated grab, displayed distances, sampling and cleanup. Migration and
 validation helpers remain in the consuming worktree's ignored `codex/` folder.
+The world-placement regression additionally checks translated, rotated, scaled
+and large-world simulation origins, independent boxes, and refitting during a
+scaled/rotated grab.
 
 A synthetic D3D12 PIE check also passed: the full result system returned valid,
 distinct path/object bounds through the asynchronous GPU callback; switching to
@@ -89,6 +100,12 @@ window outside all sample timesteps returned an empty path bound. This used
 generated sample data and a temporary editor test helper. The full system keeps
 a focus marker visible, so its bounds need not become empty with the ribbon time
 window alone.
+
+The follow-up PIE fixture also places the Niagara component at (1200,-800,350)
+with rotation and scale 1.5. It uses the Blueprint's reflected box/origin contract
+and verifies that both actual collision component centers match the GPU sample
+bounds transformed into world space, without moving their reference pivots.
+Empty path bounds also disable the actual collision component in this fixture.
 
 Headset interaction and real-data filtering still require manual validation.
 No external datasets were accessed or modified.

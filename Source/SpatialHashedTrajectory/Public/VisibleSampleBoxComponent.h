@@ -9,6 +9,9 @@ class SPATIALHASHEDTRAJECTORY_API UVisibleSampleBoxComponent : public UBoxCompon
 	GENERATED_BODY()
   public:
 	void SetVisibleSampleBounds(const FBox& LocalBounds);
+	/** Fit pre-grab Niagara local-space bounds without moving the interaction reference. */
+	void SetVisibleSampleBoundsFromSimulation(const FBox& SimulationBounds,
+		const FTransform& SimulationToWorld, const FTransform& ReferenceToWorld);
 	virtual void UpdateBodySetup() override;
 	virtual FBoxSphereBounds CalcBounds(const FTransform& LocalToWorld) const override;
 	virtual FMatrix GetRenderMatrix() const override;
