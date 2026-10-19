@@ -102,6 +102,10 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visualization", meta = (Bitmask, BitmaskEnum = "/Script/SpatialHashedTrajectory.ETrajectoryVisibilityZone"))
 	int32 VisibleZonesMask = TrajectoryVisibility::AllZones;
 
+	/** Whether zone radius guides are visible. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visualization")
+	bool ZoneRadiusVisibility = false;
+
 	// ─── User Selection Settings ─────────────────────────────────────────────
 
 	/** Optional selection manager that can update visualization parameters */

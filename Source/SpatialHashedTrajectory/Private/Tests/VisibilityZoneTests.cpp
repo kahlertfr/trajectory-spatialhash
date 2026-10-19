@@ -27,6 +27,8 @@ bool FVisibilityZoneSelectionTest::RunTest(const FString& Parameters)
 		}
 	}
 	FUserTrajectorySelection Selection;
+	TestFalse(TEXT("Zone radius guides hidden by default"), Selection.ZoneRadiusVisibility);
+	Selection.ZoneRadiusVisibility = true;
 	TestEqual(TEXT("All zones visible by default"), Selection.VisibleZonesMask, 15);
 	Selection.TrajectoryId = 42;
 	Selection.BehaviorRadius = 99.f;
@@ -43,6 +45,8 @@ bool FVisibilityZoneSelectionTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("Middle follows inner"), Stored.MiddleRadius, 3.f);
 	TestEqual(TEXT("Unknown mask bits discarded"), Stored.VisibleZonesMask, 15);
 	TestEqual(TEXT("Behavior threshold independent"), Stored.BehaviorRadius, 99.f);
+	TestTrue(TEXT("Adding a selection preserves guide visibility"), Stored.ZoneRadiusVisibility);
+	Selection.ZoneRadiusVisibility = false;
 	Selection.VisibleZonesMask = 0;
 	Selection.CollisionRadius = std::numeric_limits<float>::quiet_NaN();
 	Selection.ZoneInnerRadius = std::numeric_limits<float>::infinity();
@@ -50,6 +54,7 @@ bool FVisibilityZoneSelectionTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("Update by source ID"), Manager->UpdateSelectionByTrajectoryId(42, Selection));
 	Manager->GetSelectionByTrajectoryId(42, Stored);
 	TestEqual(TEXT("Empty mask preserved"), Stored.VisibleZonesMask, 0);
+	TestFalse(TEXT("Updating a selection can hide guides"), Stored.ZoneRadiusVisibility);
 	TestEqual(TEXT("Non-finite collision sanitized"), Stored.CollisionRadius, 0.f);
 	TestEqual(TEXT("Non-finite inner sanitized"), Stored.ZoneInnerRadius, 0.f);
 	TestEqual(TEXT("Negative middle sanitized"), Stored.MiddleRadius, 0.f);

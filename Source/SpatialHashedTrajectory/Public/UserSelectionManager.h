@@ -106,6 +106,10 @@ struct FUserTrajectorySelection
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "User Selection|Visibility", meta = (Bitmask, BitmaskEnum = "/Script/SpatialHashedTrajectory.ETrajectoryVisibilityZone"))
 	int32 VisibleZonesMask = TrajectoryVisibility::AllZones;
 
+	/** Whether zone radius guides are visible. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "User Selection|Visibility")
+	bool ZoneRadiusVisibility = false;
+
 	void NormalizeVisibility()
 	{
 		TrajectoryVisibility::Normalize(CollisionRadius, ZoneInnerRadius, MiddleRadius, VisibleZonesMask);
