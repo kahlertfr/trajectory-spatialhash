@@ -1,6 +1,8 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "TrajectoryQueryNiagaraActor.h"
+#include "VisibleSampleBoxComponent.h"
+#include "UObject/UnrealType.h"
 #include "NiagaraComponent.h"
 #include "Components/BoxComponent.h"
 #include "NiagaraFunctionLibrary.h"
@@ -491,32 +493,58 @@ bool FObjectViewBoundsTest::RunTest(const FString& Parameters)
 	const FTransform Reference(FVector(100, 200, 30));
 	Box->SetWorldTransform(Reference);
 	const FTransform Origin = Actor->RefreshObjectViewCollisionBox(Box, nullptr, Reference, FVector(60), true);
-	TestTrue(TEXT("Object center uses aligned bounds and a fixed bottom anchor"), Origin.GetLocation().Equals(FVector(92, 224, 14)));
-	TestTrue(TEXT("Box receives local half extents in display units"), Box->GetUnscaledBoxExtent().Equals(FVector(2, 6, 4)));
-	const FTransform Repeated = Actor->RefreshObjectViewCollisionBox(Box, nullptr, Origin, FVector(60), false);
-	TestTrue(TEXT("Repeated refresh does not accumulate offsets"), Repeated.Equals(Origin));
+	TestTrue(TEXT("Initialization preserves the reference pivot"), Origin.Equals(Reference));
 	const FTransform Grab(FQuat(FVector::UpVector, 0.7), FVector(80, 40, 20), FVector(1.5));
 	Box->SetWorldTransform(Origin * Grab);
-	Actor->ObjectViewWithRotation = true;
-	const FTransform RotatedOrigin = Actor->RefreshObjectViewCollisionBox(Box, nullptr, Origin, FVector(60), false);
-	TestTrue(TEXT("Rotation toggle preserves interaction transform"), Box->GetComponentTransform().Equals(RotatedOrigin * Grab));
-	// Shift the aligned bounds vertically without changing their height. The bottom
-	// and the box center must stay fixed; rendered samples receive the inverse shift.
-	Box->SetWorldTransform(Reference);
-	Actor->ObjectViewWithRotation = false;
-	Actor->ObjectViewBounds = FBox(FVector(0, 10, 0), FVector(2, 14, 6));
-	const FTransform Anchored = Actor->RefreshObjectViewCollisionBox(Box, nullptr, Reference, FVector(60), true);
-	TestTrue(TEXT("Vertical alignment does not move the bottom anchor"), Anchored.GetLocation().Equals(FVector(92, 224, 14)));
-	TestEqual(TEXT("Bottom stays at original path origin below path half-height"),
-		Anchored.GetLocation().Z - Box->GetUnscaledBoxExtent().Z, 10.0);
-	TestTrue(TEXT("Placement is published directly to Niagara without a grab update"),
-		FVector(Actor->NiagaraComponent->GetOverrideParameters().GetParameterValue<FVector3f>(
-			FNiagaraVariable(FNiagaraTypeDefinition::GetVec3Def(), TEXT("User.ObjectViewPlacementOffset")))).Equals(FVector(0, 0, -20)));
-	TestTrue(TEXT("Legacy grab helper does not apply placement twice"), Actor->GetObjectViewRenderTransform(Grab).Equals(Grab));
-	const FVector Original(2, 3, 40);
-	const FVector Rendered = Grab.TransformPosition(Original + Actor->ObjectViewPlacementOffset);
-	TestTrue(TEXT("Probe inverse removes placement after undoing grabbing"),
-		(Grab.InverseTransformPosition(Rendered) - Actor->ObjectViewPlacementOffset).Equals(Original));
+	const FTransform Before = Box->GetComponentTransform();
+	const FVector ReferenceParticle(2, 3, 40);
+	const auto ReadOffset = [Actor]()
+	{
+		return FVector(Actor->NiagaraComponent->GetOverrideParameters().GetParameterValue<FVector3f>(
+			FNiagaraVariable(FNiagaraTypeDefinition::GetVec3Def(), TEXT("User.ObjectViewPlacementOffset"))));
+	};
+	const FVector SharedOffset = ReadOffset();
+	TestTrue(TEXT("Both alignments share the lower bound placement"), SharedOffset.Equals(FVector(0, 0, 8.1), 0.001));
+	for (const FBox Bounds : {Actor->ObjectViewBounds, Actor->RotatedObjectViewBounds})
+	{
+		const double Bottom = (Bounds.Min.Y - Actor->ResultBoundsMin.Y) * 2.0 + SharedOffset.Z - 0.1;
+		TestTrue(TEXT("Neither collision bound extends below the object-view axes origin"), Bottom >= -0.001);
+	}
+	const FVector BeforeParticle = Grab.TransformPosition(ReferenceParticle + SharedOffset);
+	for (bool WithRotation : {true, false, true, false})
+	{
+		Actor->ObjectViewWithRotation = WithRotation;
+		const FTransform Updated = Actor->RefreshObjectViewCollisionBox(Box, nullptr, Origin, FVector(60), false);
+		TestTrue(TEXT("Switching alignment preserves the reference"), Updated.Equals(Origin));
+		TestTrue(TEXT("Switching alignment preserves the scaled grab pivot"), Box->GetComponentTransform().Equals(Before));
+		const FVector Offset(Actor->NiagaraComponent->GetOverrideParameters().GetParameterValue<FVector3f>(
+			FNiagaraVariable(FNiagaraTypeDefinition::GetVec3Def(), TEXT("User.ObjectViewPlacementOffset"))));
+		TestTrue(TEXT("Switching alignment does not move the reference particle"),
+			Grab.TransformPosition(ReferenceParticle + Offset).Equals(BeforeParticle));
+	}
+	TestTrue(TEXT("Legacy grab helper preserves the interaction"), Actor->GetObjectViewRenderTransform(Grab).Equals(Grab));
+	// A nonzero source baseline and translation-only lower extreme prevent a
+	// mode-dependent or world-zero floor calculation from passing this fixture.
+	Actor->ResultBoundsMin = FVector(10, 20, 30);
+	Actor->ResultBoundsMax = FVector(20, 40, 60);
+	Actor->ObjectViewBounds = FBox(FVector(10, 8, 30), FVector(20, 25, 60));
+	Actor->RotatedObjectViewBounds = FBox(FVector(10, 12, 30), FVector(20, 30, 60));
+	const uint64 OldRevision = Actor->GetVisibleBoundsRevision();
+	Actor->RefreshObjectViewCollisionBox(Box, nullptr, Origin, FVector(60), false);
+	TestTrue(TEXT("Nonzero baseline uses the lower of either alignment"), ReadOffset().Equals(FVector(0, 0, 24.1), 0.001));
+	TestTrue(TEXT("Placement changes invalidate older GPU bounds"), Actor->GetVisibleBoundsRevision() > OldRevision);
+	const uint64 StableRevision = Actor->GetVisibleBoundsRevision();
+	Actor->ObjectViewWithRotation = !Actor->ObjectViewWithRotation;
+	Actor->RefreshObjectViewCollisionBox(Box, nullptr, Origin, FVector(60), false);
+	TestEqual(TEXT("Alignment switches keep the placement revision stable"), Actor->GetVisibleBoundsRevision(), StableRevision);
+	Actor->ObjectViewBounds = FBox(ForceInit);
+	Actor->RotatedObjectViewBounds = FBox(ForceInit);
+	Actor->RefreshObjectViewCollisionBox(Box, nullptr, Origin, FVector(60), false);
+	TestTrue(TEXT("Empty data clears old placement"), ReadOffset().IsNearlyZero());
+	Actor->ResultBoundsMax = Actor->ResultBoundsMin;
+	Actor->ObjectViewBounds = FBox(FVector(10, 20, 30), FVector(10, 20, 30));
+	Actor->RefreshObjectViewCollisionBox(Box, nullptr, Origin, FVector(60), false);
+	TestTrue(TEXT("Point data retains a finite interaction margin"), ReadOffset().Equals(FVector(0, 0, 0.1), 0.001));
 	return true;
 }
 
@@ -705,9 +733,14 @@ void ATrajectoryQueryNiagaraActor::BeginPlay()
 			FVector::ZeroVector,
 			FRotator::ZeroRotator,
 			EAttachLocation::KeepRelativeOffset,
-			false  // do not auto-activate – we push data first
+			false, // keep ownership until this actor is destroyed
+			false  // bind the bounds receiver and push data before activation
 		);
-		NiagaraComponent->Deactivate();
+		if (NiagaraComponent)
+		{
+			NiagaraComponent->SetVariableObject(TEXT("User.VisibleBoundsReceiver"), this);
+			NiagaraComponent->Deactivate();
+		}
 	}
 }
 
@@ -724,6 +757,7 @@ void ATrajectoryQueryNiagaraActor::CancelQuery()
 	{
 		Manager->CancelActiveQuery();
 	}
+	++VisibleBoundsRevision;
 	++QueryGeneration;
 	bPreparationInProgress = false;
 	bDisplayDirty = false;
@@ -776,6 +810,7 @@ void ATrajectoryQueryNiagaraActor::RunQueryAndUpdateNiagara()
 
 void ATrajectoryQueryNiagaraActor::SetVisualizationTimeRange(int32 NewTimeStart, int32 NewTimeEnd)
 {
+	++VisibleBoundsRevision;
 	VisualizationTimeStart = NewTimeStart;
 	VisualizationTimeEnd   = NewTimeEnd;
 
@@ -797,6 +832,7 @@ void ATrajectoryQueryNiagaraActor::SetVisualizationTimeRange(int32 NewTimeStart,
 
 void ATrajectoryQueryNiagaraActor::UpdateUserParameter(int32 NewTimeStart, int32 NewTimeEnd, ETrajectoryColorEncoding NewColorEncoding, ETrajectoryDistanceFilter NewDistanceFilter, float NewParticleRadius, float NewBehaviorRadius, float NewQueryRadius, float NewCollisionRadius, float NewZoneInnerRadius, float NewMiddleRadius, int32 NewVisibleZonesMask, bool NewSensitivity, bool NewVisibility, bool NewNoShadow, bool NewObjectViewWithRotation, bool NewZoneRadiusVisibility)
 {
+	++VisibleBoundsRevision;
 	VisualizationTimeStart = NewTimeStart;
 	VisualizationTimeEnd = NewTimeEnd;
 	ColorEncoding = NewColorEncoding;
@@ -913,6 +949,7 @@ bool ATrajectoryQueryNiagaraActor::FireAsyncQueriesWithCallback(
 	PendingQueryComplete = OnComplete;
 	bQueryInProgress = true;
 	PendingQueryFailure = OnFailure;
+	++VisibleBoundsRevision;
 	const uint64 Generation = ++QueryGeneration;
 	TWeakObjectPtr<ATrajectoryQueryNiagaraActor> WeakThis(this);
 	// Protect against editable request properties changing while loading.
@@ -1214,34 +1251,37 @@ void ATrajectoryQueryNiagaraActor::ReleaseQueryCPUData()
 	CachedQueryPositionIndices.Empty();
 }
 
+void ATrajectoryQueryNiagaraActor::UpdateObjectViewPlacementOffset()
+{
+	if (!NiagaraComponent || !bHasObjectViewPlacementTarget) return;
+	// Use the full bounds of BOTH alignments. Visibility and alignment switches
+	// must not move the reference particle. Source Y becomes display Z, and
+	// Niagara's existing half-height placement maps ResultBoundsMin.Y to the
+	// object-view axes origin (not the collision component's center pivot).
+	FBox SharedBounds(ForceInit);
+	if (ObjectViewBounds.IsValid) SharedBounds += ObjectViewBounds;
+	if (RotatedObjectViewBounds.IsValid) SharedBounds += RotatedObjectViewBounds;
+	const FVector PathSize = ResultBoundsMax - ResultBoundsMin;
+	const double Scale = PathSize.GetMax() > UE_SMALL_NUMBER
+		? ObjectViewPlacementTargetSize.GetMax() / PathSize.GetMax() : 1.0;
+	// Include the collision component's 0.1 cm interaction margin.
+	const FVector Offset(0, 0, SharedBounds.IsValid
+		? FMath::Max(0.0, (ResultBoundsMin.Y - SharedBounds.Min.Y) * Scale + 0.1) : 0.0);
+	if (!ObjectViewPlacementOffset.Equals(Offset, UE_SMALL_NUMBER)) ++VisibleBoundsRevision;
+	ObjectViewPlacementOffset = Offset;
+	NiagaraComponent->SetVariableVec3(TEXT("ObjectViewPlacementOffset"), Offset);
+}
+
 FTransform ATrajectoryQueryNiagaraActor::RefreshObjectViewCollisionBox(
 	UBoxComponent* Box, USceneComponent* Axes, FTransform ReferenceOrigin,
 	FVector TargetSize, bool bInitialize)
 {
 	if (!Box) return ReferenceOrigin;
-	const FBox& Bounds = ObjectViewWithRotation ? RotatedObjectViewBounds : ObjectViewBounds;
-	if (!Bounds.IsValid) return ReferenceOrigin;
-	const FVector PathSize = ResultBoundsMax - ResultBoundsMin;
-	const double Scale = PathSize.GetMax() > UE_SMALL_NUMBER ? TargetSize.GetMax() / PathSize.GetMax() : 1.0;
-	const FVector Delta = Bounds.GetCenter() - (ResultBoundsMin + ResultBoundsMax) * 0.5;
-	const FVector GeometricOffset = FVector(Delta.X, -Delta.Z, Delta.Y) * Scale;
-	FVector Offset = GeometricOffset;
-	// ReferenceOrigin is the path box center plus the object view's horizontal
-	// layout offset. Keep its original bottom fixed and let this box grow upward.
-	Offset.Z = (Bounds.GetSize().Y - PathSize.Y) * Scale * 0.5;
-	ObjectViewPlacementOffset = FVector(0, 0, Offset.Z - GeometricOffset.Z);
-	if (NiagaraComponent)
-		NiagaraComponent->SetVariableVec3(TEXT("ObjectViewPlacementOffset"), ObjectViewPlacementOffset);
-	FTransform NewOrigin = ReferenceOrigin;
-	NewOrigin.AddToTranslation(Offset - (bInitialize ? FVector::ZeroVector : ObjectViewCenterOffset));
-	// Keep the current grab transform while changing the collision reference center.
-	const FTransform Interaction = ReferenceOrigin.Inverse() * Box->GetComponentTransform();
-	Box->SetWorldTransform(NewOrigin * Interaction);
-	const FVector Size = Bounds.GetSize();
-	Box->SetBoxExtent(FVector(Size.X, Size.Z, Size.Y) * FMath::Abs(Scale) * 0.5, true);
-	if (Axes) Axes->SetRelativeLocation(-FVector(PathSize.X, PathSize.Z, PathSize.Y) * Scale * 0.5 - Offset);
-	ObjectViewCenterOffset = Offset;
-	return NewOrigin;
+	ObjectViewPlacementTargetSize = TargetSize;
+	bHasObjectViewPlacementTarget = true;
+	UpdateObjectViewPlacementOffset();
+	// Keep the component/grab reference stable; only Niagara placement changes.
+	return ReferenceOrigin;
 }
 
 FTransform ATrajectoryQueryNiagaraActor::GetObjectViewRenderTransform(FTransform InteractionTransform) const
@@ -1319,12 +1359,14 @@ void ATrajectoryQueryNiagaraActor::UploadPreparedDisplay(const FPreparedTrajecto
 {
 	check(IsInGameThread());
 	if (!NiagaraComponent) return;
+	++VisibleBoundsRevision;
 	ResultDisplayDistanceMin = Data.DisplayDistanceMin;
 	ResultDisplayDistanceMax = Data.DisplayDistanceMax;
 	ResultBoundsMin = Data.BoundsMin;
 	ObjectViewBounds = Data.ObjectBounds;
 	RotatedObjectViewBounds = Data.RotatedObjectBounds;
 	ResultBoundsMax = Data.BoundsMax;
+	UpdateObjectViewPlacementOffset();
 	const auto& ResultPoints = Data.ResultPoints;
 	const auto& ResultDistances = Data.ResultDistances;
 	const auto& ResultDisplayDistances = Data.ResultDisplayDistances;
@@ -1458,4 +1500,33 @@ void ATrajectoryQueryNiagaraActor::UploadPreparedDisplay(const FPreparedTrajecto
 		     "Bounds: [%s] – [%s]."),
 		RawQueryPoints.Num(), ResultPoints.Num(), ResultTrajectoryIds.Num(),
 		*ResultBoundsMin.ToString(), *ResultBoundsMax.ToString());
+}
+
+void ATrajectoryQueryNiagaraActor::ReceiveVisibleBounds(uint64 Revision, const FBox& Path, const FBox& Object)
+{
+	if (Revision != VisibleBoundsRevision || IsActorBeingDestroyed())
+		return;
+	VisiblePathBounds = Path;
+	VisibleObjectBounds = Object;
+	// All contributing emitters in the supplied systems use local space. Their
+	// pre-grab bounds must first inherit Niagara's world placement, just as the
+	// rendered samples do. The saved Blueprint references below are world-space.
+	const FTransform SimulationToWorld = NiagaraComponent
+		? NiagaraComponent->GetComponentTransform() : GetActorTransform();
+	// The Blueprint retains the reference transforms used to build its grab matrices.
+	// Read those references, not the currently grabbed component transforms.
+	const auto Apply = [this, &SimulationToWorld](const TCHAR* BoxName, const TCHAR* OriginName, const FBox& Bounds)
+	{
+		const auto* BoxProperty = FindFProperty<FObjectPropertyBase>(GetClass(), BoxName);
+		const auto* OriginProperty = FindFProperty<FStructProperty>(GetClass(), OriginName);
+		if (!BoxProperty || !OriginProperty || OriginProperty->Struct != TBaseStructure<FTransform>::Get())
+			return;
+		auto* Box = Cast<UVisibleSampleBoxComponent>(BoxProperty->GetObjectPropertyValue_InContainer(this));
+		if (!Box)
+			return;
+		const FTransform& Origin = *OriginProperty->ContainerPtrToValuePtr<FTransform>(this);
+		Box->SetVisibleSampleBoundsFromSimulation(Bounds, SimulationToWorld, Origin);
+	};
+	Apply(TEXT("PathVisBox"), TEXT("PathVisOrigin"), Path);
+	Apply(TEXT("RelativeVisBox"), TEXT("RelativeVisOrigin"), Object);
 }
