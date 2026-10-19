@@ -37,6 +37,8 @@ struct FPreparedTrajectoryDisplay
 	TArray<int32> ResultQuerySampleIndices;
 	TArray<float> ResultLastDistances;
 
+	float DisplayDistanceMin = 0.f;
+	float DisplayDistanceMax = 0.f;
 	float VelocityMin = 0.0f;
 	float VelocityMax = 0.0f;
 	int32 Stride = 1;
@@ -86,6 +88,7 @@ static FPreparedTrajectoryDisplay PrepareTrajectoryDisplay(
 	check(!IsInGameThread());
 	FPreparedTrajectoryDisplay Data;
 	FBox FullBounds(EForceInit::ForceInit);
+	bool bHasDisplayDistance = false;
 	for (const FVector& Point : QueryPoints) FullBounds += Point;
 	// ── Build flat result arrays ──────────────────────────────────────────────
 
@@ -152,6 +155,10 @@ static FPreparedTrajectoryDisplay PrepareTrajectoryDisplay(
 			const int32 FocusIndex = FMath::Clamp(Sample.TimeStep - QueryTimeStart, 0, QueryPoints.Num() - 1);
 			Data.ResultDisplayDistances.Add(QueryPoints.IsValidIndex(FocusIndex)
 				? FVector::Distance(UnwrappedPositions.Last(), QueryPoints[FocusIndex]) : FLT_MAX);
+			const float DisplayDistance = Data.ResultDisplayDistances.Last();
+			Data.DisplayDistanceMin = bHasDisplayDistance ? FMath::Min(Data.DisplayDistanceMin, DisplayDistance) : DisplayDistance;
+			Data.DisplayDistanceMax = bHasDisplayDistance ? FMath::Max(Data.DisplayDistanceMax, DisplayDistance) : DisplayDistance;
+			bHasDisplayDistance = true;
 			FullBounds += UnwrappedPositions.Last();
 			TimeSteps.Add(Sample.TimeStep);
 		}
@@ -532,6 +539,8 @@ bool FDisplayedDistanceTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("Displayed distances stay aligned after reduction"), Data.ResultDisplayDistances.Num(), Data.ResultPoints.Num());
 	TestEqual(TEXT("Visibility measures the selected image"), Data.ResultDisplayDistances[0], 7.5f);
 	TestEqual(TEXT("Same timestep focus lookup survives stride two"), Data.ResultDisplayDistances[1], 5.5f);
+	TestEqual(TEXT("Full displayed minimum"), Data.DisplayDistanceMin, 5.5f);
+	TestEqual(TEXT("Full displayed maximum"), Data.DisplayDistanceMax, 7.5f);
 	TestEqual(TEXT("Analytical distance is preserved"), Data.ResultDistances[0], 3.5f);
 	TestEqual(TEXT("Analytical minimum is preserved"), Data.ResultMinDistances[0], 3.5f);
 	TestTrue(TEXT("A radius of four rejects a distant image despite periodic proximity"),
@@ -543,6 +552,44 @@ bool FDisplayedDistanceTest::RunTest(const FString& Parameters)
 		return PrepareTrajectoryDisplay({FVector::ZeroVector}, {}, {Result}, FVector::ZeroVector, 100, 100, 1, 0);
 	}).Get();
 	TestEqual(TEXT("Nonperiodic distance is unchanged"), NonPeriodic.ResultDisplayDistances[0], NonPeriodic.ResultDistances[0]);
+	TestEqual(TEXT("Single sample minimum"), NonPeriodic.DisplayDistanceMin, 5.f);
+	TestEqual(TEXT("Single sample maximum"), NonPeriodic.DisplayDistanceMax, 5.f);
+	const auto Reduced = Async(EAsyncExecution::ThreadPool, []()
+	{
+		FSpatialHashQueryResult Result(3);
+		Result.SamplePoints = { FTrajectorySamplePoint(FVector(5, 0, 0), 100, 5),
+			FTrajectorySamplePoint(FVector(1, 0, 0), 101, 1),
+			FTrajectorySamplePoint(FVector(9, 0, 0), 102, 9),
+			FTrajectorySamplePoint(FVector(7, 0, 0), 103, 7) };
+		return PrepareTrajectoryDisplay(TArray<FVector>{FVector::ZeroVector, FVector::ZeroVector,
+			FVector::ZeroVector, FVector::ZeroVector}, {}, {Result}, FVector::ZeroVector, 100, 103, 3, 0);
+	}).Get();
+	TestEqual(TEXT("Reduction removes both distance extrema"), Reduced.ResultDisplayDistances.Num(), 2);
+	TestEqual(TEXT("Minimum survives display reduction"), Reduced.DisplayDistanceMin, 1.f);
+	TestEqual(TEXT("Maximum survives display reduction"), Reduced.DisplayDistanceMax, 9.f);
+	const auto Empty = Async(EAsyncExecution::ThreadPool, []()
+	{
+		return PrepareTrajectoryDisplay({FVector::ZeroVector}, {}, {}, FVector::ZeroVector, 100, 100, 1, 0);
+	}).Get();
+	TestEqual(TEXT("Empty minimum is zero"), Empty.DisplayDistanceMin, 0.f);
+	TestEqual(TEXT("Empty maximum is zero"), Empty.DisplayDistanceMax, 0.f);
+	auto* Actor = NewObject<ATrajectoryQueryNiagaraActor>();
+	Actor->NiagaraComponent = NewObject<UNiagaraComponent>(Actor);
+	Actor->UploadPreparedDisplay(Reduced, false);
+	TestEqual(TEXT("Blueprint minimum updated on upload"), Actor->ResultDisplayDistanceMin, 1.f);
+	TestEqual(TEXT("Blueprint maximum updated on upload"), Actor->ResultDisplayDistanceMax, 9.f);
+	Actor->ReleaseQueryCPUData();
+	TestEqual(TEXT("Minimum retained after CPU cleanup"), Actor->ResultDisplayDistanceMin, 1.f);
+	TestEqual(TEXT("Maximum retained after CPU cleanup"), Actor->ResultDisplayDistanceMax, 9.f);
+	Actor->UploadPreparedDisplay(NonPeriodic, false);
+	TestEqual(TEXT("Later upload replaces previous minimum"), Actor->ResultDisplayDistanceMin, 5.f);
+	Actor->UploadPreparedDisplay(Empty, false);
+	TestEqual(TEXT("Empty upload clears previous maximum"), Actor->ResultDisplayDistanceMax, 0.f);
+	Actor->UpdateUserParameter(100, 100, ETrajectoryColorEncoding::Time, ETrajectoryDistanceFilter::All,
+		1.f, 1.f, 1.f, 1.f, 2.f, 3.f, 15, false, true, false, false, true);
+	TestTrue(TEXT("Guide visibility stored on actor"), Actor->ZoneRadiusVisibility);
+	TestTrue(TEXT("Guide visibility uploaded to Niagara"), Actor->NiagaraComponent->GetOverrideParameters().GetParameterValue<FNiagaraBool>(
+		FNiagaraVariable(FNiagaraTypeDefinition::GetBoolDef(), TEXT("User.ZoneRadiusVisibility"))).GetValue());
 	return true;
 }
 
@@ -634,6 +681,8 @@ ATrajectoryQueryNiagaraActor::ATrajectoryQueryNiagaraActor()
 	Manager = nullptr;
 	NiagaraComponent = nullptr;
 	NiagaraSystem = nullptr;
+	ResultDisplayDistanceMin = 0.f;
+	ResultDisplayDistanceMax = 0.f;
 	ResultBoundsMin = FVector::ZeroVector;
 	ResultBoundsMax = FVector::ZeroVector;
 	VisualizationTimeStart = QueryTimeStart;
@@ -746,16 +795,21 @@ void ATrajectoryQueryNiagaraActor::SetVisualizationTimeRange(int32 NewTimeStart,
 }
 
 
-void ATrajectoryQueryNiagaraActor::UpdateUserParameter(int32 NewTimeStart, int32 NewTimeEnd, ETrajectoryColorEncoding NewColorEncoding, ETrajectoryDistanceFilter NewDistanceFilter, float NewParticleRadius, float NewInnerRadius, float NewQueryRadius, float NewVisibilityRadius, bool NewSensitivity, bool NewVisibility, bool NewNoShadow, bool NewObjectViewWithRotation)
+void ATrajectoryQueryNiagaraActor::UpdateUserParameter(int32 NewTimeStart, int32 NewTimeEnd, ETrajectoryColorEncoding NewColorEncoding, ETrajectoryDistanceFilter NewDistanceFilter, float NewParticleRadius, float NewBehaviorRadius, float NewQueryRadius, float NewCollisionRadius, float NewZoneInnerRadius, float NewMiddleRadius, int32 NewVisibleZonesMask, bool NewSensitivity, bool NewVisibility, bool NewNoShadow, bool NewObjectViewWithRotation, bool NewZoneRadiusVisibility)
 {
 	VisualizationTimeStart = NewTimeStart;
 	VisualizationTimeEnd = NewTimeEnd;
 	ColorEncoding = NewColorEncoding;
 	DistanceFilter = NewDistanceFilter;
 	ParticleRadius = NewParticleRadius;
-	InnerRadius = NewInnerRadius;
+	BehaviorRadius = NewBehaviorRadius;
 	QueryRadius = NewQueryRadius;
-	VisibilityRadius = NewVisibilityRadius;
+	CollisionRadius = NewCollisionRadius;
+	ZoneInnerRadius = NewZoneInnerRadius;
+	MiddleRadius = NewMiddleRadius;
+	VisibleZonesMask = NewVisibleZonesMask;
+	ZoneRadiusVisibility = NewZoneRadiusVisibility;
+	TrajectoryVisibility::Normalize(CollisionRadius, ZoneInnerRadius, MiddleRadius, VisibleZonesMask);
 	TimeRangeSensitivity = NewSensitivity;
 	ParticleVisibility = NewVisibility;
 	NoShadow = NewNoShadow;
@@ -773,9 +827,14 @@ void ATrajectoryQueryNiagaraActor::UpdateUserParameter(int32 NewTimeStart, int32
 	NiagaraComponent->SetVariableInt(FName("ColorEncoding"), static_cast<int32>(ColorEncoding));
 	NiagaraComponent->SetVariableInt(FName("DistanceFilter"), static_cast<int32>(DistanceFilter));
 	NiagaraComponent->SetVariableFloat(FName("ParticleRadius"), ParticleRadius);
-	NiagaraComponent->SetVariableFloat(FName("InnerRadius"), InnerRadius);
+	NiagaraComponent->SetVariableFloat(FName("BehaviorRadius"), BehaviorRadius);
 	NiagaraComponent->SetVariableFloat(FName("QueryRadius"), QueryRadius);
-	NiagaraComponent->SetVariableFloat(FName("VisibilityRadius"), VisibilityRadius);
+	TrajectoryVisibility::Normalize(CollisionRadius, ZoneInnerRadius, MiddleRadius, VisibleZonesMask);
+	NiagaraComponent->SetVariableFloat(FName("CollisionRadius"), CollisionRadius);
+	NiagaraComponent->SetVariableFloat(FName("InnerRadius"), ZoneInnerRadius);
+	NiagaraComponent->SetVariableFloat(FName("MiddleRadius"), MiddleRadius);
+	NiagaraComponent->SetVariableInt(FName("VisibleZonesMask"), VisibleZonesMask);
+	NiagaraComponent->SetVariableBool(FName("ZoneRadiusVisibility"), ZoneRadiusVisibility);
 	NiagaraComponent->SetVariableBool(FName("TimeRangeSensitive"), TimeRangeSensitivity);
 	NiagaraComponent->SetVariableBool(FName("ParticleVisibility"), ParticleVisibility);
 	NiagaraComponent->SetVariableBool(FName("NoShadow"), NoShadow);
@@ -922,6 +981,8 @@ void ATrajectoryQueryNiagaraActor::StartPreparedQuery(
 	CachedResultsIndex.Empty();
 	CachedQueryPositionIndices.Empty();
 	bBoundsValid    = false;
+	ResultDisplayDistanceMin = 0.f;
+	ResultDisplayDistanceMax = 0.f;
 	ResultBoundsMin = FVector::ZeroVector;
 	ResultBoundsMax = FVector::ZeroVector;
 
@@ -1258,6 +1319,8 @@ void ATrajectoryQueryNiagaraActor::UploadPreparedDisplay(const FPreparedTrajecto
 {
 	check(IsInGameThread());
 	if (!NiagaraComponent) return;
+	ResultDisplayDistanceMin = Data.DisplayDistanceMin;
+	ResultDisplayDistanceMax = Data.DisplayDistanceMax;
 	ResultBoundsMin = Data.BoundsMin;
 	ObjectViewBounds = Data.ObjectBounds;
 	RotatedObjectViewBounds = Data.RotatedObjectBounds;
@@ -1347,9 +1410,14 @@ void ATrajectoryQueryNiagaraActor::UploadPreparedDisplay(const FPreparedTrajecto
 	UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayInt32(NiagaraComponent, FName("ResultQuerySampleIndices"), ResultQuerySampleIndices);
 	UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayFloat(NiagaraComponent, FName("ResultLastDistances"), ResultLastDistances);
 	// Scalar user parameters
-	NiagaraComponent->SetVariableFloat(FName("InnerRadius"), InnerRadius);
+	NiagaraComponent->SetVariableFloat(FName("BehaviorRadius"), BehaviorRadius);
 	NiagaraComponent->SetVariableFloat(FName("QueryRadius"), QueryRadius);
-	NiagaraComponent->SetVariableFloat(FName("VisibilityRadius"), VisibilityRadius);
+	TrajectoryVisibility::Normalize(CollisionRadius, ZoneInnerRadius, MiddleRadius, VisibleZonesMask);
+	NiagaraComponent->SetVariableFloat(FName("CollisionRadius"), CollisionRadius);
+	NiagaraComponent->SetVariableFloat(FName("InnerRadius"), ZoneInnerRadius);
+	NiagaraComponent->SetVariableFloat(FName("MiddleRadius"), MiddleRadius);
+	NiagaraComponent->SetVariableInt(FName("VisibleZonesMask"), VisibleZonesMask);
+	NiagaraComponent->SetVariableBool(FName("ZoneRadiusVisibility"), ZoneRadiusVisibility);
 	NiagaraComponent->SetVariableFloat(FName("ParticleRadius"), ParticleRadius);
 	NiagaraComponent->SetVariableFloat(FName("VelocityMin"), VelocityMin);
 	NiagaraComponent->SetVariableFloat(FName("VelocityMax"), VelocityMax);

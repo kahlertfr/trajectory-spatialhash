@@ -223,13 +223,26 @@ public:
 	float ParticleRadius = 0.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visualization")
-	float InnerRadius = 0.0f;
+	float BehaviorRadius = 0.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visualization")
 	float QueryRadius = 0.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visualization")
-	float VisibilityRadius = 0.0f;
+	float CollisionRadius = 0.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visualization", meta = (DisplayName = "Inner Radius", ClampMin = "0"))
+	float ZoneInnerRadius = 0.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visualization", meta = (ClampMin = "0"))
+	float MiddleRadius = 0.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visualization", meta = (Bitmask, BitmaskEnum = "/Script/SpatialHashedTrajectory.ETrajectoryVisibilityZone"))
+	int32 VisibleZonesMask = TrajectoryVisibility::AllZones;
+
+	/** Whether zone radius guides are visible. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visualization")
+	bool ZoneRadiusVisibility = false;
 
 	// ─── Blueprint callable entry points ─────────────────────────────────────
 
@@ -265,7 +278,7 @@ public:
 
 
 	UFUNCTION(BlueprintCallable, Category = "Trajectory Visualization")
-	void UpdateUserParameter(int32 NewTimeStart, int32 NewTimeEnd, ETrajectoryColorEncoding NewColorEncoding, ETrajectoryDistanceFilter newDistanceFilter, float NewParticleRadius, float NewInnerRadius, float NewQueryRadius, float NewVisibilityRadius, bool NewSensitivity, bool NewVisibility, bool NewNoShadow, bool NewObjectViewWithRotation);
+	void UpdateUserParameter(int32 NewTimeStart, int32 NewTimeEnd, ETrajectoryColorEncoding NewColorEncoding, ETrajectoryDistanceFilter newDistanceFilter, float NewParticleRadius, float NewBehaviorRadius, float NewQueryRadius, float NewCollisionRadius, float NewZoneInnerRadius, float NewMiddleRadius, int32 NewVisibleZonesMask, bool NewSensitivity, bool NewVisibility, bool NewNoShadow, bool NewObjectViewWithRotation, bool NewZoneRadiusVisibility = false);
 
 
 	/**
@@ -337,6 +350,14 @@ protected:
 	UPROPERTY(BlueprintReadOnly, Category = "Query Results")
 	FVector ResultBoundsMax;
 
+	/** Minimum displayed-image distance in source units, before display sampling; zero for empty results. */
+	UPROPERTY(BlueprintReadOnly, Category = "Query Results")
+	float ResultDisplayDistanceMin = 0.f;
+
+	/** Maximum displayed-image distance in source units, before display sampling; zero for empty results. */
+	UPROPERTY(BlueprintReadOnly, Category = "Query Results")
+	float ResultDisplayDistanceMax = 0.f;
+
 	/** Initialize the spatial hash table manager without performing file I/O. */
 	bool InitializeManager();
 
@@ -348,6 +369,7 @@ private:
 #if WITH_DEV_AUTOMATION_TESTS
 	friend class FQuerySamplingCleanupTest;
 	friend class FObjectViewBoundsTest;
+	friend class FDisplayedDistanceTest;
 #endif
 	void StartPreparedQuery(FSimpleDelegate OnComplete, int32 DatasetFirstTimeStep,
 		int32 DatasetLastTimeStep, bool bIncludeWholeResultTrajectorySamples);
