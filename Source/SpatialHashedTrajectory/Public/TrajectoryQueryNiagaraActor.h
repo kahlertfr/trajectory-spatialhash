@@ -31,6 +31,7 @@ enum class ETrajectoryContextFilterMode : uint8
  * - FloatArray     ResultDistances      – per-sample distance from the query point (parallel to ResultPoints)
  * - FloatArray     ResultVelocities     – per-result-sample velocity magnitude (parallel to ResultPoints)
  * - PositionArray  QueryTranslations    – per query point: translation from that point to the first query point (UnwrappedQueryPoints[0] - UnwrappedQueryPoints[i])
+ * - VectorArray    QueryForwardDirections - unit movement direction per query sample, computed before display reduction
  * - QuatArray      QueryRotations       – per query point: rotation that aligns its forward vector to the first query point's forward vector
  * - Int Array      ResultTrajectoryIds  – original trajectory ID per result trajectory
  * - FloatArray     ResultMinDistances   – minimum per-sample distance per result trajectory
