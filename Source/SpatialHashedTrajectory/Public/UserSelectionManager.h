@@ -41,7 +41,9 @@ enum class ETrajectoryColorEncoding : uint8
 	DistanceCategory UMETA(DisplayName = "Distance Category"),
 	VolumeImage UMETA(DisplayName = "Volume Image"),
 	Velocity UMETA(DisplayName = "Velocity"),
-	SelectorHighlight UMETA(DisplayName = "Selector Highlight")
+	SelectorHighlight UMETA(DisplayName = "Selector Highlight"),
+	Zone = 6 UMETA(DisplayName = "Zone"),
+	FrontBack = 7 UMETA(DisplayName = "Front / Back")
 };
 
 UENUM(BlueprintType)

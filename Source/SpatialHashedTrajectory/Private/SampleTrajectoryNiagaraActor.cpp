@@ -570,15 +570,18 @@ void ASampleTrajectoryNiagaraActor::TransferScenarioToNiagara(ESampleTrajectoryS
 	// Query-relative transforms
 	TArray<FVector> QueryTranslations;
 	TArray<FQuat> QueryRotations;
+	TArray<FVector> QueryForwardDirections;
 	if (QueryPointsUnwrapped.Num() > 0)
 	{
 		QueryTranslations.Reserve(QueryPointsUnwrapped.Num());
 		QueryRotations.Reserve(QueryPointsUnwrapped.Num());
+		QueryForwardDirections.Reserve(QueryPointsUnwrapped.Num());
 
 		const FVector FirstForward = GetForwardAt(QueryPointsUnwrapped, 0);
 		for (int32 i = 0; i < QueryPointsUnwrapped.Num(); ++i)
 		{
 			const FVector CurForward = GetForwardAt(QueryPointsUnwrapped, i);
+			QueryForwardDirections.Add(CurForward);
 			QueryTranslations.Add(QueryPointsUnwrapped[0] - QueryPointsUnwrapped[i]);
 			QueryRotations.Add(FQuat::FindBetweenNormals(CurForward, FirstForward));
 		}
@@ -606,6 +609,8 @@ void ASampleTrajectoryNiagaraActor::TransferScenarioToNiagara(ESampleTrajectoryS
 
 	UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayQuat(
 		NiagaraComponent, FName("QueryRotations"), QueryRotations);
+	UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayVector(
+		NiagaraComponent, FName("QueryForwardDirections"), QueryForwardDirections);
 
 	UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayInt32(
 		NiagaraComponent, FName("ResultTrajectoryIds"), ResultTrajectoryIds);

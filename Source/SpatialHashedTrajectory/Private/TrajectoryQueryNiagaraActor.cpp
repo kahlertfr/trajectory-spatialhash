@@ -33,6 +33,7 @@ struct FPreparedTrajectoryDisplay
 	TArray<int32> QueryVolumeIndices;
 	TArray<FVector> QueryTranslations;
 	TArray<FQuat> QueryRotations;
+	TArray<FVector> QueryForwardDirections;
 	TArray<FVector> RawQueryPoints;
 	TArray<int32> QuerySampleTimeSteps;
 	TArray<int32> ResultSampleTimeSteps;
@@ -320,11 +321,13 @@ static FPreparedTrajectoryDisplay PrepareTrajectoryDisplay(
 
 	auto& QueryTranslations = Data.QueryTranslations;
 	auto& QueryRotations = Data.QueryRotations;
+	auto& QueryForwardDirections = Data.QueryForwardDirections;
 
 	if (QueryPoints.Num() > 0)
 	{
 		QueryTranslations.Reserve(QueryPoints.Num());
 		QueryRotations.Reserve(QueryPoints.Num());
+		QueryForwardDirections.Reserve(QueryPoints.Num());
 
 		// Returns the normalised forward vector for sample index i.
 		auto GetForwardAt = [&QueryPoints](int32 i) -> FVector
@@ -345,6 +348,7 @@ static FPreparedTrajectoryDisplay PrepareTrajectoryDisplay(
 		for (int32 i = 0; i < QueryPoints.Num(); ++i)
 		{
 			const FVector CurForward = GetForwardAt(i);
+			QueryForwardDirections.Add(CurForward);
 			QueryTranslations.Add(QueryPoints[0] - QueryPoints[i]);
 			//if (i >0)
 			//	UE_LOG(LogTemp, Log,
@@ -356,7 +360,7 @@ static FPreparedTrajectoryDisplay PrepareTrajectoryDisplay(
 
 
 	// Match Niagara's object view before reducing samples: unwrap, translate,
-	// and optionally apply the inverse uploaded quaternion about the first query point.
+	// and optionally apply the current-to-reference quaternion about the first query point.
 	if (!QueryPoints.IsEmpty())
 	{
 		const FVector Pivot = QueryPoints[0];
@@ -370,7 +374,7 @@ static FPreparedTrajectoryDisplay PrepareTrajectoryDisplay(
 				const FVector Position = Sample.Position + DecodePeriodicVolumeIndexToOffset(Sample.VolumeIndex, CachedPeriodicExtent);
 				const FVector Aligned = Position + QueryTranslations[Index];
 				Data.ObjectBounds += Aligned;
-				Data.RotatedObjectBounds += Pivot + QueryRotations[Index].Inverse().RotateVector(Aligned - Pivot);
+				Data.RotatedObjectBounds += Pivot + QueryRotations[Index].RotateVector(Aligned - Pivot);
 			}
 		}
 	}
@@ -422,6 +426,7 @@ static FPreparedTrajectoryDisplay PrepareTrajectoryDisplay(
 	Select(Data.QueryVelocities, QueryIndices);
 	Select(Data.QueryTranslations, QueryIndices);
 	Select(Data.QueryRotations, QueryIndices);
+	Select(Data.QueryForwardDirections, QueryIndices);
 	TArray<int32> ResultIndices, TrajectoryIndices, Starts, StartTimes;
 	for (int32 Trajectory = 0; Trajectory < Data.ResultTrajectoryIds.Num(); ++Trajectory)
 	{
@@ -478,10 +483,30 @@ bool FObjectViewBoundsTest::RunTest(const FString& Parameters)
 	}).Get();
 	TestTrue(TEXT("Translated bounds use unwrapped positions and the query at the sample time"),
 		Data.ObjectBounds.Max.Equals(FVector(111, 22, 0)));
-	TestTrue(TEXT("Rotation matches Niagara inverse quaternion around nonzero reference pivot"),
-		Data.RotatedObjectBounds.Min.Equals(FVector(8, 20, 0)) &&
-		Data.RotatedObjectBounds.Max.Equals(FVector(10, 121, 0)));
+	TestTrue(TEXT("Rotation aligns current movement to reference around nonzero pivot"),
+		Data.RotatedObjectBounds.Min.Equals(FVector(10, -81, 0)) &&
+		Data.RotatedObjectBounds.Max.Equals(FVector(12, 20, 0)));
 	TestEqual(TEXT("Full bounds survive reduction of the only result sample"), Data.ResultPoints.Num(), 0);
+	// A common reference hemisphere must preserve the signed forward distance.
+	const FVector FirstForward = FVector(1, 2, 3).GetSafeNormal();
+	for (const FVector Direction : {FVector(0, 1, 0), FVector(1, -1, 2), -FirstForward})
+	{
+		const FVector Forward = Direction.GetSafeNormal();
+		const FQuat Rotation = FQuat::FindBetweenNormals(Forward, FirstForward);
+		TestTrue(TEXT("Current forward aligns with initial forward"),
+			Rotation.RotateVector(Forward).Equals(FirstForward, 0.00001));
+		for (const FVector Relative : {Forward * 3, Forward * -2, FVector(7, -4, 2)})
+		{
+			// Mirror the exact quaternion-vector expression used by Niagara.
+			const FVector Q(Rotation.X, Rotation.Y, Rotation.Z);
+			const FVector T = 2 * FVector::CrossProduct(Q, Relative);
+			const FVector Aligned = Relative + Rotation.W * T + FVector::CrossProduct(Q, T);
+			TestTrue(TEXT("Rendered hemisphere agrees with source front/back classification"),
+				FMath::IsNearlyEqual(FVector::DotProduct(Aligned, FirstForward),
+					FVector::DotProduct(Relative, Forward), 0.00001));
+		}
+	}
+
 	auto* Actor = NewObject<ATrajectoryQueryNiagaraActor>();
 	Actor->NiagaraComponent = NewObject<UNiagaraComponent>(Actor);
 	auto* Box = NewObject<UBoxComponent>(Actor);
@@ -670,6 +695,43 @@ bool FSharedTrajectorySamplingTest::RunTest(const FString& Parameters)
 	}).Get();
 	TestTrue(TEXT("Empty result is safe"), Empty.Error.IsEmpty());
 	return true;
+}
+#endif
+
+#if WITH_DEV_AUTOMATION_TESTS
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FQueryForwardDirectionsTest,
+    "TrajectoryBLab.Query.ForwardDirections",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FQueryForwardDirectionsTest::RunTest(const FString& Parameters)
+{
+    const auto Prepare = [](TArray<FVector> Focus, int32 Stride)
+    {
+        return Async(EAsyncExecution::ThreadPool, [Focus = MoveTemp(Focus), Stride]()
+        {
+            return PrepareTrajectoryDisplay(Focus, Focus, {}, FVector::ZeroVector,
+                10, 10 + FMath::Max(0, Focus.Num() - 1), Stride, 0);
+        }).Get();
+    };
+    // The retained chord is diagonal, but the original first movement is +X.
+    const auto Reduced = Prepare({FVector(0,0,0), FVector(1,0,0), FVector(1,1,0),
+        FVector(1,1,1), FVector(1,1,2)}, 2);
+    TestEqual(TEXT("Directions aligned with retained query samples"),
+        Reduced.QueryForwardDirections.Num(), Reduced.RawQueryPoints.Num());
+    TestTrue(TEXT("Direction computed before reduction"),
+        Reduced.QueryForwardDirections[0].Equals(FVector(1,0,0)));
+    TestTrue(TEXT("Curved path retains local direction"),
+        Reduced.QueryForwardDirections[1].Equals(FVector(0,0,1)));
+    TestTrue(TEXT("Last sample reuses final segment"),
+        Reduced.QueryForwardDirections.Last().Equals(FVector(0,0,1)));
+    const auto Stationary = Prepare({FVector::ZeroVector, FVector::ZeroVector}, 1);
+    TestTrue(TEXT("Stationary uses same fallback as rotation"),
+        Stationary.QueryForwardDirections[0].Equals(FVector::ForwardVector));
+    const auto Single = Prepare({FVector::ZeroVector}, 1);
+    TestTrue(TEXT("Single point has neutral direction"),
+        Single.QueryForwardDirections[0].Equals(FVector::ForwardVector));
+    TestTrue(TEXT("Empty query has no directions"), Prepare({}, 1).QueryForwardDirections.IsEmpty());
+    return true;
 }
 #endif
 
@@ -1381,6 +1443,7 @@ void ATrajectoryQueryNiagaraActor::UploadPreparedDisplay(const FPreparedTrajecto
 	const auto& QueryVolumeIndices = Data.QueryVolumeIndices;
 	const auto& QueryTranslations = Data.QueryTranslations;
 	const auto& QueryRotations = Data.QueryRotations;
+	const auto& QueryForwardDirections = Data.QueryForwardDirections;
 	const auto& RawQueryPoints = Data.RawQueryPoints;
 	const auto& QuerySampleTimeSteps = Data.QuerySampleTimeSteps;
 	const auto& ResultSampleTimeSteps = Data.ResultSampleTimeSteps;
@@ -1415,6 +1478,8 @@ void ATrajectoryQueryNiagaraActor::UploadPreparedDisplay(const FPreparedTrajecto
 
 	UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayQuat(
 		NiagaraComponent, FName("QueryRotations"), QueryRotations);
+	UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayVector(
+		NiagaraComponent, FName("QueryForwardDirections"), QueryForwardDirections);
 
 	// Integer arrays (Int Array type in Niagara)
 	UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayInt32(
