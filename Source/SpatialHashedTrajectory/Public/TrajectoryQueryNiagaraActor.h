@@ -312,7 +312,7 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Trajectory Visualization")
 	void CancelQuery();
 
-	/** Fit the object-view collision box; store the returned reference transform in RelativeVisOrigin. */
+	/** Preserve the object-view reference pivot; visible bounds update collision geometry separately. */
 	UFUNCTION(BlueprintCallable, Category = "Trajectory Visualization")
 	FTransform RefreshObjectViewCollisionBox(UBoxComponent* Box, USceneComponent* Axes,
 		FTransform ReferenceOrigin, FVector TargetSize, bool bInitialize = false);
@@ -320,6 +320,16 @@ public:
 	/** Legacy Blueprint compatibility: returns the interaction transform unchanged. Placement is applied in Niagara. */
 	UFUNCTION(BlueprintPure, Category = "Trajectory Visualization")
 	FTransform GetObjectViewRenderTransform(FTransform InteractionTransform) const;
+
+	const FBox& GetVisiblePathBounds() const { return VisiblePathBounds; }
+	const FBox& GetVisibleObjectBounds() const { return VisibleObjectBounds; }
+	uint64 GetVisibleBoundsRevision() const { return VisibleBoundsRevision; }
+	void ReceiveVisibleBounds(uint64 Revision, const FBox& Path, const FBox& Object);
+
+private:
+	uint64 VisibleBoundsRevision = 1;
+	FBox VisiblePathBounds{ForceInit};
+	FBox VisibleObjectBounds{ForceInit};
 
 protected:
 	virtual void BeginPlay() override;
@@ -364,8 +374,6 @@ protected:
 private:
 	FBox ObjectViewBounds{ForceInit};
 	FBox RotatedObjectViewBounds{ForceInit};
-	FVector ObjectViewCenterOffset = FVector::ZeroVector;
-	FVector ObjectViewPlacementOffset = FVector::ZeroVector;
 #if WITH_DEV_AUTOMATION_TESTS
 	friend class FQuerySamplingCleanupTest;
 	friend class FObjectViewBoundsTest;
