@@ -312,7 +312,7 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Trajectory Visualization")
 	void CancelQuery();
 
-	/** Preserve the object-view reference pivot; visible bounds update collision geometry separately. */
+	/** Lift both object alignments above their axes origin using one shared placement; preserve the grab pivot. */
 	UFUNCTION(BlueprintCallable, Category = "Trajectory Visualization")
 	FTransform RefreshObjectViewCollisionBox(UBoxComponent* Box, USceneComponent* Axes,
 		FTransform ReferenceOrigin, FVector TargetSize, bool bInitialize = false);
@@ -327,6 +327,10 @@ public:
 	void ReceiveVisibleBounds(uint64 Revision, const FBox& Path, const FBox& Object);
 
 private:
+	void UpdateObjectViewPlacementOffset();
+	FVector ObjectViewPlacementTargetSize = FVector::ZeroVector;
+	FVector ObjectViewPlacementOffset = FVector::ZeroVector;
+	bool bHasObjectViewPlacementTarget = false;
 	uint64 VisibleBoundsRevision = 1;
 	FBox VisiblePathBounds{ForceInit};
 	FBox VisibleObjectBounds{ForceInit};

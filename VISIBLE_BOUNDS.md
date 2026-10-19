@@ -65,14 +65,17 @@ this is not a reduction over rendered triangles or material displacement.
 Empty views disable collision; returning samples restore the original collision
 mode. Per-instance body setups avoid modifying shared/archetype collision data.
 
-`RefreshObjectViewCollisionBox` remains callable by existing Blueprints but now
-returns its reference transform unchanged and clears `ObjectViewPlacementOffset`.
-It does not move the component or its axes. Previously it bottom-anchored the box
-separately for translation-only and rotated bounds, and sent the difference to
-Niagara as a placement offset. That moved the reference particle when toggling
-alignment. Both modes now keep the same reference particle placement; only the
-aligned context geometry and the fitted collision shape change. Existing
-Blueprint function signatures and Niagara parameter names are retained.
+`RefreshObjectViewCollisionBox` returns its reference transform unchanged. It
+sets one upward `ObjectViewPlacementOffset` from the union of full translation-only
+and rotated object bounds, using the existing path fit scale and source-Y to
+Unreal-Z mapping. Both modes therefore keep the same reference particle position,
+while neither fitted sample collision box extends below the original object-view
+axes origin (including the 0.1 cm interaction margin). The axes origin is the
+existing bottom placement origin, not the collision component's center pivot.
+Filters and alignment switches do not change this offset. Progressive data uploads
+recompute it when the full bounds change. Grab pivots and component transforms
+remain unchanged. Niagara already applies this parameter before grabbing and
+exports bounds after placement; no asset migration is needed.
 
 ## Validation
 
