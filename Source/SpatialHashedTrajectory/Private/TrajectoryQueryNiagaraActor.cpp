@@ -360,7 +360,7 @@ static FPreparedTrajectoryDisplay PrepareTrajectoryDisplay(
 
 
 	// Match Niagara's object view before reducing samples: unwrap, translate,
-	// and optionally apply the inverse uploaded quaternion about the first query point.
+	// and optionally apply the current-to-reference quaternion about the first query point.
 	if (!QueryPoints.IsEmpty())
 	{
 		const FVector Pivot = QueryPoints[0];
@@ -374,7 +374,7 @@ static FPreparedTrajectoryDisplay PrepareTrajectoryDisplay(
 				const FVector Position = Sample.Position + DecodePeriodicVolumeIndexToOffset(Sample.VolumeIndex, CachedPeriodicExtent);
 				const FVector Aligned = Position + QueryTranslations[Index];
 				Data.ObjectBounds += Aligned;
-				Data.RotatedObjectBounds += Pivot + QueryRotations[Index].Inverse().RotateVector(Aligned - Pivot);
+				Data.RotatedObjectBounds += Pivot + QueryRotations[Index].RotateVector(Aligned - Pivot);
 			}
 		}
 	}
@@ -483,10 +483,30 @@ bool FObjectViewBoundsTest::RunTest(const FString& Parameters)
 	}).Get();
 	TestTrue(TEXT("Translated bounds use unwrapped positions and the query at the sample time"),
 		Data.ObjectBounds.Max.Equals(FVector(111, 22, 0)));
-	TestTrue(TEXT("Rotation matches Niagara inverse quaternion around nonzero reference pivot"),
-		Data.RotatedObjectBounds.Min.Equals(FVector(8, 20, 0)) &&
-		Data.RotatedObjectBounds.Max.Equals(FVector(10, 121, 0)));
+	TestTrue(TEXT("Rotation aligns current movement to reference around nonzero pivot"),
+		Data.RotatedObjectBounds.Min.Equals(FVector(10, -81, 0)) &&
+		Data.RotatedObjectBounds.Max.Equals(FVector(12, 20, 0)));
 	TestEqual(TEXT("Full bounds survive reduction of the only result sample"), Data.ResultPoints.Num(), 0);
+	// A common reference hemisphere must preserve the signed forward distance.
+	const FVector FirstForward = FVector(1, 2, 3).GetSafeNormal();
+	for (const FVector Direction : {FVector(0, 1, 0), FVector(1, -1, 2), -FirstForward})
+	{
+		const FVector Forward = Direction.GetSafeNormal();
+		const FQuat Rotation = FQuat::FindBetweenNormals(Forward, FirstForward);
+		TestTrue(TEXT("Current forward aligns with initial forward"),
+			Rotation.RotateVector(Forward).Equals(FirstForward, 0.00001));
+		for (const FVector Relative : {Forward * 3, Forward * -2, FVector(7, -4, 2)})
+		{
+			// Mirror the exact quaternion-vector expression used by Niagara.
+			const FVector Q(Rotation.X, Rotation.Y, Rotation.Z);
+			const FVector T = 2 * FVector::CrossProduct(Q, Relative);
+			const FVector Aligned = Relative + Rotation.W * T + FVector::CrossProduct(Q, T);
+			TestTrue(TEXT("Rendered hemisphere agrees with source front/back classification"),
+				FMath::IsNearlyEqual(FVector::DotProduct(Aligned, FirstForward),
+					FVector::DotProduct(Relative, Forward), 0.00001));
+		}
+	}
+
 	auto* Actor = NewObject<ATrajectoryQueryNiagaraActor>();
 	Actor->NiagaraComponent = NewObject<UNiagaraComponent>(Actor);
 	auto* Box = NewObject<UBoxComponent>(Actor);
