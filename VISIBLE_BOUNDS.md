@@ -79,6 +79,34 @@ exports bounds after placement; no asset migration is needed.
 
 ## Validation
 
+### Axes corner placement (2026-10-20)
+
+`ReceiveVisibleBounds` also resolves the Blueprint's `PathAxes` and `RelativeAxes`
+scene-component fields after fitting their respective boxes. Each axes component
+is positioned at the fitted collision geometry's local minimum (-X back, -Y left,
+-Z bottom), including the 0.1 cm interaction margin. The offset collision center
+is included; using only negative box extent would place the axes incorrectly.
+`GetVisibleSampleLocalBounds` exposes these bounds, returning an invalid box for
+an empty view.
+
+The supplied Blueprint already parents each axes mesh to its box. The corner
+update retains that attachment, rotation, and scale; custom components are attached
+with their world transform preserved before setting the local location. Grabbing
+therefore moves the axes with the box without waiting for another GPU readback.
+The axes temporarily hide for an empty view and restore their previous hidden
+state when samples return. Bounds updates retain the existing asynchronous delay.
+No Blueprint or Niagara asset migration is required.
+
+This moves only the decorative axes. The original bottom placement origin
+described above remains the fixed reference for `ObjectViewPlacementOffset`;
+moving the axes does not reposition samples or change grab pivots.
+
+The UE 5.6 Editor build and visible-bounds automation tests validate the collision
+minimum, grabbing, refitting, empty-view restoration, and the real Blueprint's
+box/axes callback contract. Interactive headset appearance remains a manual check.
+
+### Earlier collision validation
+
 This ports commit `82d113375c9678d14436453119cadd3121dfae48` onto the current
 zone-visibility implementation. The existing transform source graphs only
 differed by their bounds output pins, so those graphs and the bounds export

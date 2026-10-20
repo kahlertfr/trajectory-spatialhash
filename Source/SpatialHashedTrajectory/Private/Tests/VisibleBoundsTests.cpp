@@ -3,6 +3,8 @@
 #include "PhysicsEngine/BodySetup.h"
 #include "VisibleSampleBoxComponent.h"
 #include "TrajectoryQueryNiagaraActor.h"
+#include "Engine/World.h"
+#include "UObject/UnrealType.h"
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVisibleSampleCollisionTest, "TrajectoryBLab.Query.VisibleBounds.CollisionPivot",
 								 EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
@@ -108,6 +110,93 @@ bool FVisibleBoundsPlacementTest::RunTest(const FString& Parameters)
 		Object->SetVisibleSampleBoundsFromSimulation(FBox(ForceInit), SimulationToWorld, ObjectReference);
 		TestEqual(TEXT("Empty simulation bounds still disable collision"), Object->GetCollisionEnabled(), ECollisionEnabled::NoCollision);
 	}
+	return true;
+}
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVisibleBoundsAxesTest, "TrajectoryBLab.Query.VisibleBounds.AxesCorner",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FVisibleBoundsAxesTest::RunTest(const FString& Parameters)
+{
+	auto* Box = NewObject<UVisibleSampleBoxComponent>();
+	auto* Axes = NewObject<USceneComponent>();
+	Axes->SetWorldRotation(FRotator(10, 20, 30));
+	Axes->SetWorldScale3D(FVector(0.5));
+	const FQuat Rotation = Axes->GetComponentQuat();
+	const FVector Scale = Axes->GetComponentScale();
+	const FBox Samples(FVector(10, -20, 30), FVector(50, 40, 90));
+	Box->SetVisibleSampleBounds(Samples);
+	Box->UpdateAxesCorner(Axes);
+	TestTrue(TEXT("Axes attach to the interaction box"), Axes->GetAttachParent() == Box);
+	TestTrue(TEXT("Axes use the offset collision minimum including margin"),
+		Axes->GetRelativeLocation().Equals(Samples.Min - FVector(0.1)));
+	TestTrue(TEXT("Attaching preserves axes orientation and scale"),
+		Axes->GetComponentQuat().Equals(Rotation) && Axes->GetComponentScale().Equals(Scale));
+	const FTransform Grab(FRotator(15, 60, 5), FVector(300, 200, 100), FVector(2));
+	Box->SetWorldTransform(Grab);
+	TestTrue(TEXT("Axes follow grabbing without waiting for another readback"),
+		Axes->GetComponentLocation().Equals(Grab.TransformPosition(Samples.Min - FVector(0.1))));
+	const FQuat GrabbedRotation = Axes->GetComponentQuat();
+	const FVector GrabbedScale = Axes->GetComponentScale();
+	Box->SetVisibleSampleBounds(FBox(FVector(-40, 10, 5), FVector(20, 50, 15)));
+	Box->UpdateAxesCorner(Axes);
+	TestTrue(TEXT("Refitting preserves grabbed pivot, axes rotation and scale"),
+		Box->GetComponentTransform().Equals(Grab) && Axes->GetComponentQuat().Equals(GrabbedRotation) &&
+		Axes->GetComponentScale().Equals(GrabbedScale));
+	TestTrue(TEXT("Refitting moves axes to the new corner"),
+		Axes->GetRelativeLocation().Equals(FVector(-40.1, 9.9, 4.9)));
+	Box->SetVisibleSampleBounds(FBox(ForceInit));
+	Box->UpdateAxesCorner(Axes);
+	Box->UpdateAxesCorner(Axes);
+	TestTrue(TEXT("Empty views expose no local bounds and hide axes"),
+		!Box->GetVisibleSampleLocalBounds().IsValid && Axes->bHiddenInGame);
+	Box->SetVisibleSampleBounds(Samples);
+	Box->UpdateAxesCorner(Axes);
+	TestFalse(TEXT("Returning samples restore axes visibility"), Axes->bHiddenInGame);
+	Axes->SetHiddenInGame(true);
+	Box->SetVisibleSampleBounds(FBox(ForceInit));
+	Box->UpdateAxesCorner(Axes);
+	Box->SetVisibleSampleBounds(Samples);
+	Box->UpdateAxesCorner(Axes);
+	TestTrue(TEXT("Returning samples preserve an explicitly hidden axes component"), Axes->bHiddenInGame);
+	return true;
+}
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVisibleBoundsBlueprintAxesTest, "TrajectoryBLab.Query.VisibleBounds.BlueprintAxes",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FVisibleBoundsBlueprintAxesTest::RunTest(const FString& Parameters)
+{
+	UClass* Class = LoadClass<ATrajectoryQueryNiagaraActor>(nullptr,
+		TEXT("/SpatialHashedTrajectory/Visualization/BP_QueryResultVisualization.BP_QueryResultVisualization_C"));
+	if (!TestNotNull(TEXT("Result Blueprint loads"), Class)) return false;
+	UWorld* World = UWorld::CreateWorld(EWorldType::Game, false);
+	auto* Actor = World->SpawnActor<ATrajectoryQueryNiagaraActor>(Class);
+	if (!TestNotNull(TEXT("Result Blueprint spawns"), Actor))
+	{
+		World->DestroyWorld(false);
+		return false;
+	}
+	const FBox Path(FVector(10, 20, 30), FVector(50, 60, 70));
+	const FBox Object(FVector(-80, -40, 5), FVector(-20, 10, 45));
+	Actor->ReceiveVisibleBounds(Actor->GetVisibleBoundsRevision(), Path, Object);
+	for (const bool bPath : {true, false})
+	{
+		const auto* BoxProperty = FindFProperty<FObjectPropertyBase>(Class, bPath ? TEXT("PathVisBox") : TEXT("RelativeVisBox"));
+		const auto* AxesProperty = FindFProperty<FObjectPropertyBase>(Class, bPath ? TEXT("PathAxes") : TEXT("RelativeAxes"));
+		if (!TestTrue(TEXT("Blueprint exposes the box and axes contract"), BoxProperty && AxesProperty)) continue;
+		auto* Box = Cast<UVisibleSampleBoxComponent>(BoxProperty->GetObjectPropertyValue_InContainer(Actor));
+		auto* Axes = Cast<USceneComponent>(AxesProperty->GetObjectPropertyValue_InContainer(Actor));
+		if (!TestTrue(TEXT("Blueprint provides live box and axes components"), Box && Axes)) continue;
+		TestTrue(TEXT("Bounds callback places each Blueprint axes at its own collision corner"),
+			Axes->GetAttachParent() == Box && Axes->GetRelativeLocation().Equals(Box->GetVisibleSampleLocalBounds().Min));
+		const FTransform Grab(FRotator(20, 40, 0), FVector(100, 200, 300), FVector(1.5));
+		Box->SetWorldTransform(Grab);
+		TestTrue(TEXT("Blueprint axes inherit grab placement"),
+			Axes->GetComponentLocation().Equals(Grab.TransformPosition(Box->GetVisibleSampleLocalBounds().Min)));
+		Actor->ReceiveVisibleBounds(Actor->GetVisibleBoundsRevision(), bPath ? FBox(ForceInit) : Path,
+			bPath ? Object : FBox(ForceInit));
+		TestTrue(TEXT("Empty Blueprint view hides its axes"), Axes->bHiddenInGame);
+		Actor->ReceiveVisibleBounds(Actor->GetVisibleBoundsRevision(), Path, Object);
+		TestFalse(TEXT("Returning Blueprint samples show axes"), Axes->bHiddenInGame);
+	}
+	World->DestroyWorld(false);
 	return true;
 }
 #endif

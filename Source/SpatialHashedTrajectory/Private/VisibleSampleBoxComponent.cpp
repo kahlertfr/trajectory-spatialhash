@@ -15,6 +15,7 @@ void UVisibleSampleBoxComponent::SetVisibleSampleBoundsFromSimulation(
 
 void UVisibleSampleBoxComponent::SetVisibleSampleBounds(const FBox& LocalBounds)
 {
+	bHasVisibleSamples = LocalBounds.IsValid != 0;
 	if (!bSavedCollision)
 	{
 		OriginalCollision = GetCollisionEnabled();
@@ -45,6 +46,43 @@ void UVisibleSampleBoxComponent::SetVisibleSampleBounds(const FBox& LocalBounds)
 			UpdateOverlaps();
 	}
 }
+FBox UVisibleSampleBoxComponent::GetVisibleSampleLocalBounds() const
+{
+	return bHasVisibleSamples ? FBox(SampleCenter - SampleExtent, SampleCenter + SampleExtent) : FBox(ForceInit);
+}
+
+void UVisibleSampleBoxComponent::UpdateAxesCorner(USceneComponent* Axes)
+{
+	if (!Axes || Axes == this || IsAttachedTo(Axes)) return;
+	if (CornerAxes.Get() != Axes)
+	{
+		if (bAxesHiddenForEmptyView && CornerAxes.IsValid())
+			CornerAxes->SetHiddenInGame(bAxesOriginallyHidden, true);
+		CornerAxes = Axes;
+		bAxesHiddenForEmptyView = false;
+	}
+	const FBox LocalBounds = GetVisibleSampleLocalBounds();
+	if (!LocalBounds.IsValid)
+	{
+		if (!bAxesHiddenForEmptyView)
+		{
+			bAxesOriginallyHidden = Axes->bHiddenInGame;
+			bAxesHiddenForEmptyView = true;
+			Axes->SetHiddenInGame(true, true);
+		}
+		return;
+	}
+	if (Axes->GetAttachParent() != this &&
+		!Axes->AttachToComponent(this, FAttachmentTransformRules::KeepWorldTransform)) return;
+	// Use the offset geometry's minimum, not -BoxExtent or a world-axis-aligned box.
+	Axes->SetRelativeLocation(LocalBounds.Min);
+	if (bAxesHiddenForEmptyView)
+	{
+		Axes->SetHiddenInGame(bAxesOriginallyHidden, true);
+		bAxesHiddenForEmptyView = false;
+	}
+}
+
 void UVisibleSampleBoxComponent::UpdateBodySetup()
 {
 	if (bHasSampleBounds)

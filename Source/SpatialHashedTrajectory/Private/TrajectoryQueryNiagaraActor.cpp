@@ -1580,7 +1580,8 @@ void ATrajectoryQueryNiagaraActor::ReceiveVisibleBounds(uint64 Revision, const F
 		? NiagaraComponent->GetComponentTransform() : GetActorTransform();
 	// The Blueprint retains the reference transforms used to build its grab matrices.
 	// Read those references, not the currently grabbed component transforms.
-	const auto Apply = [this, &SimulationToWorld](const TCHAR* BoxName, const TCHAR* OriginName, const FBox& Bounds)
+	const auto Apply = [this, &SimulationToWorld](const TCHAR* BoxName, const TCHAR* OriginName,
+		const TCHAR* AxesName, const FBox& Bounds)
 	{
 		const auto* BoxProperty = FindFProperty<FObjectPropertyBase>(GetClass(), BoxName);
 		const auto* OriginProperty = FindFProperty<FStructProperty>(GetClass(), OriginName);
@@ -1591,7 +1592,9 @@ void ATrajectoryQueryNiagaraActor::ReceiveVisibleBounds(uint64 Revision, const F
 			return;
 		const FTransform& Origin = *OriginProperty->ContainerPtrToValuePtr<FTransform>(this);
 		Box->SetVisibleSampleBoundsFromSimulation(Bounds, SimulationToWorld, Origin);
+		if (const auto* AxesProperty = FindFProperty<FObjectPropertyBase>(GetClass(), AxesName))
+			Box->UpdateAxesCorner(Cast<USceneComponent>(AxesProperty->GetObjectPropertyValue_InContainer(this)));
 	};
-	Apply(TEXT("PathVisBox"), TEXT("PathVisOrigin"), Path);
-	Apply(TEXT("RelativeVisBox"), TEXT("RelativeVisOrigin"), Object);
+	Apply(TEXT("PathVisBox"), TEXT("PathVisOrigin"), TEXT("PathAxes"), Path);
+	Apply(TEXT("RelativeVisBox"), TEXT("RelativeVisOrigin"), TEXT("RelativeAxes"), Object);
 }
