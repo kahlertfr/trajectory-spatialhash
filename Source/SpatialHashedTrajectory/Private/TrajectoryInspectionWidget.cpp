@@ -1,5 +1,6 @@
 #include "TrajectoryInspectionWidget.h"
 #include "TrajectoryQueryNiagaraActor.h"
+#include "TrajectorySpatialPicker.h"
 #include "Blueprint/WidgetTree.h"
 #include "Components/VerticalBox.h"
 #include "Components/VerticalBoxSlot.h"
@@ -41,6 +42,25 @@ TSharedRef<SWidget> UTrajectoryInspectionWidget::RebuildWidget()
 		ClearButton->SetContent(ClearLabel);
 		ClearButton->OnClicked.AddDynamic(this, &UTrajectoryInspectionWidget::ClearSelection);
 		Row->AddChildToHorizontalBox(ClearButton);
+		auto* PickingRow = WidgetTree->ConstructWidget<UHorizontalBox>();
+		Root->AddChildToVerticalBox(PickingRow)->SetPadding(FMargin(0, 8, 0, 0));
+		HandSelectorButton = WidgetTree->ConstructWidget<UButton>();
+		HandSelectorLabel = WidgetTree->ConstructWidget<UTextBlock>();
+		HandSelectorButton->SetContent(HandSelectorLabel);
+		HandSelectorButton->OnClicked.AddDynamic(this, &UTrajectoryInspectionWidget::ToggleHandSelector);
+		PickingRow->AddChildToHorizontalBox(HandSelectorButton)->SetPadding(FMargin(0, 0, 12, 0));
+		ConfirmButton = WidgetTree->ConstructWidget<UButton>();
+		auto* ConfirmLabel = WidgetTree->ConstructWidget<UTextBlock>();
+		ConfirmLabel->SetText(NSLOCTEXT("TrajectoryInspection", "Confirm", "Confirm"));
+		ConfirmButton->SetContent(ConfirmLabel);
+		ConfirmButton->OnClicked.AddDynamic(this, &UTrajectoryInspectionWidget::ConfirmPicking);
+		PickingRow->AddChildToHorizontalBox(ConfirmButton)->SetPadding(FMargin(0, 0, 12, 0));
+		CancelButton = WidgetTree->ConstructWidget<UButton>();
+		auto* CancelLabel = WidgetTree->ConstructWidget<UTextBlock>();
+		CancelLabel->SetText(NSLOCTEXT("TrajectoryInspection", "Cancel", "Cancel picking"));
+		CancelButton->SetContent(CancelLabel);
+		CancelButton->OnClicked.AddDynamic(this, &UTrajectoryInspectionWidget::CancelPicking);
+		PickingRow->AddChildToHorizontalBox(CancelButton);
 	}
 	RefreshControls();
 	return Super::RebuildWidget();
@@ -73,6 +93,13 @@ void UTrajectoryInspectionWidget::RefreshControls()
 	const bool bValidActor = IsValid(VisualizationActor);
 	const int32 Count = bValidActor ? VisualizationActor->GetInspectableTrajectoryCount() : 0;
 	const int32 Index = bValidActor ? VisualizationActor->SelectedTrajectoryIndex : INDEX_NONE;
+	const bool bPicking = bValidActor && VisualizationActor->bSpatialPickingActive;
+	HandSelectorButton->SetIsEnabled(Count > 0);
+	HandSelectorLabel->SetText(ATrajectorySpatialPicker::FindForTarget(VisualizationActor)
+		? NSLOCTEXT("TrajectoryInspection", "DisableHand", "Disable hand selector")
+		: NSLOCTEXT("TrajectoryInspection", "EnableHand", "Enable hand selector"));
+	ConfirmButton->SetIsEnabled(bPicking && VisualizationActor->CandidateTrajectoryIndex != INDEX_NONE);
+	CancelButton->SetIsEnabled(bPicking);
 	IndexSlider->SetMinValue(0);
 	IndexSlider->SetMaxValue(FMath::Max(1, Count - 1));
 	IndexSlider->SetValue(Index == INDEX_NONE ? 0 : Index);
@@ -90,7 +117,25 @@ void UTrajectoryInspectionWidget::RefreshControls()
 	else SelectionLabel->SetText(Count > 0
 		? NSLOCTEXT("TrajectoryInspection", "None", "Trajectory: none selected")
 		: NSLOCTEXT("TrajectoryInspection", "Empty", "Trajectory: no results"));
+	if (bPicking)
+	{
+		const int32 Candidate = VisualizationActor->CandidateTrajectoryIndex;
+		if (VisualizationActor->GetInspectableTrajectoryId(Candidate, Id))
+			SelectionLabel->SetText(FText::FromString(FString::Printf(TEXT("Preview trajectory %d (ID %lld) - confirm or cancel"), Candidate, Id)));
+		else SelectionLabel->SetText(NSLOCTEXT("TrajectoryInspection", "PickingNoHit", "Picking: move the index tip onto a trajectory"));
+	}
 }
+
+void UTrajectoryInspectionWidget::ToggleHandSelector()
+{
+	if (!IsValid(VisualizationActor)) return;
+	if (auto* Tool = ATrajectorySpatialPicker::FindForTarget(VisualizationActor)) Tool->Disable();
+	else ATrajectorySpatialPicker::EnableForTarget(VisualizationActor);
+	RefreshControls();
+}
+
+void UTrajectoryInspectionWidget::ConfirmPicking() { if (IsValid(VisualizationActor)) VisualizationActor->ConfirmSpatialPicking(); }
+void UTrajectoryInspectionWidget::CancelPicking() { if (IsValid(VisualizationActor)) VisualizationActor->CancelSpatialPicking(); }
 
 void UTrajectoryInspectionWidget::SelectIndex(float Value)
 {

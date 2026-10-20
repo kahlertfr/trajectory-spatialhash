@@ -823,6 +823,7 @@ bool ATrajectoryQueryNiagaraActor::GetInspectableTrajectoryId(int32 Index, int64
 bool ATrajectoryQueryNiagaraActor::SelectTrajectoryByIndex(int32 Index)
 {
 	if (Index < 0 || Index >= GetInspectableTrajectoryCount()) return false;
+	CancelSpatialPicking();
 	if (SelectedTrajectoryIndex != Index)
 	{
 		SelectedTrajectoryIndex = Index;
@@ -834,6 +835,7 @@ bool ATrajectoryQueryNiagaraActor::SelectTrajectoryByIndex(int32 Index)
 
 void ATrajectoryQueryNiagaraActor::ClearTrajectoryInspection()
 {
+	CancelSpatialPicking();
 	if (SelectedTrajectoryIndex == INDEX_NONE) return;
 	SelectedTrajectoryIndex = INDEX_NONE;
 	PushTrajectoryInspection();
@@ -852,13 +854,119 @@ void ATrajectoryQueryNiagaraActor::PushTrajectoryInspection()
 {
 	++VisibleBoundsRevision;
 	if (!NiagaraComponent) return;
-	NiagaraComponent->SetVariableInt(TEXT("SelectedTrajectoryIndex"), SelectedTrajectoryIndex);
-	NiagaraComponent->SetVariableBool(TEXT("HasTrajectorySelection"), SelectedTrajectoryIndex != INDEX_NONE);
-	NiagaraComponent->SetVariableBool(TEXT("TrajSelectOnly"), bShowOnlySelectedTrajectory);
+	const int32 PreviewIndex = bSpatialPickingActive ? CandidateTrajectoryIndex : SelectedTrajectoryIndex;
+	NiagaraComponent->SetVariableInt(TEXT("SelectedTrajectoryIndex"), PreviewIndex);
+	NiagaraComponent->SetVariableBool(TEXT("HasTrajectorySelection"), PreviewIndex != INDEX_NONE);
+	NiagaraComponent->SetVariableBool(TEXT("TrajSelectOnly"), bShowOnlySelectedTrajectory && !bSpatialPickingActive);
+	NiagaraComponent->SetVariableBool(TEXT("TrajSelectActive"), bSpatialPickingActive);
+	NiagaraComponent->SetVariableVec3(TEXT("TrajSelectPosition"), TrajSelectPosition);
+	NiagaraComponent->SetVariableFloat(TEXT("TrajSelectRadius"), TrajSelectRadius);
+}
+
+bool ATrajectoryQueryNiagaraActor::BeginSpatialPicking(FVector WorldPosition, float Radius)
+{
+	if (GetInspectableTrajectoryCount() == 0 || WorldPosition.ContainsNaN() || !FMath::IsFinite(Radius) || Radius <= 0) return false;
+	++PickingSession;
+	bSpatialPickingActive = true;
+	TrajSelectPosition = WorldPosition;
+	TrajSelectRadius = FMath::Clamp(Radius, 0.1f, 20.f);
+	CandidateTrajectoryIndex = INDEX_NONE;
+	CandidateTimestamp = LastPickingReadback = 0;
+	PushTrajectoryInspection();
+	OnTrajectoryInspectionChanged.Broadcast();
+	return true;
+}
+
+void ATrajectoryQueryNiagaraActor::UpdateSpatialPickingPosition(FVector WorldPosition)
+{
+	if (!bSpatialPickingActive || WorldPosition.ContainsNaN()) return;
+	TrajSelectPosition = WorldPosition;
+	if (CandidateTrajectoryIndex != INDEX_NONE && FVector::DistSquared(CandidatePosition, WorldPosition) > FMath::Square(TrajSelectRadius * 0.75f))
+	{
+		CandidateTrajectoryIndex = INDEX_NONE;
+		PushTrajectoryInspection();
+		OnTrajectoryInspectionChanged.Broadcast();
+	}
+	if (NiagaraComponent) NiagaraComponent->SetVariableVec3(TEXT("TrajSelectPosition"), WorldPosition);
+}
+
+void ATrajectoryQueryNiagaraActor::CancelSpatialPicking()
+{
+	if (!bSpatialPickingActive) return;
+	++PickingSession;
+	bSpatialPickingActive = false;
+	CandidateTrajectoryIndex = INDEX_NONE;
+	PushTrajectoryInspection();
+	OnTrajectoryInspectionChanged.Broadcast();
+}
+
+bool ATrajectoryQueryNiagaraActor::ConfirmSpatialPicking()
+{
+	if (!bSpatialPickingActive) return false;
+	const int32 Candidate = CandidateTrajectoryIndex;
+	const bool bFresh = FPlatformTime::Seconds() - CandidateTimestamp <= 0.3 &&
+		FVector::DistSquared(TrajSelectPosition, CandidatePosition) <= FMath::Square(TrajSelectRadius * 0.75f);
+	CancelSpatialPicking();
+	return bFresh && Candidate != INDEX_NONE && SelectTrajectoryByIndex(Candidate);
+}
+
+FTrajectoryPickFrame ATrajectoryQueryNiagaraActor::GetSpatialPickFrame() const
+{
+	FTrajectoryPickFrame Frame;
+	Frame.Session = PickingSession;
+	Frame.Timestamp = FPlatformTime::Seconds();
+	Frame.WorldPosition = TrajSelectPosition;
+	Frame.SimulationToWorld = NiagaraComponent ? NiagaraComponent->GetComponentTransform() : GetActorTransform();
+	Frame.Radius = TrajSelectRadius;
+	Frame.Count = bSpatialPickingActive ? GetInspectableTrajectoryCount() : 0;
+	return Frame;
+}
+
+void ATrajectoryQueryNiagaraActor::ReceiveSpatialPickingScores(const FTrajectoryPickFrame& Frame, TConstArrayView<uint32> Scores)
+{
+	UE_LOG(LogTemp, VeryVerbose, TEXT("Trajectory pick readback: session=%llu current=%llu count=%d words=%d age=%.4f movement=%.4f"),
+		Frame.Session, PickingSession, Frame.Count, Scores.Num(), FPlatformTime::Seconds()-Frame.Timestamp, FVector::Dist(Frame.WorldPosition, TrajSelectPosition));
+	if (!bSpatialPickingActive || Frame.Session != PickingSession || Frame.Count != GetInspectableTrajectoryCount() ||
+		Frame.Timestamp <= LastPickingReadback || FPlatformTime::Seconds() - Frame.Timestamp > 0.3 ||
+		FVector::DistSquared(Frame.WorldPosition, TrajSelectPosition) > FMath::Square(TrajSelectRadius * 0.75f) ||
+		Scores.Num() != Frame.Count * 2) return;
+	LastPickingReadback = Frame.Timestamp;
+	int32 Best = INDEX_NONE;
+	float BestDistance = FLT_MAX;
+	float PreviousDistance = FLT_MAX;
+	for (int32 I = 0; I < Scores.Num(); ++I)
+	{
+		if (!Scores[I]) continue;
+		float Score;
+		FMemory::Memcpy(&Score, &Scores[I], sizeof(Score));
+		if (!FMath::IsFinite(Score) || Score <= 0.f || Score > 1.f) continue;
+		const float Distance = FMath::Max(0.f, 1.f / Score - 1.f);
+		if (Distance > TrajSelectRadius + 0.001f) continue;
+		const int32 Index = I % Frame.Count;
+		if (Index == CandidateTrajectoryIndex) PreviousDistance = FMath::Min(PreviousDistance, Distance);
+		if (Distance < BestDistance || (Distance == BestDistance && Index < Best))
+		{
+			Best = Index;
+			BestDistance = Distance;
+		}
+	}
+	// Keep the current candidate within a small world-space margin to avoid flicker at crossings.
+	if (CandidateTrajectoryIndex != INDEX_NONE && PreviousDistance <= BestDistance + 0.2f && PreviousDistance <= TrajSelectRadius)
+		Best = CandidateTrajectoryIndex;
+	CandidateTimestamp = Frame.Timestamp;
+	UE_LOG(LogTemp, VeryVerbose, TEXT("Trajectory pick candidate=%d distance=%.4f"), Best, BestDistance);
+	CandidatePosition = Frame.WorldPosition;
+	if (CandidateTrajectoryIndex != Best)
+	{
+		CandidateTrajectoryIndex = Best;
+		PushTrajectoryInspection();
+		OnTrajectoryInspectionChanged.Broadcast();
+	}
 }
 
 void ATrajectoryQueryNiagaraActor::UpdateInspectableTrajectories(bool bHasFocus, const TArray<int32>& ContextIds)
 {
+	CancelSpatialPicking();
 	// Progressive uploads can change render indices. Preserve identity within each role.
 	const bool bSelectedFocus = bHasInspectableFocus && SelectedTrajectoryIndex == 0;
 	int64 PreviousId = -1;
@@ -890,6 +998,7 @@ void ATrajectoryQueryNiagaraActor::EndPlay(const EEndPlayReason::Type EndPlayRea
 
 void ATrajectoryQueryNiagaraActor::CancelQuery()
 {
+	CancelSpatialPicking();
 	if (Manager)
 	{
 		Manager->CancelActiveQuery();
@@ -947,6 +1056,7 @@ void ATrajectoryQueryNiagaraActor::RunQueryAndUpdateNiagara()
 
 void ATrajectoryQueryNiagaraActor::SetVisualizationTimeRange(int32 NewTimeStart, int32 NewTimeEnd)
 {
+	CancelSpatialPicking();
 	++VisibleBoundsRevision;
 	VisualizationTimeStart = NewTimeStart;
 	VisualizationTimeEnd   = NewTimeEnd;
@@ -969,6 +1079,7 @@ void ATrajectoryQueryNiagaraActor::SetVisualizationTimeRange(int32 NewTimeStart,
 
 void ATrajectoryQueryNiagaraActor::UpdateUserParameter(int32 NewTimeStart, int32 NewTimeEnd, ETrajectoryColorEncoding NewColorEncoding, ETrajectoryDistanceFilter NewDistanceFilter, float NewParticleRadius, float NewBehaviorRadius, float NewQueryRadius, float NewCollisionRadius, float NewZoneInnerRadius, float NewMiddleRadius, int32 NewVisibleZonesMask, bool NewSensitivity, bool NewVisibility, bool NewNoShadow, bool NewObjectViewWithRotation, bool NewZoneRadiusVisibility)
 {
+	CancelSpatialPicking();
 	++VisibleBoundsRevision;
 	VisualizationTimeStart = NewTimeStart;
 	VisualizationTimeEnd = NewTimeEnd;
@@ -1691,11 +1802,66 @@ bool FTrajectoryInspectionTest::RunTest(const FString& Parameters)
 	TestFalse(TEXT("Empty data cannot select index zero"), Actor->SelectTrajectoryByIndex(0));
 	return true;
 }
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSpatialTrajectoryPickingTest, "TrajectoryBLab.Query.SpatialPicking",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FSpatialTrajectoryPickingTest::RunTest(const FString& Parameters)
+{
+	auto* Actor = NewObject<ATrajectoryQueryNiagaraActor>();
+	Actor->NiagaraComponent = NewObject<UNiagaraComponent>(Actor);
+	Actor->UpdateInspectableTrajectories(true, {41, 9});
+	Actor->SelectTrajectoryByIndex(1);
+	Actor->SetShowOnlySelectedTrajectory(true);
+	TestTrue(TEXT("Begin starts a preview session"), Actor->BeginSpatialPicking(FVector::ZeroVector, 2));
+	TestEqual(TEXT("Preview does not overwrite confirmed selection"), Actor->SelectedTrajectoryIndex, 1);
+	TestFalse(TEXT("Isolation is suspended while searching"), Actor->NiagaraComponent->GetOverrideParameters().GetParameterValue<FNiagaraBool>(
+		FNiagaraVariable(FNiagaraTypeDefinition::GetBoolDef(), TEXT("User.TrajSelectOnly"))).GetValue());
+	auto Score = [](float Distance) { const float Value = 1.f / (1.f + Distance); uint32 Bits; FMemory::Memcpy(&Bits, &Value, sizeof(Bits)); return Bits; };
+	auto Deliver = [&](TArray<uint32> Scores)
+	{
+		const auto Frame = Actor->GetSpatialPickFrame();
+		Actor->ReceiveSpatialPickingScores(Frame, Scores);
+	};
+	Deliver({0, Score(1), 0, 0, 0, Score(1)});
+	TestEqual(TEXT("Equal hits in either view choose the lower display index"), Actor->CandidateTrajectoryIndex, 1);
+	Deliver({0, Score(1), Score(0.9f), 0, 0, 0});
+	TestEqual(TEXT("Small distance changes retain candidate at crossings"), Actor->CandidateTrajectoryIndex, 1);
+	Deliver({0, Score(1.5f), 0, 0, 0, Score(0.1f)});
+	TestEqual(TEXT("A closer object-view hit switches the preview"), Actor->CandidateTrajectoryIndex, 2);
+	TestTrue(TEXT("Second tap confirms the latest fresh candidate"), Actor->ConfirmSpatialPicking());
+	TestEqual(TEXT("Confirmed selection is shared through the existing setter"), Actor->SelectedTrajectoryIndex, 2);
+	TestFalse(TEXT("Confirmation disables the picking sphere/session"), Actor->bSpatialPickingActive);
+	TestTrue(TEXT("Isolation preference survives preview"), Actor->bShowOnlySelectedTrajectory);
+	Actor->BeginSpatialPicking(FVector::ZeroVector, 2);
+	Deliver({Score(0), 0, 0, 0, 0, 0});
+	const auto OldFrame = Actor->GetSpatialPickFrame();
+	Actor->CancelSpatialPicking();
+	TestEqual(TEXT("Cancellation preserves the previous confirmed selection"), Actor->SelectedTrajectoryIndex, 2);
+	Actor->BeginSpatialPicking(FVector::ZeroVector, 2);
+	Actor->ReceiveSpatialPickingScores(OldFrame, TArray<uint32>{Score(0),0,0,0,0,0});
+	TestEqual(TEXT("Previous session readbacks cannot repopulate a new session"), Actor->CandidateTrajectoryIndex, INDEX_NONE);
+	TestFalse(TEXT("Confirming without a hit leaves the previous selection unchanged"), Actor->ConfirmSpatialPicking());
+	TestEqual(TEXT("No-hit confirmation preserves selection"), Actor->SelectedTrajectoryIndex, 2);
+	Actor->BeginSpatialPicking(FVector::ZeroVector, 2);
+	Deliver({Score(0),0,0,0,0,0});
+	Actor->CandidateTimestamp = FPlatformTime::Seconds() - 1;
+	TestFalse(TEXT("Stale previews cannot be confirmed"), Actor->ConfirmSpatialPicking());
+	Actor->BeginSpatialPicking(FVector::ZeroVector, 2);
+	Deliver({Score(0),0,0,0,0,0});
+	Actor->UpdateSpatialPickingPosition(FVector(10,0,0));
+	TestEqual(TEXT("Moving away immediately invalidates the candidate"), Actor->CandidateTrajectoryIndex, INDEX_NONE);
+	Actor->SelectTrajectoryByIndex(0);
+	TestFalse(TEXT("Slider changes cancel spatial preview"), Actor->bSpatialPickingActive);
+	Actor->BeginSpatialPicking(FVector::ZeroVector, 2);
+	Actor->UpdateInspectableTrajectories(true, {9});
+	TestFalse(TEXT("New display membership cancels stale picking"), Actor->bSpatialPickingActive);
+	return true;
+}
 #endif
 
 void ATrajectoryQueryNiagaraActor::ReceiveVisibleBounds(uint64 Revision, const FBox& Path, const FBox& Object)
 {
-	if (Revision != VisibleBoundsRevision || IsActorBeingDestroyed())
+	if (Revision != VisibleBoundsRevision || IsActorBeingDestroyed() || bSpatialPickingActive)
 		return;
 	VisiblePathBounds = Path;
 	VisibleObjectBounds = Object;

@@ -34,7 +34,9 @@ public class SpatialHashedTrajectory : ModuleRules
 				"NiagaraCore",
 				"UMG",
 				"Slate",
-				"SlateCore"
+				"SlateCore",
+				"HeadMountedDisplay",
+				"XRBase"
 			}
 			);
 			

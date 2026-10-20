@@ -34,10 +34,17 @@ private:
 	UFUNCTION() void SetOnlySelected(bool bChecked);
 	UFUNCTION() void ClearSelection();
 	UFUNCTION() void SelectCurrentIndex();
+	UFUNCTION() void ToggleHandSelector();
+	UFUNCTION() void ConfirmPicking();
+	UFUNCTION() void CancelPicking();
 	UPROPERTY(Transient) TObjectPtr<ATrajectoryQueryNiagaraActor> VisualizationActor;
 	UPROPERTY(Transient) TObjectPtr<USlider> IndexSlider;
 	UPROPERTY(Transient) TObjectPtr<UTextBlock> SelectionLabel;
 	UPROPERTY(Transient) TObjectPtr<UCheckBox> OnlySelected;
 	UPROPERTY(Transient) TObjectPtr<UButton> ClearButton;
+	UPROPERTY(Transient) TObjectPtr<UTextBlock> HandSelectorLabel;
+	UPROPERTY(Transient) TObjectPtr<UButton> HandSelectorButton;
+	UPROPERTY(Transient) TObjectPtr<UButton> ConfirmButton;
+	UPROPERTY(Transient) TObjectPtr<UButton> CancelButton;
 	bool bRefreshing = false;
 };

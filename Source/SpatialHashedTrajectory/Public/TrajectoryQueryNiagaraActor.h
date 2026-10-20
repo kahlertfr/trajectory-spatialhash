@@ -13,6 +13,16 @@ class UNiagaraSystem;
 class UNiagaraComponent;
 class UBoxComponent;
 
+struct FTrajectoryPickFrame
+{
+	uint64 Session = 0;
+	double Timestamp = 0;
+	FVector WorldPosition = FVector::ZeroVector;
+	FTransform SimulationToWorld;
+	float Radius = 1.5f;
+	int32 Count = 0;
+};
+
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnTrajectoryInspectionChanged);
 
 UENUM(BlueprintType)
@@ -103,6 +113,34 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "Trajectory Inspection")
 	void SetShowOnlySelectedTrajectory(bool bOnlySelected);
+
+	/** Start a preview session; selection is committed only by ConfirmSpatialPicking. Units are world centimeters. */
+	UFUNCTION(BlueprintCallable, Category = "Trajectory Inspection|Picking")
+	bool BeginSpatialPicking(FVector WorldPosition, float Radius = 1.5f);
+
+	UFUNCTION(BlueprintCallable, Category = "Trajectory Inspection|Picking")
+	void UpdateSpatialPickingPosition(FVector WorldPosition);
+
+	UFUNCTION(BlueprintCallable, Category = "Trajectory Inspection|Picking")
+	bool ConfirmSpatialPicking();
+
+	UFUNCTION(BlueprintCallable, Category = "Trajectory Inspection|Picking")
+	void CancelSpatialPicking();
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Trajectory Inspection|Picking")
+	bool bSpatialPickingActive = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Trajectory Inspection|Picking")
+	int32 CandidateTrajectoryIndex = INDEX_NONE;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Trajectory Inspection|Picking")
+	FVector TrajSelectPosition = FVector::ZeroVector;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Trajectory Inspection|Picking")
+	float TrajSelectRadius = 1.5f;
+
+	FTrajectoryPickFrame GetSpatialPickFrame() const;
+	void ReceiveSpatialPickingScores(const FTrajectoryPickFrame& Frame, TConstArrayView<uint32> Scores);
 
 	// ─── Query Settings ───────────────────────────────────────────────────────
 
@@ -357,7 +395,14 @@ public:
 
 private:
 	void PushTrajectoryInspection();
+	uint64 PickingSession = 0;
+	double CandidateTimestamp = 0;
+	double LastPickingReadback = 0;
+	FVector CandidatePosition = FVector::ZeroVector;
+protected:
+	/** Synchronize display metadata for subclasses that provide their own uploaded samples. */
 	void UpdateInspectableTrajectories(bool bHasFocus, const TArray<int32>& ContextIds);
+private:
 	bool bHasInspectableFocus = false;
 	int64 InspectableFocusId = -1;
 	// Retained after CPU sample buffers are released. Indices belong only to this displayed query.
@@ -418,6 +463,7 @@ private:
 	friend class FObjectViewBoundsTest;
 	friend class FDisplayedDistanceTest;
 	friend class FTrajectoryInspectionTest;
+	friend class FSpatialTrajectoryPickingTest;
 #endif
 	void StartPreparedQuery(FSimpleDelegate OnComplete, int32 DatasetFirstTimeStep,
 		int32 DatasetLastTimeStep, bool bIncludeWholeResultTrajectorySamples);

@@ -14,6 +14,29 @@ namespace VisibleBounds
 static const TCHAR* ShaderSource = TEXT(R"(
 uint VBEncode_{0}(float v) { uint b=asuint(v); return (b & 0x80000000u) ? ~b : (b ^ 0x80000000u); }
 RWBuffer<uint> {0}_Buffer;
+RWBuffer<uint> {0}_PickBuffer;
+uint {0}_PickCount;
+float3 {0}_PickPosition;
+float3 {0}_PickAxisX;
+float3 {0}_PickAxisY;
+float3 {0}_PickAxisZ;
+float {0}_PickRadius;
+void Consider_{0}_UEImpureCall(bool Visible,float3 Start,float3 End,int Trajectory,int View,float SurfaceRadius,out bool Written)
+{
+ Written=false;
+ if (!Visible || {0}_PickCount==0 || Trajectory<0 || Trajectory>=(int){0}_PickCount || View<0 || View>1 || !all(isfinite(Start)) || !all(isfinite(End))) return;
+ float3 A=Start-{0}_PickPosition, B=End-{0}_PickPosition;
+ A=A.x*{0}_PickAxisX+A.y*{0}_PickAxisY+A.z*{0}_PickAxisZ;
+ B=B.x*{0}_PickAxisX+B.y*{0}_PickAxisY+B.z*{0}_PickAxisZ;
+ float3 D=B-A;
+ float T=saturate(-dot(A,D)/max(dot(D,D),1.e-12));
+ float Scale=max(length({0}_PickAxisX),max(length({0}_PickAxisY),length({0}_PickAxisZ)));
+ float Distance=max(0.0,length(A+T*D)-max(0.0,SurfaceRadius)*Scale);
+ if (!isfinite(Distance) || Distance>{0}_PickRadius) return;
+ uint Score=asuint(1.0/(1.0+Distance));
+ InterlockedMax({0}_PickBuffer[View*{0}_PickCount+Trajectory],Score);
+ Written=true;
+}
 void Accumulate_{0}_UEImpureCall(bool Visible,float3 Position,int View,float Radius,out bool Written)
 {
  Written=false;
@@ -30,10 +53,19 @@ void Accumulate_{0}_UEImpureCall(bool Visible,float3 Position,int View,float Rad
 )");
 BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
 SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<uint>, Buffer)
+SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<uint>, PickBuffer)
+SHADER_PARAMETER(uint32, PickCount)
+SHADER_PARAMETER(FVector3f, PickPosition)
+SHADER_PARAMETER(FVector3f, PickAxisX)
+SHADER_PARAMETER(FVector3f, PickAxisY)
+SHADER_PARAMETER(FVector3f, PickAxisZ)
+SHADER_PARAMETER(float, PickRadius)
 END_SHADER_PARAMETER_STRUCT()
 struct FGameData
 {
 	FNiagaraParameterDirectBinding<UObject*> Binding;
+	double NextPickTime = 0;
+	uint64 PickingSession = 0;
 };
 struct FRenderData
 {
@@ -43,6 +75,9 @@ struct FRenderData
 	FDelegateHandle ReadbackHandle;
 	FRDGBufferRef Buffer = nullptr;
 	FRDGBufferUAVRef UAV = nullptr;
+	FTrajectoryPickFrame PickFrame;
+	FRDGBufferRef PickBuffer = nullptr;
+	FRDGBufferUAVRef PickUAV = nullptr;
 };
 static float Decode(uint32 Value)
 {
@@ -61,8 +96,25 @@ struct FProxy : FNiagaraDataInterfaceProxy
 	void Readback(FRDGBuilder& GraphBuilder, FNiagaraSystemInstanceID ID, FNiagaraGpuComputeDispatchInterface* Dispatch)
 	{
 		auto* Data = Instances.Find(ID);
-		if (!Data || !Data->Buffer)
+		if (!Data)
 			return;
+		if (Data->PickBuffer)
+		{
+			Dispatch->GetGpuReadbackManager()->EnqueueReadback(GraphBuilder, Data->PickBuffer,
+				[Actor = Data->Actor, Frame = Data->PickFrame](TConstArrayView<TPair<void*, uint32>> Buffers)
+				{
+					if (Buffers.Num() != 1 || Buffers[0].Value < Frame.Count * 2 * sizeof(uint32)) return;
+					TArray<uint32> Scores;
+					Scores.Append(static_cast<const uint32*>(Buffers[0].Key), Frame.Count * 2);
+					FNiagaraWorldManager::EnqueueGlobalDeferredCallback([Actor, Frame, Scores = MoveTemp(Scores)]()
+					{
+						if (auto* Target = Actor.Get()) Target->ReceiveSpatialPickingScores(Frame, Scores);
+					});
+				});
+			Data->PickBuffer = nullptr;
+			Data->PickUAV = nullptr;
+		}
+		if (!Data->Buffer) return;
 		Dispatch->GetGpuReadbackManager()->EnqueueReadback(
 			GraphBuilder, Data->Buffer,
 			[Actor = Data->Actor, Revision = Data->Revision](TConstArrayView<TPair<void*, uint32>> Buffers)
@@ -147,15 +199,24 @@ bool UNiagaraDataInterfaceVisibleBounds::PerInstanceTick(void* Data, FNiagaraSys
 	const FNiagaraVariable Parameter(FNiagaraTypeDefinition(UObject::StaticClass()),
 									 TEXT("User.VisibleBoundsReceiver"));
 	auto* Actor = Cast<ATrajectoryQueryNiagaraActor>(D->Binding.Init(Instance->GetInstanceParameters(), Parameter));
+	FTrajectoryPickFrame Frame = Actor ? Actor->GetSpatialPickFrame() : FTrajectoryPickFrame();
+	if (Frame.Session != D->PickingSession)
+	{
+		D->PickingSession = Frame.Session;
+		D->NextPickTime = 0;
+	}
+	if (Frame.Timestamp < D->NextPickTime || Frame.Count > MAX_int32 / 8) Frame.Count = 0;
+	else if (Frame.Count > 0) D->NextPickTime = Frame.Timestamp + 0.05;
 	ENQUEUE_RENDER_COMMAND(UpdateVisibleBounds)(
 		[P = GetProxyAs<VisibleBounds::FProxy>(), ID = Instance->GetId(),
 		 Weak = TWeakObjectPtr<ATrajectoryQueryNiagaraActor>(Actor),
-		 Revision = Actor ? Actor->GetVisibleBoundsRevision() : 0](FRHICommandListImmediate&)
+		 Revision = Actor ? Actor->GetVisibleBoundsRevision() : 0, Frame](FRHICommandListImmediate&)
 		{
 			if (auto* D = P->Instances.Find(ID))
 			{
 				D->Actor = Weak;
 				D->Revision = Revision;
+				D->PickFrame = Frame;
 			}
 		});
 	return false;
@@ -169,11 +230,6 @@ void UNiagaraDataInterfaceVisibleBounds::SetShaderParameters(
 {
 	auto& D = Context.GetProxy<VisibleBounds::FProxy>().Instances.FindChecked(Context.GetSystemInstanceID());
 	auto* Parameters = Context.GetParameterNestedStruct<VisibleBounds::FParameters>();
-	if (!Context.IsResourceBound(&Parameters->Buffer))
-	{
-		Parameters->Buffer = nullptr;
-		return;
-	}
 	if (!D.Buffer)
 	{
 		auto Desc = FRDGBufferDesc::CreateBufferDesc(sizeof(uint32), 14);
@@ -183,6 +239,26 @@ void UNiagaraDataInterfaceVisibleBounds::SetShaderParameters(
 		AddClearUAVPass(Context.GetGraphBuilder(), D.UAV, 0);
 	}
 	Parameters->Buffer = D.UAV;
+	Parameters->PickCount = D.PickFrame.Count;
+	Parameters->PickRadius = D.PickFrame.Radius;
+	const FTransform& Transform = D.PickFrame.SimulationToWorld;
+	Parameters->PickPosition = FVector3f(Transform.InverseTransformPosition(D.PickFrame.WorldPosition));
+	Parameters->PickAxisX = FVector3f(Transform.TransformVector(FVector::XAxisVector));
+	Parameters->PickAxisY = FVector3f(Transform.TransformVector(FVector::YAxisVector));
+	Parameters->PickAxisZ = FVector3f(Transform.TransformVector(FVector::ZAxisVector));
+	if (Context.IsResourceBound(&Parameters->PickBuffer) && D.PickFrame.Count > 0)
+	{
+		if (!D.PickBuffer)
+		{
+			auto Desc = FRDGBufferDesc::CreateBufferDesc(sizeof(uint32), D.PickFrame.Count * 2);
+			Desc.Usage |= BUF_SourceCopy;
+			D.PickBuffer = Context.GetGraphBuilder().CreateBuffer(Desc, TEXT("TrajectoryPickingScores"));
+			D.PickUAV = Context.GetGraphBuilder().CreateUAV(D.PickBuffer, PF_R32_UINT);
+			AddClearUAVPass(Context.GetGraphBuilder(), D.PickUAV, 0);
+		}
+		Parameters->PickBuffer = D.PickUAV;
+	}
+	else Parameters->PickBuffer = D.UAV; // No accesses when PickCount is zero.
 }
 #if WITH_EDITORONLY_DATA
 void UNiagaraDataInterfaceVisibleBounds::GetFunctionsInternal(TArray<FNiagaraFunctionSignature>& Functions) const
@@ -201,6 +277,22 @@ void UNiagaraDataInterfaceVisibleBounds::GetFunctionsInternal(TArray<FNiagaraFun
 				FNiagaraVariable(FNiagaraTypeDefinition::GetFloatDef(), TEXT("Radius"))};
 	S.Outputs.Add(FNiagaraVariable(FNiagaraTypeDefinition::GetBoolDef(), TEXT("Written")));
 	Functions.Add(S);
+	FNiagaraFunctionSignature Pick;
+	Pick.Name = TEXT("Consider");
+	Pick.bMemberFunction = true;
+	Pick.bRequiresContext = false;
+	Pick.bSupportsCPU = false;
+	Pick.bSupportsGPU = true;
+	Pick.bRequiresExecPin = true;
+	Pick.Inputs = {FNiagaraVariable(FNiagaraTypeDefinition(GetClass()), TEXT("Bounds")),
+		FNiagaraVariable(FNiagaraTypeDefinition::GetBoolDef(), TEXT("Visible")),
+		FNiagaraVariable(FNiagaraTypeDefinition::GetVec3Def(), TEXT("Start")),
+		FNiagaraVariable(FNiagaraTypeDefinition::GetVec3Def(), TEXT("End")),
+		FNiagaraVariable(FNiagaraTypeDefinition::GetIntDef(), TEXT("Trajectory")),
+		FNiagaraVariable(FNiagaraTypeDefinition::GetIntDef(), TEXT("View")),
+		FNiagaraVariable(FNiagaraTypeDefinition::GetFloatDef(), TEXT("SurfaceRadius"))};
+	Pick.Outputs.Add(FNiagaraVariable(FNiagaraTypeDefinition::GetBoolDef(), TEXT("Written")));
+	Functions.Add(Pick);
 }
 void UNiagaraDataInterfaceVisibleBounds::GetParameterDefinitionHLSL(const FNiagaraDataInterfaceGPUParamInfo& Info,
 																	FString& HLSL)
@@ -213,7 +305,7 @@ bool UNiagaraDataInterfaceVisibleBounds::GetFunctionHLSL(const FNiagaraDataInter
 														 const FNiagaraDataInterfaceGeneratedFunction& Function, int,
 														 FString&)
 {
-	return Function.DefinitionName == TEXT("Accumulate");
+	return Function.DefinitionName == TEXT("Accumulate") || Function.DefinitionName == TEXT("Consider");
 }
 bool UNiagaraDataInterfaceVisibleBounds::AppendCompileHash(FNiagaraCompileHashVisitor* Visitor) const
 {

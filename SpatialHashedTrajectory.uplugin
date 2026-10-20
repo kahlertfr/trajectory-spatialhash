@@ -25,6 +25,14 @@
 		{
 			"Name": "TrajectoryData",
 			"Enabled": true
+		},
+		{
+			"Name": "Niagara",
+			"Enabled": true
+		},
+		{
+			"Name": "XRBase",
+			"Enabled": true
 		}
 	]
 }

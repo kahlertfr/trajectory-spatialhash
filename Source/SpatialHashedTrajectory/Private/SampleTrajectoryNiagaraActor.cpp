@@ -446,6 +446,7 @@ void ASampleTrajectoryNiagaraActor::TransferScenarioToNiagara(ESampleTrajectoryS
 	TArray<int32> ResultTrajStartIndex;
 	TArray<int32> ResultStartTime;
 	TArray<int32> ResultSampleTimeSteps;
+	TArray<int32> ResultQuerySampleIndices;
 	TArray<float> ResultLastDistances;
 	TArray<int32> QuerySampleTimeSteps;
 	for (int32 Index = 0; Index < QueryPointsRaw.Num(); ++Index) QuerySampleTimeSteps.Add(Index);
@@ -488,6 +489,7 @@ void ASampleTrajectoryNiagaraActor::TransferScenarioToNiagara(ESampleTrajectoryS
 		{
 			ResultPoints.Add(Sample.Position);
 			ResultSampleTimeSteps.Add(Sample.TimeStep);
+			ResultQuerySampleIndices.Add(QueryPointsRaw.IsValidIndex(Sample.TimeStep) ? Sample.TimeStep : INDEX_NONE);
 			ResultDistances.Add(Sample.Distance);
 			ResultVolumeIndices.Add(Sample.VolumeIndex);
 
@@ -635,6 +637,7 @@ void ASampleTrajectoryNiagaraActor::TransferScenarioToNiagara(ESampleTrajectoryS
 
 	UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayInt32(NiagaraComponent, FName("QuerySampleTimeSteps"), QuerySampleTimeSteps);
 	UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayInt32(NiagaraComponent, FName("ResultSampleTimeSteps"), ResultSampleTimeSteps);
+	UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayInt32(NiagaraComponent, FName("ResultQuerySampleIndices"), ResultQuerySampleIndices);
 	UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayFloat(NiagaraComponent, FName("ResultLastDistances"), ResultLastDistances);
 	const int32 QueryTimeStart = 0;
 	const int32 QueryTimeEnd = FMath::Max(NumTimeSteps - 1, 0);
