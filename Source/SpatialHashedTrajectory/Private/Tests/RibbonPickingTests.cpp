@@ -1,0 +1,69 @@
+#if WITH_DEV_AUTOMATION_TESTS
+#include "Engine/World.h"
+#include "Misc/AutomationTest.h"
+#include "TrajectoryQueryNiagaraActor.h"
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FTrajectoryRibbonPickingTest,
+                                 "TrajectoryBLab.Query.RibbonPicking.Confirmation",
+                                 EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FTrajectoryRibbonPickingTest::RunTest(const FString &Parameters)
+{
+	auto *World = UWorld::CreateWorld(EWorldType::Game, false);
+	auto *Actor = World->SpawnActor<ATrajectoryQueryNiagaraActor>();
+	Actor->UpdateInspectableTrajectories(true, {41, 9});
+	Actor->RibbonPickingSampleCount = 8;
+	const auto Pose = [&]() { Actor->UpdateTrajectorySelector(FVector(100, 200, 300), 2); };
+	const auto Press = [&](uint64 Frame) {
+		Actor->UpdateRibbonConfirmation(false, Frame);
+		Pose();
+		Actor->UpdateRibbonConfirmation(true, Frame);
+	};
+	const auto Reply = [&](uint64 Frame, int32 Index) {
+		Actor->ReceiveRibbonPick(Actor->GetVisibleBoundsRevision(), Actor->TrajectorySelectorSession, Frame,
+		                         Index, FVector(100, 200, 300));
+	};
+	Pose();
+	Reply(10, 1);
+	TestEqual(TEXT("Proximity without confirmation never selects"), Actor->SelectedTrajectoryIndex,
+	          INDEX_NONE);
+	Press(20);
+	Reply(20, 1);
+	TestEqual(TEXT("Press selects the GPU winner"), Actor->SelectedTrajectoryIndex, 1);
+	Actor->UpdateRibbonConfirmation(true, 21);
+	Reply(21, 2);
+	TestEqual(TEXT("Holding confirmation cannot select again"), Actor->SelectedTrajectoryIndex, 1);
+	Press(30);
+	Reply(30, INDEX_NONE);
+	Reply(31, 2);
+	TestEqual(TEXT("A miss consumes the press and preserves selection"), Actor->SelectedTrajectoryIndex, 1);
+	Press(40);
+	const uint64 OldRevision = Actor->GetVisibleBoundsRevision();
+	Actor->SetVisualizationTimeRange(3, 4);
+	Actor->ReceiveRibbonPick(OldRevision, Actor->TrajectorySelectorSession, 40, 2, FVector(100, 200, 300));
+	TestEqual(TEXT("Filter changes reject stale hits"), Actor->SelectedTrajectoryIndex, 1);
+	Press(50);
+	Actor->UpdateTrajectorySelector(FVector::ZeroVector, 0, false);
+	Reply(50, 2);
+	TestEqual(TEXT("Deactivation cancels pending confirmation"), Actor->SelectedTrajectoryIndex, 1);
+	Press(60);
+	Reply(59, 2);
+	Reply(60, 0);
+	TestEqual(TEXT("A press can select the focus and ignores older frames"), Actor->SelectedTrajectoryIndex,
+	          0);
+	Press(70);
+	Actor->UpdateInspectableTrajectories(true, {9, 41});
+	Reply(70, 1);
+	TestEqual(TEXT("Reordered display invalidates pending pick indices"), Actor->SelectedTrajectoryIndex, 0);
+	Actor->UpdateRibbonConfirmation(false, 80);
+	Actor->UpdateTrajectorySelector(FVector::ZeroVector, -1);
+	Actor->UpdateRibbonConfirmation(true, 80);
+	Reply(80, 2);
+	TestEqual(TEXT("Invalid radius cannot select"), Actor->SelectedTrajectoryIndex, 0);
+	Press(90);
+	Actor->TrajectorySelectorUpdateTime -= 1.0;
+	Reply(90, 2);
+	TestEqual(TEXT("Expired selector cannot consume delayed hits"), Actor->SelectedTrajectoryIndex, 0);
+	World->DestroyWorld(false);
+	return true;
+}
+#endif

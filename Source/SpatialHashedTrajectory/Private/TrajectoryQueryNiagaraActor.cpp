@@ -4,6 +4,7 @@
 #include "VisibleSampleBoxComponent.h"
 #include "UObject/UnrealType.h"
 #include "NiagaraComponent.h"
+#include "Engine/World.h"
 #include "Components/BoxComponent.h"
 #include "NiagaraFunctionLibrary.h"
 #include "NiagaraDataInterfaceArrayFunctionLibrary.h"
@@ -801,9 +802,75 @@ void ATrajectoryQueryNiagaraActor::BeginPlay()
 		if (NiagaraComponent)
 		{
 			NiagaraComponent->SetVariableObject(TEXT("User.VisibleBoundsReceiver"), this);
+			NiagaraComponent->SetVariableObject(TEXT("User.RibbonPickingReceiver"), this);
 			NiagaraComponent->Deactivate();
 		}
 	}
+}
+
+void ATrajectoryQueryNiagaraActor::UpdateTrajectorySelector(FVector WorldPosition, float WorldRadius,
+                                                            bool bEnabled)
+{
+	const double Now = GetWorld() ? GetWorld()->GetTimeSeconds() : 0;
+	bEnabled = bEnabled && !WorldPosition.ContainsNaN() && FMath::IsFinite(WorldRadius) && WorldRadius > 0;
+	if (bEnabled != bTrajectorySelectorEnabled ||
+	    Now - TrajectorySelectorUpdateTime > TrajectorySelectorTimeout)
+	{
+		++TrajectorySelectorSession;
+		PendingRibbonConfirmationFrame = 0;
+	}
+	bTrajectorySelectorEnabled = bEnabled;
+	TrajectorySelectorPosition = WorldPosition;
+	TrajectorySelectorRadius = bEnabled ? WorldRadius : 0;
+	TrajectorySelectorUpdateTime = Now;
+}
+
+void ATrajectoryQueryNiagaraActor::UpdateRibbonConfirmation(bool bConfirmed, uint64 Frame)
+{
+	const bool bPressed = bConfirmed && !bPreviousRibbonConfirmation;
+	bPreviousRibbonConfirmation = bConfirmed;
+	if (!bPressed || !bTrajectorySelectorEnabled || !GetWorld() || RibbonPickingSampleCount <= 0 ||
+	    GetInspectableTrajectoryCount() <= 0)
+		return;
+	const double Now = GetWorld()->GetTimeSeconds();
+	if (Now - TrajectorySelectorUpdateTime > TrajectorySelectorTimeout)
+		return;
+	PendingRibbonConfirmationFrame = Frame;
+	PendingRibbonConfirmationRevision = VisibleBoundsRevision;
+	ConfirmedProbePosition = TrajectorySelectorPosition;
+	ConfirmedProbeRadius = TrajectorySelectorRadius;
+	RibbonConfirmationTime = Now;
+}
+
+bool ATrajectoryQueryNiagaraActor::GetRibbonPickingState(FVector &Position, float &Radius, int32 &Samples,
+                                                         uint64 &Session) const
+{
+	Position = ConfirmedProbePosition;
+	Radius = ConfirmedProbeRadius;
+	Samples = RibbonPickingSampleCount;
+	Session = TrajectorySelectorSession;
+	return bTrajectorySelectorEnabled && GetWorld() && PendingRibbonConfirmationFrame != 0 &&
+	       PendingRibbonConfirmationRevision == VisibleBoundsRevision &&
+	       GetWorld()->GetTimeSeconds() - TrajectorySelectorUpdateTime <= TrajectorySelectorTimeout &&
+	       GetWorld()->GetTimeSeconds() - RibbonConfirmationTime <= 0.5 && Samples > 0;
+}
+
+void ATrajectoryQueryNiagaraActor::ReceiveRibbonPick(uint64 Revision, uint64 Session, uint64 Frame,
+                                                     int32 Index, FVector ProbePosition)
+{
+	if (Revision != VisibleBoundsRevision || Session != TrajectorySelectorSession ||
+	    Frame <= LastRibbonPickFrame || PendingRibbonConfirmationFrame == 0 ||
+	    Frame < PendingRibbonConfirmationFrame)
+		return;
+	LastRibbonPickFrame = Frame;
+	FVector Position;
+	float Radius;
+	int32 Samples;
+	uint64 CurrentSession;
+	if (!GetRibbonPickingState(Position, Radius, Samples, CurrentSession))
+		return;
+	PendingRibbonConfirmationFrame = 0; // A miss also consumes the press, preserving the current inspection.
+	SelectTrajectoryByIndex(Index);
 }
 
 int32 ATrajectoryQueryNiagaraActor::GetInspectableTrajectoryCount() const
@@ -884,6 +951,8 @@ void ATrajectoryQueryNiagaraActor::EndPlay(const EEndPlayReason::Type EndPlayRea
 {
 	// Invalidate pending table loads and stop active query workers.
 	CancelQuery();
+	UpdateTrajectorySelector(FVector::ZeroVector, 0, false);
+	RibbonPickingSampleCount = 0;
 	UpdateInspectableTrajectories(false, {});
 	Super::EndPlay(EndPlayReason);
 }
@@ -1515,6 +1584,7 @@ void ATrajectoryQueryNiagaraActor::UploadPreparedDisplay(const FPreparedTrajecto
 	const auto& ResultVelocities = Data.ResultVelocities;
 	const auto& ResultVolumeIndices = Data.ResultVolumeIndices;
 	const auto& ResultTrajectoryIds = Data.ResultTrajectoryIds;
+	RibbonPickingSampleCount = Data.RawQueryPoints.Num() + ResultPoints.Num();
 	UpdateInspectableTrajectories(!Data.RawQueryPoints.IsEmpty(), ResultTrajectoryIds);
 	const auto& ResultMinDistances = Data.ResultMinDistances;
 	const auto& ResultMinDistanceTimeSteps = Data.ResultMinDistanceTimeSteps;
@@ -1724,3 +1794,114 @@ void ATrajectoryQueryNiagaraActor::ReceiveVisibleBounds(uint64 Revision, const F
 	Apply(TEXT("PathVisBox"), TEXT("PathVisOrigin"), TEXT("PathAxes"), Path);
 	Apply(TEXT("RelativeVisBox"), TEXT("RelativeVisOrigin"), TEXT("RelativeAxes"), Object);
 }
+
+#if WITH_DEV_AUTOMATION_TESTS
+#include "Engine/Engine.h"
+#include "Kismet/GameplayStatics.h"
+#include "NiagaraGpuComputeDispatchInterface.h"
+#include "FXSystem.h"
+#include "RenderingThread.h"
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FTrajectoryRibbonPickingIntegrationTest,
+                                 "TrajectoryBLab.Query.RibbonPicking.NiagaraIntegration",
+                                 EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FTrajectoryRibbonPickingIntegrationTest::RunTest(const FString &Parameters)
+{
+	if (GUsingNullRHI)
+	{
+		AddWarning(TEXT("Niagara ribbon picking integration requires a rendering RHI"));
+		return true;
+	}
+	auto *System =
+	    LoadObject<UNiagaraSystem>(nullptr, TEXT("/SpatialHashedTrajectory/Visualization/NS_FRNN_Result"));
+	if (!TestNotNull(TEXT("Result system"), System))
+		return false;
+	System->RequestCompile(false);
+	System->WaitForCompilationComplete(true, false);
+	auto *World = UWorld::CreateWorld(EWorldType::Game, false);
+	GEngine->CreateNewWorldContext(EWorldType::Game).SetCurrentWorld(World);
+	if (!World->FXSystem)
+		World->FXSystem = FFXSystemInterface::Create(World->GetFeatureLevel(), World->Scene);
+	World->InitializeActorsForPlay(FURL());
+	World->BeginPlay();
+	World->SetBegunPlay(true);
+	auto *Actor = World->SpawnActorDeferred<ATrajectoryQueryNiagaraActor>(
+	    ATrajectoryQueryNiagaraActor::StaticClass(), FTransform::Identity);
+	auto *Root = NewObject<USceneComponent>(Actor);
+	Actor->SetRootComponent(Root);
+	Root->RegisterComponent();
+	Actor->NiagaraSystem = System;
+	Actor->VisualizationTimeStart = 10;
+	Actor->VisualizationTimeEnd = 11;
+	Actor->ParticleRadius = 0.001f;
+	Actor->QueryRadius = 10;
+	UGameplayStatics::FinishSpawningActor(Actor, FTransform::Identity);
+	if (!Actor->HasActorBegunPlay())
+		Actor->DispatchBeginPlay();
+	auto *Component = Actor->NiagaraComponent;
+	if (!TestNotNull(TEXT("Live Niagara component"), Component))
+	{
+		World->DestroyWorld(false);
+		GEngine->DestroyWorldContext(World);
+		return false;
+	}
+	const auto Data =
+	    Async(EAsyncExecution::ThreadPool, []() {
+		    TArray<FVector> Focus = {FVector(0, 0, 0), FVector(1, 1, 1)};
+		    FSpatialHashQueryResult Context(41);
+		    Context.SamplePoints.Add(FTrajectorySamplePoint(FVector(0, 0.5, 0), 10, 0.5f));
+		    Context.SamplePoints.Add(FTrajectorySamplePoint(FVector(1, 1.5, 1), 11, 0.5f));
+		    return PrepareTrajectoryDisplay(Focus, Focus, {Context}, FVector::ZeroVector, 10, 11, 1, 0);
+	    }).Get();
+	Actor->UploadPreparedDisplay(Data, true);
+	Component->SetForceSolo(true);
+	Component->SetAllowScalability(false);
+	const FVector Probe(0, 0, 0);
+	const auto Pump = [&](int Frames) {
+		for (int I = 0; I < Frames; ++I)
+		{
+			Actor->UpdateTrajectorySelector(Probe, 10000);
+			++GFrameCounter;
+			Component->AdvanceSimulation(1, 1.f / 60);
+			World->Tick(LEVELTICK_All, 1.f / 60);
+			World->SendAllEndOfFrameUpdates();
+			if (auto *Dispatch = FNiagaraGpuComputeDispatchInterface::Get(World))
+				Dispatch->FlushAndWait_GameThread();
+			FlushRenderingCommands();
+		}
+	};
+	Pump(20);
+	TestEqual(TEXT("Live proximity does not select without confirmation"), Actor->SelectedTrajectoryIndex,
+	          INDEX_NONE);
+	Component->SetEmitterEnable(TEXT("QueryResult"), false);
+	Component->SetEmitterEnable(TEXT("RealtiveQueryResult"), false);
+	Component->SetVariableBool(TEXT("User.ConfirmTrajectorySelection"), true);
+	Pump(20);
+	TestEqual(TEXT("Niagara exports and confirms the focus ribbon"), Actor->SelectedTrajectoryIndex, 0);
+	Actor->ClearTrajectoryInspection();
+	Pump(5);
+	TestEqual(TEXT("Held confirmation does not retrigger"), Actor->SelectedTrajectoryIndex, INDEX_NONE);
+	Component->SetVariableBool(TEXT("User.ConfirmTrajectorySelection"), false);
+	Pump(2);
+	Component->SetEmitterEnable(TEXT("QueryTrajectory"), false);
+	Component->SetEmitterEnable(TEXT("RealtiveQueryResult"), true);
+	Component->ReinitializeSystem();
+	Pump(20);
+	Component->SetVariableBool(TEXT("User.ConfirmTrajectorySelection"), true);
+	Pump(20);
+	TestEqual(TEXT("Object-view ribbon selects context; focus/collision markers cannot win"),
+	          Actor->SelectedTrajectoryIndex, 1);
+	Component->SetVariableBool(TEXT("User.ConfirmTrajectorySelection"), false);
+	Pump(2);
+	Component->SetVariableBool(TEXT("ObjectViewWithRotation"), true);
+	Component->SetWorldTransform(FTransform(FRotator(10, 30, 20), FVector(100, 200, 300), FVector(2, 3, 4)));
+	Actor->ClearTrajectoryInspection();
+	Pump(10);
+	Component->SetVariableBool(TEXT("User.ConfirmTrajectorySelection"), true);
+	Pump(20);
+	TestEqual(TEXT("Object alignment and transformed component remain pickable"),
+	          Actor->SelectedTrajectoryIndex, 1);
+	World->DestroyWorld(false);
+	GEngine->DestroyWorldContext(World);
+	return true;
+}
+#endif

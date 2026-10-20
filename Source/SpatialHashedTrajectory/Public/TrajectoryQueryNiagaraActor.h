@@ -104,6 +104,18 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Trajectory Inspection")
 	void SetShowOnlySelectedTrajectory(bool bOnlySelected);
 
+	/** Refresh while the fingertip selector is active. Radius is world-space centimeters. */
+	UFUNCTION(BlueprintCallable, Category = "Trajectory Inspection", meta = (CPP_Default_bEnabled = "true"))
+	void UpdateTrajectorySelector(FVector WorldPosition, float WorldRadius, bool bEnabled = true);
+
+	/** Tick updates expire when a selector stops sending (for example when hidden). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Trajectory Inspection", meta = (ClampMin = "0.01"))
+	float TrajectorySelectorTimeout = 0.15f;
+
+	void UpdateRibbonConfirmation(bool bConfirmed, uint64 Frame);
+	bool GetRibbonPickingState(FVector& Position, float& Radius, int32& Samples, uint64& Session) const;
+	void ReceiveRibbonPick(uint64 Revision, uint64 Session, uint64 Frame, int32 Index, FVector ProbePosition);
+
 	// ─── Query Settings ───────────────────────────────────────────────────────
 
 	/** Path to the dataset directory containing shard files */
@@ -357,6 +369,20 @@ public:
 
 private:
 	void PushTrajectoryInspection();
+	FVector TrajectorySelectorPosition = FVector::ZeroVector;
+	float TrajectorySelectorRadius = 0.f;
+	double TrajectorySelectorUpdateTime = -DBL_MAX;
+	uint64 TrajectorySelectorSession = 1;
+	uint64 LastRibbonPickFrame = 0;
+	int32 RibbonPickingSampleCount = 0;
+	bool bTrajectorySelectorEnabled = false;
+	bool bPreviousRibbonConfirmation = false;
+	uint64 PendingRibbonConfirmationFrame = 0;
+	uint64 PendingRibbonConfirmationRevision = 0;
+	FVector ConfirmedProbePosition = FVector::ZeroVector;
+	float ConfirmedProbeRadius = 0;
+	double RibbonConfirmationTime = 0;
+
 	void UpdateInspectableTrajectories(bool bHasFocus, const TArray<int32>& ContextIds);
 	bool bHasInspectableFocus = false;
 	int64 InspectableFocusId = -1;
@@ -418,6 +444,8 @@ private:
 	friend class FObjectViewBoundsTest;
 	friend class FDisplayedDistanceTest;
 	friend class FTrajectoryInspectionTest;
+	friend class FTrajectoryRibbonPickingTest;
+	friend class FTrajectoryRibbonPickingIntegrationTest;
 #endif
 	void StartPreparedQuery(FSimpleDelegate OnComplete, int32 DatasetFirstTimeStep,
 		int32 DatasetLastTimeStep, bool bIncludeWholeResultTrajectorySamples);

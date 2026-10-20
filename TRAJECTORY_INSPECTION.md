@@ -70,6 +70,67 @@ bounds callbacks are invalidated when inspection changes.
 Custom Niagara systems must implement these parameters and final modules to
 support inspection; uploading the parameters alone does not alter rendering.
 
+## Spatial ribbon selection
+
+The fingertip selector can select the focus ribbon in path view and context
+ribbons in path and object view. Collision markers, query particle meshes,
+sprites, arrows and radius guides never contribute picking candidates.
+
+**Confirmation input:** both supplied Niagara systems expose
+`User.ConfirmTrajectorySelection` as a **Bool**, default false. Set it on the
+result actor's Niagara component: true on confirmation press, false on release.
+Keep each value for at least one Niagara tick. A rising edge captures the current
+selector sphere and requests one pick. Holding true does not select repeatedly.
+Proximity alone never changes inspection; there is no dwell or hover gesture.
+The user supplies the confirmation-input Blueprint wiring.
+
+`BP_QueryResultVisualization.SetTrajSelector(Location, Radius)` preserves the
+existing probe parameters and also calls `UpdateTrajectorySelector`. The legacy
+Radius input is the selector's minimum world scale for the standard 100 cm
+sphere mesh; the bridge multiplies it by 50 to obtain the world radius in cm.
+Native/custom callers use `UpdateTrajectorySelector(WorldPosition, WorldRadius,
+bEnabled)` directly, with radius already in centimeters.
+
+`BP_TrajectorSelector` sends its pose every active tick (the old 0.2-second delay
+is bypassed). Deactivation immediately cancels pending picks, including safe
+handling before a visualization actor has been assigned. Pose updates also expire
+after `TrajectorySelectorTimeout` (default 0.15 seconds), so a disconnected or
+stopped selector cannot submit later picks. The committed inspection is preserved.
+
+`User.RibbonPicking` is a GPU-only `UNiagaraDataInterfaceRibbonPicking` and
+`User.RibbonPickingReceiver` is bound to the result actor before activation.
+Final `ExportFocusRibbonPicking` and `ExportContextRibbonPicking` modules record
+only ribbon emitters' final positions, visibility and width. They use actual
+query-array length and flat sample indices, with focus display index 0 and
+context render index + 1. They run after the existing inspection/visibility
+modules. Hidden endpoints cannot form selectable segments, and adjacent samples
+from different trajectories are never connected.
+
+After all emitters contribute, a compute pass tests the captured world-space
+sphere against consecutive visible ribbon samples. Segment distance catches hits
+between sparsely sampled endpoints. Width is treated as a capsule around the
+centerline, using the larger endpoint half width and the component's largest
+axis scale; this is a conservative ribbon-width tolerance rather than a
+camera-facing triangle/material intersection. Final positions already include
+periodic offsets, object alignment, placement and grab transforms. The Niagara
+component's remaining linear transform is applied once; subtracting its world
+translation from the probe avoids large-world float precision loss.
+
+One atomic minimum per trajectory and view preserves distance/index association
+without racing a separate winning-ID write. Only those minima are read back,
+asynchronously. The nearest candidate wins; exact ties prefer path view, then
+object view, and lower display index within each view. A miss preserves the
+current selection. Successful hits call `SelectTrajectoryByIndex`, so both views,
+isolation, visible bounds and the existing controls update through the same API.
+No application-owned CPU trajectory cache is retained for picking.
+
+Display revisions, selector sessions, confirmation frame numbers and a short
+request lifetime reject stale callbacks. Changing the display while a pick is
+pending requires a fresh confirmation. The GPU sample buffer and reduction run
+only while a confirmed pick is pending; inactive picking binds a tiny dummy
+buffer. Custom systems must supply the ribbon export modules as well as the
+parameters; setting the confirmation bool alone is insufficient.
+
 ## Validation
 
 `TrajectoryBLab.Query.TrajectoryInspection` tests display-index/source-ID mapping,
@@ -86,3 +147,14 @@ context index, sphere bounds growing with the user radius, and restoration
 without respawning. An offscreen render of the actual panel was reviewed for
 layout. The local fixture remains in the parent's ignored `codex/` folder.
 No real dataset or headset interaction was used for these checks.
+
+Spatial-picking validation (2026-10-20): the TrajectoryBLabEditor target builds.
+Both result Niagara systems compile for D3D12/SM6 and both modified Blueprints
+compile. `TrajectoryBLab.Query.RibbonPicking.Confirmation` covers rising edges,
+held input, misses, focus/context mapping, revisions, deactivation, invalid radius
+and expiry. `GPUSegments` executes the reduction shader for between-sample hits,
+hidden samples, trajectory boundaries, coincident endpoints, object view, width
+and nonuniform component scale. `NiagaraIntegration` exercises actual ribbon
+export, asynchronous readback and confirmation in a synthetic Unreal world,
+including object alignment and transformed components. No headset or real-dataset
+test was performed.

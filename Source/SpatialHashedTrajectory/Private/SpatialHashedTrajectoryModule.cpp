@@ -1,11 +1,15 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "SpatialHashedTrajectoryModule.h"
+#include "Interfaces/IPluginManager.h"
+#include "ShaderCore.h"
+#include "Misc/Paths.h"
 
 #define LOCTEXT_NAMESPACE "FSpatialHashedTrajectoryModule"
 
 void FSpatialHashedTrajectoryModule::StartupModule()
 {
+	AddShaderSourceDirectoryMapping(TEXT("/Plugin/SpatialHashedTrajectory"), FPaths::Combine(IPluginManager::Get().FindPlugin(TEXT("SpatialHashedTrajectory"))->GetBaseDir(), TEXT("Shaders")));
 	// This code will execute after your module is loaded into memory; the exact timing is specified in the .uplugin file per-module
 	UE_LOG(LogTemp, Log, TEXT("SpatialHashedTrajectory: Module started"));
 }

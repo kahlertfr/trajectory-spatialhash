@@ -43,6 +43,7 @@ public class SpatialHashedTrajectory : ModuleRules
 			new string[]
 			{
 				"RenderCore",
+				"Projects",
 				"RHI"
 			}
 			);
