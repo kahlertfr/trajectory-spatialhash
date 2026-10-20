@@ -806,10 +806,85 @@ void ATrajectoryQueryNiagaraActor::BeginPlay()
 	}
 }
 
+int32 ATrajectoryQueryNiagaraActor::GetInspectableTrajectoryCount() const
+{
+	return (bHasInspectableFocus ? 1 : 0) + InspectableContextIds.Num();
+}
+
+bool ATrajectoryQueryNiagaraActor::GetInspectableTrajectoryId(int32 Index, int64& OutTrajectoryId) const
+{
+	OutTrajectoryId = -1;
+	if (Index < 0 || Index >= GetInspectableTrajectoryCount()) return false;
+	if (bHasInspectableFocus && Index == 0) OutTrajectoryId = InspectableFocusId;
+	else OutTrajectoryId = InspectableContextIds[Index - (bHasInspectableFocus ? 1 : 0)];
+	return true;
+}
+
+bool ATrajectoryQueryNiagaraActor::SelectTrajectoryByIndex(int32 Index)
+{
+	if (Index < 0 || Index >= GetInspectableTrajectoryCount()) return false;
+	if (SelectedTrajectoryIndex != Index)
+	{
+		SelectedTrajectoryIndex = Index;
+		PushTrajectoryInspection();
+		OnTrajectoryInspectionChanged.Broadcast();
+	}
+	return true;
+}
+
+void ATrajectoryQueryNiagaraActor::ClearTrajectoryInspection()
+{
+	if (SelectedTrajectoryIndex == INDEX_NONE) return;
+	SelectedTrajectoryIndex = INDEX_NONE;
+	PushTrajectoryInspection();
+	OnTrajectoryInspectionChanged.Broadcast();
+}
+
+void ATrajectoryQueryNiagaraActor::SetShowOnlySelectedTrajectory(bool bOnlySelected)
+{
+	if (bShowOnlySelectedTrajectory == bOnlySelected) return;
+	bShowOnlySelectedTrajectory = bOnlySelected;
+	PushTrajectoryInspection();
+	OnTrajectoryInspectionChanged.Broadcast();
+}
+
+void ATrajectoryQueryNiagaraActor::PushTrajectoryInspection()
+{
+	++VisibleBoundsRevision;
+	if (!NiagaraComponent) return;
+	NiagaraComponent->SetVariableInt(TEXT("SelectedTrajectoryIndex"), SelectedTrajectoryIndex);
+	NiagaraComponent->SetVariableBool(TEXT("HasTrajectorySelection"), SelectedTrajectoryIndex != INDEX_NONE);
+	NiagaraComponent->SetVariableBool(TEXT("TrajSelectOnly"), bShowOnlySelectedTrajectory);
+}
+
+void ATrajectoryQueryNiagaraActor::UpdateInspectableTrajectories(bool bHasFocus, const TArray<int32>& ContextIds)
+{
+	// Progressive uploads can change render indices. Preserve identity within each role.
+	const bool bSelectedFocus = bHasInspectableFocus && SelectedTrajectoryIndex == 0;
+	int64 PreviousId = -1;
+	const bool bHadSelection = GetInspectableTrajectoryId(SelectedTrajectoryIndex, PreviousId);
+	bHasInspectableFocus = bHasFocus;
+	InspectableFocusId = QueryTrajectoryId;
+	InspectableContextIds = ContextIds;
+	SelectedTrajectoryIndex = INDEX_NONE;
+	if (bHadSelection)
+	{
+		if (bSelectedFocus && bHasFocus) SelectedTrajectoryIndex = 0;
+		else if (!bSelectedFocus)
+		{
+			const int32 ContextIndex = InspectableContextIds.IndexOfByKey(PreviousId);
+			if (ContextIndex != INDEX_NONE) SelectedTrajectoryIndex = ContextIndex + (bHasFocus ? 1 : 0);
+		}
+	}
+	PushTrajectoryInspection();
+	OnTrajectoryInspectionChanged.Broadcast();
+}
+
 void ATrajectoryQueryNiagaraActor::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
 	// Invalidate pending table loads and stop active query workers.
 	CancelQuery();
+	UpdateInspectableTrajectories(false, {});
 	Super::EndPlay(EndPlayReason);
 }
 
@@ -1006,6 +1081,11 @@ bool ATrajectoryQueryNiagaraActor::FireAsyncQueriesWithCallback(
 	ActiveQueryTimeEnd = QueryTimeEnd;
 	EffectiveSampleStride = RequestedSampleStride;
 	DisplayedSampleCount = 0;
+	SelectedTrajectoryIndex = INDEX_NONE;
+	bHasInspectableFocus = false;
+	InspectableContextIds.Reset();
+	PushTrajectoryInspection();
+	OnTrajectoryInspectionChanged.Broadcast();
 	bAllBatchesProcessed = false;
 	bFinalDisplayTransferred = false;
 	PendingQueryComplete = OnComplete;
@@ -1435,6 +1515,7 @@ void ATrajectoryQueryNiagaraActor::UploadPreparedDisplay(const FPreparedTrajecto
 	const auto& ResultVelocities = Data.ResultVelocities;
 	const auto& ResultVolumeIndices = Data.ResultVolumeIndices;
 	const auto& ResultTrajectoryIds = Data.ResultTrajectoryIds;
+	UpdateInspectableTrajectories(!Data.RawQueryPoints.IsEmpty(), ResultTrajectoryIds);
 	const auto& ResultMinDistances = Data.ResultMinDistances;
 	const auto& ResultMinDistanceTimeSteps = Data.ResultMinDistanceTimeSteps;
 	const auto& ResultTrajStartIndex = Data.ResultTrajStartIndex;
@@ -1566,6 +1647,51 @@ void ATrajectoryQueryNiagaraActor::UploadPreparedDisplay(const FPreparedTrajecto
 		RawQueryPoints.Num(), ResultPoints.Num(), ResultTrajectoryIds.Num(),
 		*ResultBoundsMin.ToString(), *ResultBoundsMax.ToString());
 }
+
+#if WITH_DEV_AUTOMATION_TESTS
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FTrajectoryInspectionTest, "TrajectoryBLab.Query.TrajectoryInspection",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FTrajectoryInspectionTest::RunTest(const FString& Parameters)
+{
+	auto* Actor = NewObject<ATrajectoryQueryNiagaraActor>();
+	Actor->NiagaraComponent = NewObject<UNiagaraComponent>(Actor);
+	Actor->QueryTrajectoryId = 9000000000LL;
+	Actor->UpdateInspectableTrajectories(true, {41, 9});
+	TestEqual(TEXT("Focus plus displayed context count"), Actor->GetInspectableTrajectoryCount(), 3);
+	int64 Id = -1;
+	TestTrue(TEXT("Focus ID is available without narrowing"), Actor->GetInspectableTrajectoryId(0, Id));
+	TestEqual(TEXT("Focus keeps its 64-bit source identity"), Id, 9000000000LL);
+	TestTrue(TEXT("Select context by render index"), Actor->SelectTrajectoryByIndex(2));
+	Actor->GetInspectableTrajectoryId(2, Id);
+	TestEqual(TEXT("Source ID is distinct from render index"), Id, int64(9));
+	TestFalse(TEXT("Out of range input is rejected"), Actor->SelectTrajectoryByIndex(3));
+	TestEqual(TEXT("Invalid input preserves selection"), Actor->SelectedTrajectoryIndex, 2);
+	Actor->SetShowOnlySelectedTrajectory(true);
+	const uint64 Revision = Actor->VisibleBoundsRevision;
+	Actor->SetShowOnlySelectedTrajectory(true);
+	TestEqual(TEXT("Repeated value does not invalidate bounds"), Actor->VisibleBoundsRevision, Revision);
+	Actor->UpdateInspectableTrajectories(true, {9, 41, 77});
+	TestEqual(TEXT("Progressive reordering preserves selected source identity"), Actor->SelectedTrajectoryIndex, 1);
+	Actor->ReleaseQueryCPUData();
+	TestEqual(TEXT("Index mapping survives CPU sample cleanup"), Actor->GetInspectableTrajectoryCount(), 4);
+	TestEqual(TEXT("Inspection does not change the query focus"), Actor->QueryTrajectoryId, 9000000000LL);
+	Actor->ClearTrajectoryInspection();
+	TestEqual(TEXT("Clear removes selection"), Actor->SelectedTrajectoryIndex, INDEX_NONE);
+	TestFalse(TEXT("Clear disables GPU selection even when isolation preference is retained"),
+		Actor->NiagaraComponent->GetOverrideParameters().GetParameterValue<FNiagaraBool>(
+			FNiagaraVariable(FNiagaraTypeDefinition::GetBoolDef(), TEXT("User.HasTrajectorySelection"))).GetValue());
+	Actor->SelectTrajectoryByIndex(0);
+	Actor->UpdateInspectableTrajectories(true, {41});
+	TestEqual(TEXT("Focus remains selected during progressive updates"), Actor->SelectedTrajectoryIndex, 0);
+	Actor->SelectTrajectoryByIndex(1);
+	Actor->UpdateInspectableTrajectories(true, {});
+	TestEqual(TEXT("Missing context clears selection"), Actor->SelectedTrajectoryIndex, INDEX_NONE);
+	Actor->UpdateInspectableTrajectories(false, {});
+	TestEqual(TEXT("Empty data disables selection"), Actor->GetInspectableTrajectoryCount(), 0);
+	TestFalse(TEXT("Empty data cannot select index zero"), Actor->SelectTrajectoryByIndex(0));
+	return true;
+}
+#endif
 
 void ATrajectoryQueryNiagaraActor::ReceiveVisibleBounds(uint64 Revision, const FBox& Path, const FBox& Object)
 {

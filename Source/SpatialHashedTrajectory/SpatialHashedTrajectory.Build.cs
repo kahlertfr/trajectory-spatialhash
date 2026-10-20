@@ -31,7 +31,10 @@ public class SpatialHashedTrajectory : ModuleRules
                 "VRInteraction",
                 "TrajectoryData",
 				"Niagara",
-				"NiagaraCore"
+				"NiagaraCore",
+				"UMG",
+				"Slate",
+				"SlateCore"
 			}
 			);
 			

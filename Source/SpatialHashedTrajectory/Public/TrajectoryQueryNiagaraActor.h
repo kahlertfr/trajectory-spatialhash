@@ -13,6 +13,8 @@ class UNiagaraSystem;
 class UNiagaraComponent;
 class UBoxComponent;
 
+DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnTrajectoryInspectionChanged);
+
 UENUM(BlueprintType)
 enum class ETrajectoryContextFilterMode : uint8
 {
@@ -75,6 +77,32 @@ class SPATIALHASHEDTRAJECTORY_API ATrajectoryQueryNiagaraActor : public AActor
 
 public:
 	ATrajectoryQueryNiagaraActor();
+
+	/** Shared by path and object view. Index 0 is the focus; subsequent indices are displayed context trajectories. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Trajectory Inspection")
+	int32 SelectedTrajectoryIndex = INDEX_NONE;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Trajectory Inspection")
+	bool bShowOnlySelectedTrajectory = false;
+
+	UPROPERTY(BlueprintAssignable, Category = "Trajectory Inspection")
+	FOnTrajectoryInspectionChanged OnTrajectoryInspectionChanged;
+
+	UFUNCTION(BlueprintPure, Category = "Trajectory Inspection")
+	int32 GetInspectableTrajectoryCount() const;
+
+	UFUNCTION(BlueprintPure, Category = "Trajectory Inspection")
+	bool GetInspectableTrajectoryId(int32 Index, int64& OutTrajectoryId) const;
+
+	/** Returns false for invalid indices, preserving the current selection. */
+	UFUNCTION(BlueprintCallable, Category = "Trajectory Inspection")
+	bool SelectTrajectoryByIndex(int32 Index);
+
+	UFUNCTION(BlueprintCallable, Category = "Trajectory Inspection")
+	void ClearTrajectoryInspection();
+
+	UFUNCTION(BlueprintCallable, Category = "Trajectory Inspection")
+	void SetShowOnlySelectedTrajectory(bool bOnlySelected);
 
 	// ─── Query Settings ───────────────────────────────────────────────────────
 
@@ -328,6 +356,12 @@ public:
 	void ReceiveVisibleBounds(uint64 Revision, const FBox& Path, const FBox& Object);
 
 private:
+	void PushTrajectoryInspection();
+	void UpdateInspectableTrajectories(bool bHasFocus, const TArray<int32>& ContextIds);
+	bool bHasInspectableFocus = false;
+	int64 InspectableFocusId = -1;
+	// Retained after CPU sample buffers are released. Indices belong only to this displayed query.
+	TArray<int32> InspectableContextIds;
 	void UpdateObjectViewPlacementOffset();
 	FVector ObjectViewPlacementTargetSize = FVector::ZeroVector;
 	FVector ObjectViewPlacementOffset = FVector::ZeroVector;
@@ -383,6 +417,7 @@ private:
 	friend class FQuerySamplingCleanupTest;
 	friend class FObjectViewBoundsTest;
 	friend class FDisplayedDistanceTest;
+	friend class FTrajectoryInspectionTest;
 #endif
 	void StartPreparedQuery(FSimpleDelegate OnComplete, int32 DatasetFirstTimeStep,
 		int32 DatasetLastTimeStep, bool bIncludeWholeResultTrajectorySamples);
