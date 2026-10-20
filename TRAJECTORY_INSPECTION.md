@@ -44,18 +44,24 @@ Both supplied result systems declare:
 | --- | --- | --- |
 | `User.SelectedTrajectoryIndex` | Int | Focus=0; context render index + 1 |
 | `User.HasTrajectorySelection` | Bool | Enables inspection; false restores normal display |
-| `User.TrajSelectOnly` | Bool | Suppresses nonmatching samples when inspection is enabled |
+| `User.TrajSelectOnly` | Bool | Suppresses nonmatching context samples when inspection is enabled |
 
 Final update modules preserve selected samples' existing encoded RGB and set
 unselected RGB to white, preserving their alpha. Isolation additionally zeros
-unselected alpha, ribbon width, sprite size, and mesh scale. Existing time, zone,
+unselected context alpha, ribbon width, sprite size, and mesh scale. The query
+trajectory and query particle remain visible as references when a context
+trajectory is isolated. Existing time, zone,
 category, particle visibility and shadow rules continue to apply. Samples are not
 killed or respawned when inspection changes.
 
 The focus ribbon, context ribbons, focus point markers, and collision markers
 participate. Radius guides remain contextual decorations. Visible-bounds export
-uses the resulting sample visibility, so isolation also refits collision geometry
-and axes without changing the sample layout or grab references. Old asynchronous
+uses the resulting sample visibility and includes the query sphere's full radius
+from `User.ParticleRadius` and the existing display scale. This radius is stored
+before the grab transform, preventing grab scaling from being applied twice.
+Isolation therefore refits collision geometry around the selected context and
+the query reference, including the full sphere. Axes follow the fitted geometry
+without changing the sample layout or grab references. Old asynchronous
 bounds callbacks are invalidated when inspection changes.
 
 Custom Niagara systems must implement these parameters and final modules to
@@ -72,7 +78,8 @@ Validation on 2026-10-20: the UE 5.6 Editor target builds; the two Niagara syste
 compile with D3D12/SM6 enabled, and the modified Blueprints compile. All 12
 `TrajectoryBLab.Query` tests and a local synthetic D3D12 PIE check pass. The latter
 checks binding through the actual time configurator's initialization path,
-focus/context isolation in both views, an empty selection match, and restoration
+focus/context isolation in both views, query-reference retention for an unmatched
+context index, sphere bounds growing with the user radius, and restoration
 without respawning. An offscreen render of the actual panel was reviewed for
 layout. The local fixture remains in the parent's ignored `codex/` folder.
 No real dataset or headset interaction was used for these checks.
