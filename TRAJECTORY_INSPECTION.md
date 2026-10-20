@@ -81,7 +81,7 @@ sprites, arrows and radius guides never contribute picking candidates.
 result actor's Niagara component: true on confirmation press, false on release.
 Keep each value for at least one Niagara tick. A rising edge captures the current
 selector sphere and requests one pick. Holding true does not select repeatedly.
-Proximity alone never changes inspection; there is no dwell or hover gesture.
+Proximity alone previews the nearest candidate but never changes inspection; there is no dwell or hover gesture.
 The user supplies the confirmation-input Blueprint wiring.
 
 `BP_QueryResultVisualization.SetTrajSelector(Location, Radius)` preserves the
@@ -127,9 +127,40 @@ No application-owned CPU trajectory cache is retained for picking.
 Display revisions, selector sessions, confirmation frame numbers and a short
 request lifetime reject stale callbacks. Changing the display while a pick is
 pending requires a fresh confirmation. The GPU sample buffer and reduction run
-only while a confirmed pick is pending; inactive picking binds a tiny dummy
-buffer. Custom systems must supply the ribbon export modules as well as the
+while the selector is active, providing continuous candidate feedback; inactive
+picking binds a tiny dummy buffer. Custom systems must supply the ribbon export modules as well as the
 parameters; setting the confirmation bool alone is insufficient.
+
+### Candidate width preview
+
+While the fingertip sphere is active, the same asynchronous GPU picker supplies
+`CandidateTrajectoryIndex`, independently of `SelectedTrajectoryIndex`. The
+candidate's ribbon is shown at **3x normal width** in both path and object view.
+`CandidateRibbonWidthMultiplier` on the result actor adjusts this factor (minimum
+1); all encoded colors and existing visibility/isolation rules are preserved.
+There is no automatic selection or dwell gesture.
+
+The supplied systems expose `User.CandidateTrajectoryIndex` (Int, default -1) and
+`User.CandidateRibbonWidthMultiplier` (Float, default 3). The result actor maintains
+both parameters automatically; no additional Blueprint wiring is required.
+Only the final ribbon exporters apply the width change. Markers, particle meshes,
+sprites and guides are unaffected. Export occurs before width multiplication, so
+the preview cannot enlarge its own hit tolerance or bias candidate selection.
+Upstream width initialization restores the base width on every update; the
+multiplier never compounds across frames.
+
+A miss, deactivation, changed selector radius, stale selector pose, or changed
+display revision clears the preview. Old GPU results from a different selector
+session or display are rejected, as are candidate results whose captured probe
+position is too far from the current fingertip. The preview can trail the hand
+by the asynchronous readback latency. Confirmation still uses the existing
+confirmation-input flow; the preview does not alter its activation/deactivation
+wiring.
+
+Candidate validation extends the confirmation test with live candidate changes,
+misses, stale poses and expiry. The Niagara integration test captures actual GPU
+particle datasets to compare normal and preview ribbon widths in both views and
+checks that repeated frames do not compound the multiplier.
 
 ## Validation
 

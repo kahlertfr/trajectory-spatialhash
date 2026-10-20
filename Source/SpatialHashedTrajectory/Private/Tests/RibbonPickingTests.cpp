@@ -24,6 +24,25 @@ bool FTrajectoryRibbonPickingTest::RunTest(const FString &Parameters)
 	};
 	Pose();
 	Reply(10, 1);
+	TestEqual(TEXT("Proximity previews the nearest candidate"), Actor->CandidateTrajectoryIndex, 1);
+	const auto InitialRevision = Actor->GetVisibleBoundsRevision();
+	Reply(11, 2);
+	TestEqual(TEXT("Preview can switch candidates"), Actor->CandidateTrajectoryIndex, 2);
+	TestEqual(TEXT("Preview does not invalidate display bounds"), Actor->GetVisibleBoundsRevision(),
+	          InitialRevision);
+	Reply(12, INDEX_NONE);
+	TestEqual(TEXT("A miss clears the preview"), Actor->CandidateTrajectoryIndex, INDEX_NONE);
+	Reply(13, 1);
+	const uint64 OldSession = Actor->TrajectorySelectorSession;
+	Actor->UpdateTrajectorySelector(FVector(100, 200, 300), 3);
+	TestEqual(TEXT("Changing radius clears the candidate"), Actor->CandidateTrajectoryIndex, INDEX_NONE);
+	Actor->ReceiveRibbonPick(Actor->GetVisibleBoundsRevision(), OldSession, 14, 2, FVector(100, 200, 300));
+	TestEqual(TEXT("Old-radius hits cannot restore the candidate"), Actor->CandidateTrajectoryIndex, INDEX_NONE);
+
+	Actor->ReceiveRibbonPick(Actor->GetVisibleBoundsRevision(), Actor->TrajectorySelectorSession, 14, 2,
+	                         FVector::ZeroVector);
+	TestEqual(TEXT("A distant old fingertip pose cannot highlight a candidate"),
+	          Actor->CandidateTrajectoryIndex, INDEX_NONE);
 	TestEqual(TEXT("Proximity without confirmation never selects"), Actor->SelectedTrajectoryIndex,
 	          INDEX_NONE);
 	Press(20);
@@ -44,6 +63,8 @@ bool FTrajectoryRibbonPickingTest::RunTest(const FString &Parameters)
 	Press(50);
 	Actor->UpdateTrajectorySelector(FVector::ZeroVector, 0, false);
 	Reply(50, 2);
+	TestEqual(TEXT("Deactivation removes candidate width immediately"), Actor->CandidateTrajectoryIndex,
+	          INDEX_NONE);
 	TestEqual(TEXT("Deactivation cancels pending confirmation"), Actor->SelectedTrajectoryIndex, 1);
 	Press(60);
 	Reply(59, 2);
@@ -61,7 +82,9 @@ bool FTrajectoryRibbonPickingTest::RunTest(const FString &Parameters)
 	TestEqual(TEXT("Invalid radius cannot select"), Actor->SelectedTrajectoryIndex, 0);
 	Press(90);
 	Actor->TrajectorySelectorUpdateTime -= 1.0;
+	Actor->RefreshRibbonCandidate();
 	Reply(90, 2);
+	TestEqual(TEXT("Expired selector clears preview"), Actor->CandidateTrajectoryIndex, INDEX_NONE);
 	TestEqual(TEXT("Expired selector cannot consume delayed hits"), Actor->SelectedTrajectoryIndex, 0);
 	World->DestroyWorld(false);
 	return true;

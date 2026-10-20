@@ -196,6 +196,7 @@ bool UNiagaraDataInterfaceRibbonPicking::PerInstanceTick(void *Data, FNiagaraSys
 	D->ConfirmationBinding.Init(
 	    Instance->GetInstanceParameters(),
 	    FNiagaraVariable(FNiagaraTypeDefinition::GetBoolDef(), TEXT("User.ConfirmTrajectorySelection")));
+	if (Actor) Actor->RefreshRibbonCandidate();
 	if (Actor)
 		Actor->UpdateRibbonConfirmation(D->ConfirmationBinding.GetValue().GetValue(), GFrameCounter);
 	FVector Probe = FVector::ZeroVector;

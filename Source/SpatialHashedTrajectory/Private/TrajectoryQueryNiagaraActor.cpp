@@ -808,16 +808,39 @@ void ATrajectoryQueryNiagaraActor::BeginPlay()
 	}
 }
 
+void ATrajectoryQueryNiagaraActor::SetRibbonCandidate(int32 Index)
+{
+	CandidateTrajectoryIndex = Index;
+	if (NiagaraComponent)
+		NiagaraComponent->SetVariableInt(TEXT("User.CandidateTrajectoryIndex"), Index);
+}
+
+void ATrajectoryQueryNiagaraActor::RefreshRibbonCandidate()
+{
+	const double Now = GetWorld() ? GetWorld()->GetTimeSeconds() : 0;
+	if (!bTrajectorySelectorEnabled || RibbonCandidateRevision != VisibleBoundsRevision ||
+	    Now - TrajectorySelectorUpdateTime > TrajectorySelectorTimeout ||
+	    Now - RibbonCandidateTime > TrajectorySelectorTimeout)
+		SetRibbonCandidate(INDEX_NONE);
+	if (NiagaraComponent)
+		NiagaraComponent->SetVariableFloat(TEXT("User.CandidateRibbonWidthMultiplier"),
+		                                   FMath::IsFinite(CandidateRibbonWidthMultiplier)
+		                                       ? FMath::Max(1.f, CandidateRibbonWidthMultiplier)
+		                                       : 1.f);
+}
+
 void ATrajectoryQueryNiagaraActor::UpdateTrajectorySelector(FVector WorldPosition, float WorldRadius,
                                                             bool bEnabled)
 {
 	const double Now = GetWorld() ? GetWorld()->GetTimeSeconds() : 0;
 	bEnabled = bEnabled && !WorldPosition.ContainsNaN() && FMath::IsFinite(WorldRadius) && WorldRadius > 0;
 	if (bEnabled != bTrajectorySelectorEnabled ||
-	    Now - TrajectorySelectorUpdateTime > TrajectorySelectorTimeout)
+	    Now - TrajectorySelectorUpdateTime > TrajectorySelectorTimeout ||
+	    !FMath::IsNearlyEqual(WorldRadius, TrajectorySelectorRadius))
 	{
 		++TrajectorySelectorSession;
 		PendingRibbonConfirmationFrame = 0;
+		SetRibbonCandidate(INDEX_NONE);
 	}
 	bTrajectorySelectorEnabled = bEnabled;
 	TrajectorySelectorPosition = WorldPosition;
@@ -845,22 +868,23 @@ void ATrajectoryQueryNiagaraActor::UpdateRibbonConfirmation(bool bConfirmed, uin
 bool ATrajectoryQueryNiagaraActor::GetRibbonPickingState(FVector &Position, float &Radius, int32 &Samples,
                                                          uint64 &Session) const
 {
-	Position = ConfirmedProbePosition;
-	Radius = ConfirmedProbeRadius;
+	const bool bConfirming = PendingRibbonConfirmationFrame != 0 &&
+	                         PendingRibbonConfirmationRevision == VisibleBoundsRevision && GetWorld() &&
+	                         GetWorld()->GetTimeSeconds() - RibbonConfirmationTime <= 0.5;
+	Position = bConfirming ? ConfirmedProbePosition : TrajectorySelectorPosition;
+	Radius = bConfirming ? ConfirmedProbeRadius : TrajectorySelectorRadius;
 	Samples = RibbonPickingSampleCount;
 	Session = TrajectorySelectorSession;
-	return bTrajectorySelectorEnabled && GetWorld() && PendingRibbonConfirmationFrame != 0 &&
-	       PendingRibbonConfirmationRevision == VisibleBoundsRevision &&
+	return bTrajectorySelectorEnabled && GetWorld() && GetInspectableTrajectoryCount() > 0 &&
 	       GetWorld()->GetTimeSeconds() - TrajectorySelectorUpdateTime <= TrajectorySelectorTimeout &&
-	       GetWorld()->GetTimeSeconds() - RibbonConfirmationTime <= 0.5 && Samples > 0;
+	       Samples > 0;
 }
 
 void ATrajectoryQueryNiagaraActor::ReceiveRibbonPick(uint64 Revision, uint64 Session, uint64 Frame,
                                                      int32 Index, FVector ProbePosition)
 {
 	if (Revision != VisibleBoundsRevision || Session != TrajectorySelectorSession ||
-	    Frame <= LastRibbonPickFrame || PendingRibbonConfirmationFrame == 0 ||
-	    Frame < PendingRibbonConfirmationFrame)
+	    Frame <= LastRibbonPickFrame)
 		return;
 	LastRibbonPickFrame = Frame;
 	FVector Position;
@@ -868,8 +892,27 @@ void ATrajectoryQueryNiagaraActor::ReceiveRibbonPick(uint64 Revision, uint64 Ses
 	int32 Samples;
 	uint64 CurrentSession;
 	if (!GetRibbonPickingState(Position, Radius, Samples, CurrentSession))
+	{
+		SetRibbonCandidate(INDEX_NONE);
 		return;
-	PendingRibbonConfirmationFrame = 0; // A miss also consumes the press, preserving the current inspection.
+	}
+	if (Index < 0 || Index >= GetInspectableTrajectoryCount())
+		Index = INDEX_NONE;
+	// Ignore old fingertip poses without letting an asynchronous result leave a distant ribbon highlighted.
+	if (FVector::DistSquared(ProbePosition, TrajectorySelectorPosition) <=
+	    FMath::Square(TrajectorySelectorRadius * 0.5f))
+	{
+		RibbonCandidateRevision = Revision;
+		RibbonCandidateTime = GetWorld()->GetTimeSeconds();
+		SetRibbonCandidate(Index);
+	}
+	else
+		SetRibbonCandidate(INDEX_NONE);
+	if (PendingRibbonConfirmationFrame == 0 || Frame < PendingRibbonConfirmationFrame ||
+	    PendingRibbonConfirmationRevision != Revision ||
+	    GetWorld()->GetTimeSeconds() - RibbonConfirmationTime > 0.5)
+		return;
+	PendingRibbonConfirmationFrame = 0;
 	SelectTrajectoryByIndex(Index);
 }
 
@@ -1800,6 +1843,11 @@ void ATrajectoryQueryNiagaraActor::ReceiveVisibleBounds(uint64 Revision, const F
 #include "Kismet/GameplayStatics.h"
 #include "NiagaraGpuComputeDispatchInterface.h"
 #include "FXSystem.h"
+#include "NiagaraScript.h"
+#include "NiagaraDataSetAccessor.h"
+#include "NiagaraSystemInstanceController.h"
+#include "NiagaraSystemInstance.h"
+#include "NiagaraEmitterInstance.h"
 #include "RenderingThread.h"
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FTrajectoryRibbonPickingIntegrationTest,
                                  "TrajectoryBLab.Query.RibbonPicking.NiagaraIntegration",
@@ -1872,6 +1920,47 @@ bool FTrajectoryRibbonPickingIntegrationTest::RunTest(const FString &Parameters)
 	Pump(20);
 	TestEqual(TEXT("Live proximity does not select without confirmation"), Actor->SelectedTrajectoryIndex,
 	          INDEX_NONE);
+	TestEqual(TEXT("Active selector previews the focus without confirmation"),
+	          Actor->CandidateTrajectoryIndex, 0);
+	const auto RibbonWidth = [&](FName EmitterName) {
+#if NIAGARA_SYSTEM_CAPTURE
+		auto *Instance = Component->GetSystemInstanceController()->GetSystemInstance_Unsafe();
+		const FGuid Capture = FGuid::NewGuid();
+		if (!Instance->RequestCapture(Capture))
+			return -1.f;
+		TArray<TSharedPtr<FNiagaraScriptDebuggerInfo, ESPMode::ThreadSafe>> Frames;
+		for (int I = 0; I < 10; ++I)
+		{
+			Pump(1);
+			if (Instance->QueryCaptureResults(Capture, Frames))
+				break;
+		}
+		FName HandleId;
+		for (const auto &Handle : System->GetEmitterHandles())
+			if (Handle.GetName() == EmitterName)
+				HandleId = Handle.GetIdName();
+		for (const auto &Frame : Frames)
+			if (Frame->HandleName == HandleId &&
+			    Frame->Usage == ENiagaraScriptUsage::ParticleGPUComputeScript)
+			{
+				FNiagaraDataSetAccessor<float> Width;
+				Width.Init(&Frame->Frame.GetCompiledData(), TEXT("RibbonWidth"));
+				return Width.IsValid() ? Width.GetReader(Frame->Frame).GetMax() : -1.f;
+			}
+#endif
+		return -1.f;
+	};
+	Actor->CandidateRibbonWidthMultiplier = 1;
+	Pump(5);
+	const float NormalWidth = RibbonWidth(TEXT("QueryTrajectory"));
+	Actor->CandidateRibbonWidthMultiplier = 3;
+	Pump(5);
+	const float PreviewWidth = RibbonWidth(TEXT("QueryTrajectory"));
+	TestTrue(TEXT("Candidate focus ribbon is three times its normal width"),
+	         NormalWidth > 0 && FMath::IsNearlyEqual(PreviewWidth, NormalWidth * 3, 1.e-5f));
+	Pump(10);
+	TestTrue(TEXT("Preview width does not compound across frames"),
+	         FMath::IsNearlyEqual(RibbonWidth(TEXT("QueryTrajectory")), PreviewWidth, 1.e-5f));
 	Component->SetEmitterEnable(TEXT("QueryResult"), false);
 	Component->SetEmitterEnable(TEXT("RealtiveQueryResult"), false);
 	Component->SetVariableBool(TEXT("User.ConfirmTrajectorySelection"), true);
@@ -1886,6 +1975,15 @@ bool FTrajectoryRibbonPickingIntegrationTest::RunTest(const FString &Parameters)
 	Component->SetEmitterEnable(TEXT("RealtiveQueryResult"), true);
 	Component->ReinitializeSystem();
 	Pump(20);
+	TestEqual(TEXT("Object ribbon becomes the preview candidate"), Actor->CandidateTrajectoryIndex, 1);
+	Actor->CandidateRibbonWidthMultiplier = 1;
+	Pump(5);
+	const float ObjectNormal = RibbonWidth(TEXT("RealtiveQueryResult"));
+	Actor->CandidateRibbonWidthMultiplier = 3;
+	Pump(5);
+	const float ObjectPreview = RibbonWidth(TEXT("RealtiveQueryResult"));
+	TestTrue(TEXT("Candidate object-view ribbon is three times normal width"),
+	         ObjectNormal > 0 && FMath::IsNearlyEqual(ObjectPreview, ObjectNormal * 3, 1.e-5f));
 	Component->SetVariableBool(TEXT("User.ConfirmTrajectorySelection"), true);
 	Pump(20);
 	TestEqual(TEXT("Object-view ribbon selects context; focus/collision markers cannot win"),

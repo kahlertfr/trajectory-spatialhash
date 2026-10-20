@@ -112,6 +112,14 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Trajectory Inspection", meta = (ClampMin = "0.01"))
 	float TrajectorySelectorTimeout = 0.15f;
 
+	/** Nearest visible ribbon under the active selector; independent of committed inspection. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Trajectory Inspection")
+	int32 CandidateTrajectoryIndex = INDEX_NONE;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Trajectory Inspection", meta = (ClampMin = "1.0"))
+	float CandidateRibbonWidthMultiplier = 3.f;
+
+	void RefreshRibbonCandidate();
 	void UpdateRibbonConfirmation(bool bConfirmed, uint64 Frame);
 	bool GetRibbonPickingState(FVector& Position, float& Radius, int32& Samples, uint64& Session) const;
 	void ReceiveRibbonPick(uint64 Revision, uint64 Session, uint64 Frame, int32 Index, FVector ProbePosition);
@@ -369,6 +377,9 @@ public:
 
 private:
 	void PushTrajectoryInspection();
+	void SetRibbonCandidate(int32 Index);
+	uint64 RibbonCandidateRevision = 0;
+	double RibbonCandidateTime = -DBL_MAX;
 	FVector TrajectorySelectorPosition = FVector::ZeroVector;
 	float TrajectorySelectorRadius = 0.f;
 	double TrajectorySelectorUpdateTime = -DBL_MAX;
