@@ -55,7 +55,10 @@ category, particle visibility and shadow rules continue to apply. Samples are no
 killed or respawned when inspection changes.
 
 The focus ribbon, context ribbons, focus point markers, and collision markers
-participate. Radius guides remain contextual decorations. Visible-bounds export
+participate. Both collision-marker emitters (`QueryResultCollisions_0` for path
+view and `QueryResultCollisions001_0` for object view) finish with the enabled
+`InspectCollisionMarkers` module, so unselected collision points are suppressed
+in both views. Radius guides remain contextual decorations. Visible-bounds export
 uses the resulting sample visibility and includes the query sphere's full radius
 from `User.ParticleRadius` and the existing display scale. This radius is stored
 before the grab transform, preventing grab scaling from being applied twice.
