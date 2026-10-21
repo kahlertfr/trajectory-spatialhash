@@ -2,6 +2,7 @@
 #include "Engine/World.h"
 #include "Misc/AutomationTest.h"
 #include "TrajectoryQueryNiagaraActor.h"
+#include "ConfirmTrajectorySelectionAsyncAction.h"
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FTrajectoryRibbonPickingTest,
                                  "TrajectoryBLab.Query.RibbonPicking.Confirmation",
@@ -86,6 +87,54 @@ bool FTrajectoryRibbonPickingTest::RunTest(const FString &Parameters)
 	Reply(90, 2);
 	TestEqual(TEXT("Expired selector clears preview"), Actor->CandidateTrajectoryIndex, INDEX_NONE);
 	TestEqual(TEXT("Expired selector cannot consume delayed hits"), Actor->SelectedTrajectoryIndex, 0);
+	const auto StartAsync = [&]() {
+		Pose();
+		Actor->PendingRibbonConfirmationFrame = 0;
+		Actor->LastRibbonPickFrame = 0;
+		auto* Action = NewObject<UConfirmTrajectorySelectionAsyncAction>();
+		Action->Actor = Actor;
+		Action->Activate();
+		return Action;
+	};
+	auto* Success = StartAsync();
+	const uint64 RequestFrame = Actor->PendingRibbonConfirmationFrame;
+	Reply(RequestFrame - 1, 2);
+	TestFalse(TEXT("Pre-request hover cannot complete async confirmation"), Success->bFinished);
+	Reply(RequestFrame, 1);
+	TestTrue(TEXT("Accepted readback completes the action"), Success->bFinished);
+	TestEqual(TEXT("Async confirmation commits before completion"), Actor->SelectedTrajectoryIndex, 1);
+	TestFalse(TEXT("Completed action detaches from actor"), Actor->AsyncRibbonConfirmation.IsValid());
+	auto* SameSelection = StartAsync();
+	Reply(Actor->PendingRibbonConfirmationFrame, 1);
+	TestTrue(TEXT("Reselecting the same trajectory completes"), SameSelection->bFinished);
+	auto* Miss = StartAsync();
+	Reply(Actor->PendingRibbonConfirmationFrame, INDEX_NONE);
+	TestTrue(TEXT("Miss terminates the request"), Miss->bFinished);
+	TestEqual(TEXT("Async miss preserves selection"), Actor->SelectedTrajectoryIndex, 1);
+	auto* Cancelled = StartAsync();
+	Actor->UpdateTrajectorySelector(FVector::ZeroVector, 0, false);
+	Cancelled->CheckRequest(0);
+	TestTrue(TEXT("Disabling selector terminates async request"), Cancelled->bFinished);
+	auto* Changed = StartAsync();
+	Actor->SetVisualizationTimeRange(5, 6);
+	Changed->CheckRequest(0);
+	TestTrue(TEXT("Display change terminates async request"), Changed->bFinished);
+	auto* TimedOut = StartAsync();
+	TimedOut->Deadline = 0;
+	TimedOut->CheckRequest(0);
+	TestTrue(TEXT("Missing GPU readback times out"), TimedOut->bFinished);
+	TestEqual(TEXT("Timeout clears pending confirmation"), Actor->PendingRibbonConfirmationFrame, uint64(0));
+	auto* First = StartAsync();
+	auto* Duplicate = NewObject<UConfirmTrajectorySelectionAsyncAction>();
+	Duplicate->Actor = Actor;
+	Duplicate->Activate();
+	TestTrue(TEXT("Concurrent confirmation fails immediately"), Duplicate->bFinished);
+	TestTrue(TEXT("Concurrent request preserves original owner"), Actor->AsyncRibbonConfirmation.Get() == First);
+	First->Finish(INDEX_NONE, -1, TEXT("Test cleanup"));
+	auto* Destroyed = StartAsync();
+	Actor->Destroy();
+	Destroyed->CheckRequest(0);
+	TestTrue(TEXT("Actor destruction terminates async request"), Destroyed->bFinished);
 	World->DestroyWorld(false);
 	return true;
 }

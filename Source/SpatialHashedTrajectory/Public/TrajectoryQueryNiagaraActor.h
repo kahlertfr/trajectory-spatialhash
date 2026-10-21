@@ -12,6 +12,7 @@ struct FPreparedTrajectoryDisplay;
 class UNiagaraSystem;
 class UNiagaraComponent;
 class UBoxComponent;
+class UConfirmTrajectorySelectionAsyncAction;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnTrajectoryInspectionChanged);
 
@@ -385,6 +386,8 @@ private:
 	double TrajectorySelectorUpdateTime = -DBL_MAX;
 	uint64 TrajectorySelectorSession = 1;
 	uint64 LastRibbonPickFrame = 0;
+	friend class UConfirmTrajectorySelectionAsyncAction;
+	TWeakObjectPtr<UConfirmTrajectorySelectionAsyncAction> AsyncRibbonConfirmation;
 	int32 RibbonPickingSampleCount = 0;
 	bool bTrajectorySelectorEnabled = false;
 	bool bPreviousRibbonConfirmation = false;

@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "TrajectoryQueryNiagaraActor.h"
+#include "ConfirmTrajectorySelectionAsyncAction.h"
 #include "VisibleSampleBoxComponent.h"
 #include "UObject/UnrealType.h"
 #include "NiagaraComponent.h"
@@ -852,6 +853,7 @@ void ATrajectoryQueryNiagaraActor::UpdateRibbonConfirmation(bool bConfirmed, uin
 {
 	const bool bPressed = bConfirmed && !bPreviousRibbonConfirmation;
 	bPreviousRibbonConfirmation = bConfirmed;
+	if (AsyncRibbonConfirmation.IsValid()) return;
 	if (!bPressed || !bTrajectorySelectorEnabled || !GetWorld() || RibbonPickingSampleCount <= 0 ||
 	    GetInspectableTrajectoryCount() <= 0)
 		return;
@@ -913,7 +915,13 @@ void ATrajectoryQueryNiagaraActor::ReceiveRibbonPick(uint64 Revision, uint64 Ses
 	    GetWorld()->GetTimeSeconds() - RibbonConfirmationTime > 0.5)
 		return;
 	PendingRibbonConfirmationFrame = 0;
-	SelectTrajectoryByIndex(Index);
+	auto* Action = AsyncRibbonConfirmation.Get();
+	// Detach before committing: inspection listeners may change the display or disable the selector.
+	AsyncRibbonConfirmation.Reset();
+	int64 Id = -1;
+	GetInspectableTrajectoryId(Index, Id);
+	const bool bSelected = SelectTrajectoryByIndex(Index);
+	if (Action) Action->Finish(bSelected ? Index : INDEX_NONE, Id);
 }
 
 int32 ATrajectoryQueryNiagaraActor::GetInspectableTrajectoryCount() const
@@ -1963,6 +1971,15 @@ bool FTrajectoryRibbonPickingIntegrationTest::RunTest(const FString &Parameters)
 	         FMath::IsNearlyEqual(RibbonWidth(TEXT("QueryTrajectory")), PreviewWidth, 1.e-5f));
 	Component->SetEmitterEnable(TEXT("QueryResult"), false);
 	Component->SetEmitterEnable(TEXT("RealtiveQueryResult"), false);
+	auto* Confirmation = NewObject<UConfirmTrajectorySelectionAsyncAction>();
+	Confirmation->Actor = Actor;
+	Confirmation->Activate();
+	TestFalse(TEXT("Async confirmation waits for GPU readback"), Confirmation->bFinished);
+	Pump(20);
+	TestTrue(TEXT("GPU readback completes async confirmation"), Confirmation->bFinished);
+	TestEqual(TEXT("Async GPU confirmation commits the focus"), Actor->SelectedTrajectoryIndex, 0);
+	Actor->ClearTrajectoryInspection();
+	Pump(2);
 	Component->SetVariableBool(TEXT("User.ConfirmTrajectorySelection"), true);
 	Pump(20);
 	TestEqual(TEXT("Niagara exports and confirms the focus ribbon"), Actor->SelectedTrajectoryIndex, 0);

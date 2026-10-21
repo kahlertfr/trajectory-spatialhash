@@ -84,6 +84,33 @@ selector sphere and requests one pick. Holding true does not select repeatedly.
 Proximity alone previews the nearest candidate but never changes inspection; there is no dwell or hover gesture.
 The user supplies the confirmation-input Blueprint wiring.
 
+**Async Blueprint confirmation:** alternatively call **Confirm Trajectory Selection
+(Async)** with the result actor on confirmation press. This initiates the pick;
+do not also toggle `User.ConfirmTrajectorySelection` for the same press. Keep
+sending selector pose updates until an output fires:
+
+- `Completed(TrajectoryIndex, TrajectoryId)`: a fresh GPU readback passed validation
+  and the selection was committed. Hide the selector widget and disable its pose
+  updates from this pin. Reselecting the same trajectory also completes. The ID
+  belongs to the focus or context dataset according to the returned display index.
+- `NoHit`: the confirmed sphere intersected no visible ribbon. Existing inspection
+  is preserved; leave the selector active for another attempt.
+- `Failed(Reason)`: inactive/expired selector, invalid actor, concurrent request,
+  changed display/selector session, actor destruction, or a 0.5 second timeout.
+
+Only one confirmation may be pending per actor. The node captures the current
+sphere and waits for a later simulation frame, so an earlier hover readback cannot
+complete it. Legacy bool confirmation remains supported. Completion means GPU
+readback and selection commit on the game thread, not presentation of a rendered
+frame. The node does not hide or disable the selector automatically.
+
+Validation (2026-10-21): UE 5.6 `TrajectoryBLabEditor` builds, including UHT.
+`TrajectoryBLab.Query.RibbonPicking.Confirmation` passes with async fresh-frame,
+same-selection, miss, cancellation, display-change, timeout, concurrent-request,
+and actor-destruction checks. `TrajectoryBLab.Query.RibbonPicking.NiagaraIntegration`
+passes with a rendering RHI and verifies async completion through actual Niagara
+GPU export/readback. Widget wiring and headset interaction were not tested.
+
 `BP_QueryResultVisualization.SetTrajSelector(Location, Radius)` preserves the
 existing probe parameters and also calls `UpdateTrajectorySelector`. The legacy
 Radius input is the selector's minimum world scale for the standard 100 cm
