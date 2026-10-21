@@ -938,6 +938,11 @@ bool ATrajectoryQueryNiagaraActor::GetInspectableTrajectoryId(int32 Index, int64
 	return true;
 }
 
+bool ATrajectoryQueryNiagaraActor::IsInspectableTrajectoryFocus(int32 Index) const
+{
+	return bHasInspectableFocus && Index == 0;
+}
+
 bool ATrajectoryQueryNiagaraActor::SelectTrajectoryByIndex(int32 Index)
 {
 	if (Index < 0 || Index >= GetInspectableTrajectoryCount()) return false;
@@ -1779,6 +1784,10 @@ bool FTrajectoryInspectionTest::RunTest(const FString& Parameters)
 	Actor->QueryTrajectoryId = 9000000000LL;
 	Actor->UpdateInspectableTrajectories(true, {41, 9});
 	TestEqual(TEXT("Focus plus displayed context count"), Actor->GetInspectableTrajectoryCount(), 3);
+	TestTrue(TEXT("Displayed focus reports its role"), Actor->IsInspectableTrajectoryFocus(0));
+	TestFalse(TEXT("Context is not focus"), Actor->IsInspectableTrajectoryFocus(1));
+	TestFalse(TEXT("No selection is not focus"), Actor->IsInspectableTrajectoryFocus(INDEX_NONE));
+	TestFalse(TEXT("Out of range is not focus"), Actor->IsInspectableTrajectoryFocus(3));
 	int64 Id = -1;
 	TestTrue(TEXT("Focus ID is available without narrowing"), Actor->GetInspectableTrajectoryId(0, Id));
 	TestEqual(TEXT("Focus keeps its 64-bit source identity"), Id, 9000000000LL);
@@ -1807,7 +1816,12 @@ bool FTrajectoryInspectionTest::RunTest(const FString& Parameters)
 	Actor->SelectTrajectoryByIndex(1);
 	Actor->UpdateInspectableTrajectories(true, {});
 	TestEqual(TEXT("Missing context clears selection"), Actor->SelectedTrajectoryIndex, INDEX_NONE);
+	Actor->UpdateInspectableTrajectories(false, {41});
+	TestFalse(TEXT("Context at index zero is not focus"), Actor->IsInspectableTrajectoryFocus(0));
+	TestTrue(TEXT("Context-only index zero retains its source ID"), Actor->GetInspectableTrajectoryId(0, Id));
+	TestEqual(TEXT("Context-only source identity"), Id, int64(41));
 	Actor->UpdateInspectableTrajectories(false, {});
+	TestFalse(TEXT("Empty display has no focus"), Actor->IsInspectableTrajectoryFocus(0));
 	TestEqual(TEXT("Empty data disables selection"), Actor->GetInspectableTrajectoryCount(), 0);
 	TestFalse(TEXT("Empty data cannot select index zero"), Actor->SelectTrajectoryByIndex(0));
 	return true;

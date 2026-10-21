@@ -95,6 +95,10 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Trajectory Inspection")
 	bool GetInspectableTrajectoryId(int32 Index, int64& OutTrajectoryId) const;
 
+	/** True only for a valid focus entry. Index zero can be context when no focus is displayed. */
+	UFUNCTION(BlueprintPure, Category = "Trajectory Inspection")
+	bool IsInspectableTrajectoryFocus(int32 Index) const;
+
 	/** Returns false for invalid indices, preserving the current selection. */
 	UFUNCTION(BlueprintCallable, Category = "Trajectory Inspection")
 	bool SelectTrajectoryByIndex(int32 Index);

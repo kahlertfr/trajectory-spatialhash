@@ -4,8 +4,9 @@ Result inspection is shared by the path and object views of one
 `ATrajectoryQueryNiagaraActor`. It is independent of the query focus and of
 `FUserTrajectorySelection`, so controls do not replace the query configuration.
 
-`GetInspectableTrajectoryCount()` includes the focus at index **0**, followed by
-the context trajectories present in the current display upload. These are display
+`GetInspectableTrajectoryCount()` includes the focus at index **0** when present,
+followed by the context trajectories in the current display upload. Without a
+focus, context starts at index 0. These are display
 indices, not dataset indices or source IDs. `GetInspectableTrajectoryId()` returns
 the source ID; a synthetic focus can have ID -1. Focus and context belong to their
 respective actor dataset directories, and equal IDs across those roles do not imply
@@ -35,6 +36,61 @@ Moving the slider selects immediately. Releasing its handle also selects its
 current index, allowing index zero or a single focus trajectory to be selected.
 Empty results disable the controls. Clearing restores the normal view even when
 the isolation preference remains checked; selecting again reapplies that preference.
+
+## Blueprint-owned inspection widget
+
+Create your replacement as a normal `UserWidget` Blueprint. Its layout and input
+handlers can live entirely in UMG; no native widget base class is required.
+The existing native widget remains available during migration.
+
+Store a `VisualizationActor` reference of type `TrajectoryQueryNiagaraActor` and
+a local `RefreshingControls` boolean. Implement `SetVisualizationActor(NewActor)`:
+unbind your refresh event from the old actor's `OnTrajectoryInspectionChanged`,
+assign the new actor, bind that same event on the new actor, and refresh immediately.
+Check actor validity before binding or calling it. Unbind on Destruct; if the
+widget is reused, rebind on Construct. Use your existing result/UI setup to pass
+the result actor to this setter. Native `BindInspectionControls` discovers only
+`UTrajectoryInspectionWidget` instances and will not initialize a plain UserWidget.
+Remove its old widget instance and obsolete binding call once your replacement is wired.
+
+In your refresh event, set `RefreshingControls` true, then:
+
+- Read `GetInspectableTrajectoryCount()` and `SelectedTrajectoryIndex`.
+- Set the slider min to 0, max to `Max(1, Count - 1)`, step size to 1,
+  and Mouse Uses Step true. Set its value to the selected index, or 0 when none.
+  Disable it when Count is zero. A single trajectory has only valid index 0;
+  clamp user input to the actual Count rather than the slider's artificial max.
+- Read `bShowOnlySelectedTrajectory` for the isolation checkbox; disable it for
+  empty results. Enable Clear only when the selected index is not -1.
+- Use `GetInspectableTrajectoryId(SelectedIndex)`'s success output to distinguish
+  no selection from a valid synthetic focus whose ID is -1. Query
+  `IsInspectableTrajectoryFocus(SelectedIndex)` for the role; index 0 can be
+  context in a display without focus. Focus IDs belong to `QueryDatasetDirectory`,
+  context IDs to `DatasetDirectory`. Keep IDs as Integer64.
+- Show a no-results or no-selection label when appropriate, then set
+  `RefreshingControls` false. For an invalid actor, clear the label and disable
+  the controls.
+
+Slider OnValueChanged: if not refreshing and Count > 0, round the value to an
+integer, clamp to `[0, Count - 1]`, and call `SelectTrajectoryByIndex`. Also run
+this handler from OnMouseCaptureEnd and OnControllerCaptureEnd using the current
+slider value, so releasing at zero can select the first or only trajectory even
+if the value did not change. Checkbox OnCheckStateChanged calls
+`SetShowOnlySelectedTrajectory` when not refreshing. Clear OnClicked calls
+`ClearTrajectoryInspection`. The actor's change event refreshes the widget for
+GPU picks, programmatic selection, progressive result updates, and cleared results;
+no Tick polling is needed.
+
+For spatial confirmation, call `Confirm Trajectory Selection (Async)` on the
+confirmation press, then hide/disable the selector from `Completed`. Continue
+selector pose updates while pending. Leave it available after `NoHit` and handle
+`Failed(Reason)` as appropriate. Do not toggle the legacy Niagara confirmation
+bool for the same press.
+
+Validation (2026-10-21): the UE 5.6 Editor target builds with the new reflected
+role query, and `TrajectoryBLab.Query.TrajectoryInspection` passes, including
+focus, context-only index zero, invalid-index and empty-display checks. The
+replacement Blueprint widget is user-authored and has not been tested here.
 
 ## Niagara
 

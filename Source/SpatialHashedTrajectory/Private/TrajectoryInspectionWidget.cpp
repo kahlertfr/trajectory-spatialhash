@@ -85,7 +85,7 @@ void UTrajectoryInspectionWidget::RefreshControls()
 	{
 		const FString Identity = Id >= 0 ? FString::Printf(TEXT("ID %lld"), Id) : TEXT("synthetic focus");
 		SelectionLabel->SetText(FText::FromString(FString::Printf(TEXT("Trajectory %d / %d (%s%s)"), Index, Count - 1,
-			Index == 0 ? TEXT("focus, ") : TEXT(""), *Identity)));
+			VisualizationActor->IsInspectableTrajectoryFocus(Index) ? TEXT("focus, ") : TEXT(""), *Identity)));
 	}
 	else SelectionLabel->SetText(Count > 0
 		? NSLOCTEXT("TrajectoryInspection", "None", "Trajectory: none selected")
