@@ -1,0 +1,30 @@
+#include "/Engine/Public/Platform.ush"
+Buffer<uint> Samples;
+RWBuffer<uint> Distances;
+uint SampleCount;
+uint TrajectoryCount;
+float3 ProbePosition;
+float ProbeRadius;
+float4x4 ComponentLinearTransform;
+// Eight uints/sample: position.xyz, visible, trajectory+1, half width, reserved padding.
+[numthreads(64,1,1)]
+void MainCS(uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+ uint Slot=DispatchThreadId.x;
+ if (Slot>=SampleCount*2 || Slot%SampleCount==0) return;
+ uint Base=Slot*8, Prev=Base-8;
+ uint Trajectory=Samples[Base+4];
+ if (Trajectory==0 || Trajectory>TrajectoryCount || Samples[Prev+4]!=Trajectory || Samples[Base+3]==0 || Samples[Prev+3]==0) return;
+ float3 A=mul(float4(asfloat(uint3(Samples[Prev],Samples[Prev+1],Samples[Prev+2])),0),ComponentLinearTransform).xyz;
+ float3 B=mul(float4(asfloat(uint3(Samples[Base],Samples[Base+1],Samples[Base+2])),0),ComponentLinearTransform).xyz;
+ float3 AB=B-A;
+ float L2=dot(AB,AB);
+ float T=L2>1e-12 ? saturate(dot(ProbePosition-A,AB)/L2) : 0;
+ float3 Delta=ProbePosition-(A+T*AB);
+ float D2=dot(Delta,Delta);
+ float ComponentScale=max(length(ComponentLinearTransform[0].xyz),max(length(ComponentLinearTransform[1].xyz),length(ComponentLinearTransform[2].xyz)));
+ float HalfWidth=max(asfloat(Samples[Base+5]),asfloat(Samples[Prev+5]))*ComponentScale;
+ float SurfaceDistance=max(0,sqrt(D2)-HalfWidth);
+ if (isfinite(SurfaceDistance) && SurfaceDistance<=ProbeRadius)
+  InterlockedMin(Distances[(Slot/SampleCount)*TrajectoryCount+Trajectory-1],asuint(SurfaceDistance*SurfaceDistance));
+}

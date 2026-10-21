@@ -19,6 +19,15 @@ reads the existing `Particles.Visible` and final color alpha. It contributes
 sample centers to a shared atomic min/max reduction. Time, radius, category,
 periodic-image, and object-rotation rules are not repeated in C++.
 
+Query-sphere extent update (2026-10-20): `CalculateParticleScale` additionally
+stores `Emitter.ParticleBoundsRadius = abs(User.ParticleRadius * displayScale)` using
+its existing radius/scale inputs, before the additional grab scaling. The final
+`ExportQuerySphereBounds` module contributes that radius for each visible query
+sphere in path and object view. Other samples still contribute their centers.
+Collision geometry therefore encloses the full sphere, and increasing the user
+particle radius expands the grab box. The query trajectory and sphere remain
+visible during context isolation; existing explicit visibility controls still apply.
+
 The full result system collects the focus ribbon, context ribbons, and focus
 point markers in both views. Decorative radius indicators, direction arrows,
 and collision-event markers do not enlarge sample collision bounds. The
@@ -61,7 +70,8 @@ component subclass to use automatic fitting.
 The collision geometry has an offset center within its component. Component
 transforms, grab pivots, attached children, and Niagara interaction matrices
 remain stable. A 0.1 cm local interaction margin surrounds sample centers;
-this is not a reduction over rendered triangles or material displacement.
+the sphere radius is included as described above. This is not a reduction over
+arbitrary rendered triangles or material displacement.
 Empty views disable collision; returning samples restore the original collision
 mode. Per-instance body setups avoid modifying shared/archetype collision data.
 

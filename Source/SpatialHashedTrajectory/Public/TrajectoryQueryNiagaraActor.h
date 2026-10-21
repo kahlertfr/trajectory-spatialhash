@@ -12,6 +12,9 @@ struct FPreparedTrajectoryDisplay;
 class UNiagaraSystem;
 class UNiagaraComponent;
 class UBoxComponent;
+class UConfirmTrajectorySelectionAsyncAction;
+
+DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnTrajectoryInspectionChanged);
 
 UENUM(BlueprintType)
 enum class ETrajectoryContextFilterMode : uint8
@@ -75,6 +78,56 @@ class SPATIALHASHEDTRAJECTORY_API ATrajectoryQueryNiagaraActor : public AActor
 
 public:
 	ATrajectoryQueryNiagaraActor();
+
+	/** Shared by path and object view. Index 0 is the focus; subsequent indices are displayed context trajectories. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Trajectory Inspection")
+	int32 SelectedTrajectoryIndex = INDEX_NONE;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Trajectory Inspection")
+	bool bShowOnlySelectedTrajectory = false;
+
+	UPROPERTY(BlueprintAssignable, Category = "Trajectory Inspection")
+	FOnTrajectoryInspectionChanged OnTrajectoryInspectionChanged;
+
+	UFUNCTION(BlueprintPure, Category = "Trajectory Inspection")
+	int32 GetInspectableTrajectoryCount() const;
+
+	UFUNCTION(BlueprintPure, Category = "Trajectory Inspection")
+	bool GetInspectableTrajectoryId(int32 Index, int64& OutTrajectoryId) const;
+
+	/** True only for a valid focus entry. Index zero can be context when no focus is displayed. */
+	UFUNCTION(BlueprintPure, Category = "Trajectory Inspection")
+	bool IsInspectableTrajectoryFocus(int32 Index) const;
+
+	/** Returns false for invalid indices, preserving the current selection. */
+	UFUNCTION(BlueprintCallable, Category = "Trajectory Inspection")
+	bool SelectTrajectoryByIndex(int32 Index);
+
+	UFUNCTION(BlueprintCallable, Category = "Trajectory Inspection")
+	void ClearTrajectoryInspection();
+
+	UFUNCTION(BlueprintCallable, Category = "Trajectory Inspection")
+	void SetShowOnlySelectedTrajectory(bool bOnlySelected);
+
+	/** Refresh while the fingertip selector is active. Radius is world-space centimeters. */
+	UFUNCTION(BlueprintCallable, Category = "Trajectory Inspection", meta = (CPP_Default_bEnabled = "true"))
+	void UpdateTrajectorySelector(FVector WorldPosition, float WorldRadius, bool bEnabled = true);
+
+	/** Tick updates expire when a selector stops sending (for example when hidden). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Trajectory Inspection", meta = (ClampMin = "0.01"))
+	float TrajectorySelectorTimeout = 0.15f;
+
+	/** Nearest visible ribbon under the active selector; independent of committed inspection. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Trajectory Inspection")
+	int32 CandidateTrajectoryIndex = INDEX_NONE;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Trajectory Inspection", meta = (ClampMin = "1.0"))
+	float CandidateRibbonWidthMultiplier = 3.f;
+
+	void RefreshRibbonCandidate();
+	void UpdateRibbonConfirmation(bool bConfirmed, uint64 Frame);
+	bool GetRibbonPickingState(FVector& Position, float& Radius, int32& Samples, uint64& Session) const;
+	void ReceiveRibbonPick(uint64 Revision, uint64 Session, uint64 Frame, int32 Index, FVector ProbePosition);
 
 	// ─── Query Settings ───────────────────────────────────────────────────────
 
@@ -328,6 +381,31 @@ public:
 	void ReceiveVisibleBounds(uint64 Revision, const FBox& Path, const FBox& Object);
 
 private:
+	void PushTrajectoryInspection();
+	void SetRibbonCandidate(int32 Index);
+	uint64 RibbonCandidateRevision = 0;
+	double RibbonCandidateTime = -DBL_MAX;
+	FVector TrajectorySelectorPosition = FVector::ZeroVector;
+	float TrajectorySelectorRadius = 0.f;
+	double TrajectorySelectorUpdateTime = -DBL_MAX;
+	uint64 TrajectorySelectorSession = 1;
+	uint64 LastRibbonPickFrame = 0;
+	friend class UConfirmTrajectorySelectionAsyncAction;
+	TWeakObjectPtr<UConfirmTrajectorySelectionAsyncAction> AsyncRibbonConfirmation;
+	int32 RibbonPickingSampleCount = 0;
+	bool bTrajectorySelectorEnabled = false;
+	bool bPreviousRibbonConfirmation = false;
+	uint64 PendingRibbonConfirmationFrame = 0;
+	uint64 PendingRibbonConfirmationRevision = 0;
+	FVector ConfirmedProbePosition = FVector::ZeroVector;
+	float ConfirmedProbeRadius = 0;
+	double RibbonConfirmationTime = 0;
+
+	void UpdateInspectableTrajectories(bool bHasFocus, const TArray<int32>& ContextIds);
+	bool bHasInspectableFocus = false;
+	int64 InspectableFocusId = -1;
+	// Retained after CPU sample buffers are released. Indices belong only to this displayed query.
+	TArray<int32> InspectableContextIds;
 	void UpdateObjectViewPlacementOffset();
 	FVector ObjectViewPlacementTargetSize = FVector::ZeroVector;
 	FVector ObjectViewPlacementOffset = FVector::ZeroVector;
@@ -383,6 +461,9 @@ private:
 	friend class FQuerySamplingCleanupTest;
 	friend class FObjectViewBoundsTest;
 	friend class FDisplayedDistanceTest;
+	friend class FTrajectoryInspectionTest;
+	friend class FTrajectoryRibbonPickingTest;
+	friend class FTrajectoryRibbonPickingIntegrationTest;
 #endif
 	void StartPreparedQuery(FSimpleDelegate OnComplete, int32 DatasetFirstTimeStep,
 		int32 DatasetLastTimeStep, bool bIncludeWholeResultTrajectorySamples);
