@@ -1026,6 +1026,7 @@ void ATrajectoryQueryNiagaraActor::CancelQuery()
 	PendingQueryComplete.Unbind();
 	ReleaseQueryCPUData();
 	bQueryInProgress = false;
+    bCompletedQueryForCapture = false;
 	FSimpleDelegate Failure = PendingQueryFailure;
 	PendingQueryFailure.Unbind();
 	Failure.ExecuteIfBound();
@@ -1170,6 +1171,7 @@ bool ATrajectoryQueryNiagaraActor::FireAsyncQueriesWithCallback(
 		OnFailure.ExecuteIfBound();
 		return false;
 	}
+	bCompletedQueryForCapture = false;
 	if (!NiagaraComponent ||
 		!UNiagaraFunctionLibrary::GetDataInterface<UNiagaraDataInterfaceArrayInt32>(NiagaraComponent, TEXT("QuerySampleTimeSteps")) ||
 		!UNiagaraFunctionLibrary::GetDataInterface<UNiagaraDataInterfaceArrayInt32>(NiagaraComponent, TEXT("ResultSampleTimeSteps")) ||
@@ -1213,6 +1215,7 @@ bool ATrajectoryQueryNiagaraActor::FireAsyncQueriesWithCallback(
 	OnTrajectoryInspectionChanged.Broadcast();
 	bAllBatchesProcessed = false;
 	bFinalDisplayTransferred = false;
+	bCompletedQueryForCapture = false;
 	PendingQueryComplete = OnComplete;
 	bQueryInProgress = true;
 	PendingQueryFailure = OnFailure;
@@ -1613,6 +1616,7 @@ void ATrajectoryQueryNiagaraActor::TransferResultsToNiagara(
 				This->QueryPositions.Empty(); // Query input is consumed; next request supplies its focus samples again.
 				This->bFinalDisplayTransferred = true;
 				This->bQueryInProgress = false;
+                This->bCompletedQueryForCapture = true;
 				This->PendingQueryFailure.Unbind();
 				FSimpleDelegate Complete = This->PendingQueryComplete;
 				This->PendingQueryComplete.Unbind();

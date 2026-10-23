@@ -380,6 +380,10 @@ public:
 	uint64 GetVisibleBoundsRevision() const { return VisibleBoundsRevision; }
 	void ReceiveVisibleBounds(uint64 Revision, const FBox& Path, const FBox& Object);
 
+    /** True only after the last request's final upload completed successfully. */
+    UFUNCTION(BlueprintPure, Category = "Trajectory Visualization")
+    bool IsReadyForPresetCapture() const { return bCompletedQueryForCapture && !bQueryInProgress; }
+
 private:
 	void PushTrajectoryInspection();
 	void SetRibbonCandidate(int32 Index);
@@ -483,6 +487,7 @@ private:
 	int32 ActiveQueryTimeEnd = 0;
 	FSimpleDelegate PendingQueryComplete;
 	bool bQueryInProgress = false;
+    bool bCompletedQueryForCapture = false;
 	uint64 QueryGeneration = 0;
 	FSimpleDelegate PendingQueryFailure;
 

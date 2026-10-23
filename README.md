@@ -799,3 +799,12 @@ Contributions are welcome! Please feel free to submit issues and pull requests.
 ## Support
 
 For issues and questions, please use the GitHub issue tracker.
+
+## Preset capture readiness
+
+`ATrajectoryQueryNiagaraActor::IsReadyForPresetCapture()` reports true only after
+successful completion of the most recent query's final Niagara upload, while no
+query is running. A new request (including a failed preflight) or cancellation
+invalidates readiness. Consumers can reject partial or stale captures without
+binding over the query owner's completion callback. This getter does not start,
+cancel, or change a query.
