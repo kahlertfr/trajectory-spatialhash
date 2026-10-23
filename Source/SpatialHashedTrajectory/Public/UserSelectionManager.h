@@ -121,6 +121,10 @@ struct FUserTrajectorySelection
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "User Selection")
 	float ParticleRadius = 0.f;
 
+	/** Base ribbon width before selection highlighting. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visualization", meta = (ClampMin = "0"))
+	float RibbonWidth = 1.f;
+
 	/** Color encoding mode for rendering/analysis of this trajectory */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "User Selection")
 	ETrajectoryColorEncoding ColorEncoding = ETrajectoryColorEncoding::Time;
