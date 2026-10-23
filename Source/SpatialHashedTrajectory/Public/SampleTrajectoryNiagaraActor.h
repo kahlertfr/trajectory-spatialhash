@@ -84,6 +84,10 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visualization")
 	float ParticleRadius = 0.5f;
 
+	/** Base ribbon width before selection highlighting. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visualization", meta = (ClampMin = "0"))
+	float RibbonWidth = 1.f;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visualization")
 	float BehaviorRadius = 0.6f;
 

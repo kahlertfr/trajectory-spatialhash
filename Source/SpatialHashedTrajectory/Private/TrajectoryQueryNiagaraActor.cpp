@@ -641,7 +641,10 @@ bool FDisplayedDistanceTest::RunTest(const FString& Parameters)
 	Actor->UploadPreparedDisplay(Empty, false);
 	TestEqual(TEXT("Empty upload clears previous maximum"), Actor->ResultDisplayDistanceMax, 0.f);
 	Actor->UpdateUserParameter(100, 100, ETrajectoryColorEncoding::Time, ETrajectoryDistanceFilter::All,
-		1.f, 1.f, 1.f, 1.f, 2.f, 3.f, 15, false, true, false, false, true);
+		1.f, 1.f, 1.f, 1.f, 2.f, 3.f, 15, false, true, false, false, true, 0.125f);
+	TestEqual(TEXT("Ribbon width stored"), Actor->RibbonWidth, 0.125f);
+	TestEqual(TEXT("Ribbon width uploaded"), Actor->NiagaraComponent->GetOverrideParameters().GetParameterValue<float>(
+		FNiagaraVariable(FNiagaraTypeDefinition::GetFloatDef(), TEXT("User.RibbonWidth"))), 0.125f);
 	TestTrue(TEXT("Guide visibility stored on actor"), Actor->ZoneRadiusVisibility);
 	TestTrue(TEXT("Guide visibility uploaded to Niagara"), Actor->NiagaraComponent->GetOverrideParameters().GetParameterValue<FNiagaraBool>(
 		FNiagaraVariable(FNiagaraTypeDefinition::GetBoolDef(), TEXT("User.ZoneRadiusVisibility"))).GetValue());
@@ -1093,7 +1096,13 @@ void ATrajectoryQueryNiagaraActor::SetVisualizationTimeRange(int32 NewTimeStart,
 }
 
 
-void ATrajectoryQueryNiagaraActor::UpdateUserParameter(int32 NewTimeStart, int32 NewTimeEnd, ETrajectoryColorEncoding NewColorEncoding, ETrajectoryDistanceFilter NewDistanceFilter, float NewParticleRadius, float NewBehaviorRadius, float NewQueryRadius, float NewCollisionRadius, float NewZoneInnerRadius, float NewMiddleRadius, int32 NewVisibleZonesMask, bool NewSensitivity, bool NewVisibility, bool NewNoShadow, bool NewObjectViewWithRotation, bool NewZoneRadiusVisibility)
+void ATrajectoryQueryNiagaraActor::SetRibbonWidth(float NewRibbonWidth)
+{
+    RibbonWidth = FMath::IsFinite(NewRibbonWidth) ? FMath::Max(0.f, NewRibbonWidth) : 0.f;
+    if (NiagaraComponent) NiagaraComponent->SetVariableFloat(TEXT("User.RibbonWidth"), RibbonWidth);
+}
+
+void ATrajectoryQueryNiagaraActor::UpdateUserParameter(int32 NewTimeStart, int32 NewTimeEnd, ETrajectoryColorEncoding NewColorEncoding, ETrajectoryDistanceFilter NewDistanceFilter, float NewParticleRadius, float NewBehaviorRadius, float NewQueryRadius, float NewCollisionRadius, float NewZoneInnerRadius, float NewMiddleRadius, int32 NewVisibleZonesMask, bool NewSensitivity, bool NewVisibility, bool NewNoShadow, bool NewObjectViewWithRotation, bool NewZoneRadiusVisibility, float NewRibbonWidth)
 {
 	++VisibleBoundsRevision;
 	VisualizationTimeStart = NewTimeStart;
@@ -1101,6 +1110,7 @@ void ATrajectoryQueryNiagaraActor::UpdateUserParameter(int32 NewTimeStart, int32
 	ColorEncoding = NewColorEncoding;
 	DistanceFilter = NewDistanceFilter;
 	ParticleRadius = NewParticleRadius;
+	RibbonWidth = FMath::IsFinite(NewRibbonWidth) ? FMath::Max(0.f, NewRibbonWidth) : 0.f;
 	BehaviorRadius = NewBehaviorRadius;
 	QueryRadius = NewQueryRadius;
 	CollisionRadius = NewCollisionRadius;
@@ -1126,6 +1136,7 @@ void ATrajectoryQueryNiagaraActor::UpdateUserParameter(int32 NewTimeStart, int32
 	NiagaraComponent->SetVariableInt(FName("ColorEncoding"), static_cast<int32>(ColorEncoding));
 	NiagaraComponent->SetVariableInt(FName("DistanceFilter"), static_cast<int32>(DistanceFilter));
 	NiagaraComponent->SetVariableFloat(FName("ParticleRadius"), ParticleRadius);
+	NiagaraComponent->SetVariableFloat(TEXT("User.RibbonWidth"), RibbonWidth);
 	NiagaraComponent->SetVariableFloat(FName("BehaviorRadius"), BehaviorRadius);
 	NiagaraComponent->SetVariableFloat(FName("QueryRadius"), QueryRadius);
 	TrajectoryVisibility::Normalize(CollisionRadius, ZoneInnerRadius, MiddleRadius, VisibleZonesMask);
@@ -1737,6 +1748,7 @@ void ATrajectoryQueryNiagaraActor::UploadPreparedDisplay(const FPreparedTrajecto
 	NiagaraComponent->SetVariableInt(FName("VisibleZonesMask"), VisibleZonesMask);
 	NiagaraComponent->SetVariableBool(FName("ZoneRadiusVisibility"), ZoneRadiusVisibility);
 	NiagaraComponent->SetVariableFloat(FName("ParticleRadius"), ParticleRadius);
+	NiagaraComponent->SetVariableFloat(TEXT("User.RibbonWidth"), RibbonWidth);
 	NiagaraComponent->SetVariableFloat(FName("VelocityMin"), VelocityMin);
 	NiagaraComponent->SetVariableFloat(FName("VelocityMax"), VelocityMax);
 	NiagaraComponent->SetVariableBool(FName("NoShadow"), NoShadow);

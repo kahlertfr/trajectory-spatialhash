@@ -184,6 +184,7 @@ void ASampleTrajectoryNiagaraActor::ApplyUserSelection(const FUserTrajectorySele
 	ColorEncoding = Selection.ColorEncoding;
 	DistanceFilter = Selection.DistanceFilter;
 	ParticleRadius = Selection.ParticleRadius;
+	RibbonWidth = FMath::IsFinite(Selection.RibbonWidth) ? FMath::Max(0.f, Selection.RibbonWidth) : 0.f;
 	BehaviorRadius = Selection.BehaviorRadius;
 	QueryRadius = Selection.QueryRadius;
 	CollisionRadius = Selection.CollisionRadius;
@@ -214,6 +215,7 @@ void ASampleTrajectoryNiagaraActor::UpdateUserParametersOnNiagara()
 	NiagaraComponent->SetVariableInt(FName("ColorEncoding"), static_cast<int32>(ColorEncoding));
 	NiagaraComponent->SetVariableInt(FName("DistanceFilter"), static_cast<int32>(DistanceFilter));
 	NiagaraComponent->SetVariableFloat(FName("ParticleRadius"), ParticleRadius);
+	NiagaraComponent->SetVariableFloat(TEXT("User.RibbonWidth"), RibbonWidth);
 	NiagaraComponent->SetVariableFloat(FName("BehaviorRadius"), BehaviorRadius);
 	NiagaraComponent->SetVariableFloat(FName("QueryRadius"), QueryRadius);
 	TrajectoryVisibility::Normalize(CollisionRadius, ZoneInnerRadius, MiddleRadius, VisibleZonesMask);
@@ -650,6 +652,7 @@ void ASampleTrajectoryNiagaraActor::TransferScenarioToNiagara(ESampleTrajectoryS
 	NiagaraComponent->SetVariableInt(FName("VisibleZonesMask"), VisibleZonesMask);
 	NiagaraComponent->SetVariableBool(FName("ZoneRadiusVisibility"), ZoneRadiusVisibility);
 	NiagaraComponent->SetVariableFloat(FName("ParticleRadius"), ParticleRadius);
+	NiagaraComponent->SetVariableFloat(TEXT("User.RibbonWidth"), RibbonWidth);
 	NiagaraComponent->SetVariableFloat(FName("VelocityMin"), VelocityMin);
 	NiagaraComponent->SetVariableFloat(FName("VelocityMax"), VelocityMax);
 	NiagaraComponent->SetVariableInt(FName("QueryTimeStart"), QueryTimeStart);
