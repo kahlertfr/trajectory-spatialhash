@@ -62,3 +62,33 @@ failure even though its GPU state checks pass. This capture setup cannot establi
 face appearance or transparent sorting. No interactive dataset or headset check was
 performed. Initial commandlet-only rendering attempts also crashed in renderer
 initialization; the editor automation lifecycle completed the GPU checks.
+
+## Editor script registration repair (2026-10-26)
+
+The embedded `TransformObjectAnchorToWorld` script is now included in the system's
+Scratch Pad registry. Its six object-view call sites can be opened through Niagara's
+normal source-navigation handler.
+
+Eleven retained call aliases were updated through Niagara's `ReassignModuleScript`
+editor API, which also migrates the affected parameter names:
+
+| Previous displayed name | Referenced script / new displayed name | Calls |
+| --- | --- | --- |
+| TransformLocalToWorld | TransformObjectAnchorToWorld | 6 |
+| TransformLocalToWorld | UpdateObjectViewOrientationDisc | 1 |
+| ExportVisibleBounds | ExportInspectedContextBounds | 2 |
+| ExportVisibleBounds | ExportQuerySphereBounds | 2 |
+
+Active module input overrides and their links were compared before and after the
+reassignment and preserved. Niagara discarded obsolete BBoxCenterLocal and
+BBoxExtentLocal overrides on the seven anchor/disc calls; those scripts already
+read System.BBoxCenterLocal and System.Extent directly.
+
+A separate process reloaded all three project/plugin Niagara systems and checked
+355 embedded module calls through their Scratch Pad view models, editable graphs,
+and the actual stack-module OpenSourceAsset handler. All passed, with no missing
+registrations, stale aliases, or source-navigation failures. The overview and
+query-only systems required no changes. Direct3D 12 compilation of the repaired
+result system passed with valid=1 and ready=1.
+
+The post-repair GPU state-only automation also passed all nine checks (visibility, reference normal, time-window stability, grab transforms/scale, antiparallel and empty directions). Appearance capture checks were explicitly excluded because of the previously documented capture limitation.
