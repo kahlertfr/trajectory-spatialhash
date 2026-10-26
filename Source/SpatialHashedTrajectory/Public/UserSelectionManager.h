@@ -112,6 +112,10 @@ struct FUserTrajectorySelection
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "User Selection|Visibility")
 	bool ZoneRadiusVisibility = false;
 
+	/** Whether the object-view orientation disc and arrow are visible in rotation mode. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "User Selection|Visibility")
+	bool WidgetVisibility = true;
+
 	void NormalizeVisibility()
 	{
 		TrajectoryVisibility::Normalize(CollisionRadius, ZoneInnerRadius, MiddleRadius, VisibleZonesMask);

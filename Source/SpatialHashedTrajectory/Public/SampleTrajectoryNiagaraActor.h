@@ -110,6 +110,10 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visualization")
 	bool ZoneRadiusVisibility = false;
 
+	/** Whether the object-view orientation disc and arrow are visible in rotation mode. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visualization")
+	bool WidgetVisibility = true;
+
 	// ─── User Selection Settings ─────────────────────────────────────────────
 
 	/** Optional selection manager that can update visualization parameters */

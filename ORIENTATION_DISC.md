@@ -92,3 +92,5 @@ query-only systems required no changes. Direct3D 12 compilation of the repaired
 result system passed with valid=1 and ready=1.
 
 The post-repair GPU state-only automation also passed all nine checks (visibility, reference normal, time-window stability, grab transforms/scale, antiparallel and empty directions). Appearance capture checks were explicitly excluded because of the previously documented capture limitation.
+
+WidgetVisibility (2026-10-27): the disc additionally requires User.WidgetVisibility, shared with the arrow and defaulting to true. See [WIDGET_VISIBILITY.md](WIDGET_VISIBILITY.md) for selection/native transfer and Blueprint wiring.

@@ -305,6 +305,10 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visualization")
 	bool ZoneRadiusVisibility = false;
 
+	/** Whether the object-view orientation disc and arrow are visible in rotation mode. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visualization")
+	bool WidgetVisibility = true;
+
 	// ─── Blueprint callable entry points ─────────────────────────────────────
 
 	/**
@@ -339,7 +343,7 @@ public:
 
 
 	UFUNCTION(BlueprintCallable, Category = "Trajectory Visualization")
-	void UpdateUserParameter(int32 NewTimeStart, int32 NewTimeEnd, ETrajectoryColorEncoding NewColorEncoding, ETrajectoryDistanceFilter newDistanceFilter, float NewParticleRadius, float NewBehaviorRadius, float NewQueryRadius, float NewCollisionRadius, float NewZoneInnerRadius, float NewMiddleRadius, int32 NewVisibleZonesMask, bool NewSensitivity, bool NewVisibility, bool NewNoShadow, bool NewObjectViewWithRotation, bool NewZoneRadiusVisibility = false, float NewRibbonWidth = 1.f);
+	void UpdateUserParameter(int32 NewTimeStart, int32 NewTimeEnd, ETrajectoryColorEncoding NewColorEncoding, ETrajectoryDistanceFilter newDistanceFilter, float NewParticleRadius, float NewBehaviorRadius, float NewQueryRadius, float NewCollisionRadius, float NewZoneInnerRadius, float NewMiddleRadius, int32 NewVisibleZonesMask, bool NewSensitivity, bool NewVisibility, bool NewNoShadow, bool NewObjectViewWithRotation, bool NewZoneRadiusVisibility = false, float NewRibbonWidth = 1.f, bool NewWidgetVisibility = true);
 
 
 	/**

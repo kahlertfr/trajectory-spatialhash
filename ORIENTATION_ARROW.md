@@ -49,3 +49,4 @@ editor reassignment API, with its active transform inputs preserved.
 These are editor-API and GPU-state checks. No interactive visual or headset check
 was performed. Asset-editing and validation helpers remain in the ignored codex/
 folder and are not intended project changes.
+WidgetVisibility (2026-10-27): the shared default-visible selection flag now gates both orientation indicators together, in addition to their rotation/data conditions. The user's later arrow-size adjustment is retained. See [WIDGET_VISIBILITY.md](WIDGET_VISIBILITY.md) for the native transfer API and Blueprint wiring inventory.
