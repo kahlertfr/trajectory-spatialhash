@@ -110,11 +110,15 @@ struct FUserTrajectorySelection
 
 	/** Whether the neighborhood-radius guide is visible. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "User Selection|Visibility")
-	bool NeighborhoodVisibility = false;
+	bool NeighborhoodRadiusVisibility = false;
 
 	/** Whether the behavior-radius guide is visible. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "User Selection|Visibility")
-	bool BehaviorVisibility = false;
+	bool BehaviorRadiusVisibility = false;
+
+	/** Whether collision, inner, and middle radius guides are visible. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "User Selection|Visibility")
+	bool ZonesRadiusVisibility = false;
 
 	/** Whether the object-view orientation disc and arrow are visible in rotation mode. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "User Selection|Visibility")
@@ -143,7 +147,7 @@ struct FUserTrajectorySelection
 
 	/** Whether particles are visible for this selected trajectory */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "User Selection")
-	bool bParticlesVisible = true;
+	bool ParticleVisibility = true;
 
 	/** Whether this selection should render without shadow contribution */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "User Selection")

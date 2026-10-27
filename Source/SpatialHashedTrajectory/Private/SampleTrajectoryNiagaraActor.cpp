@@ -191,11 +191,12 @@ void ASampleTrajectoryNiagaraActor::ApplyUserSelection(const FUserTrajectorySele
 	ZoneInnerRadius = Selection.ZoneInnerRadius;
 	MiddleRadius = Selection.MiddleRadius;
 	VisibleZonesMask = Selection.VisibleZonesMask;
-	NeighborhoodVisibility = Selection.NeighborhoodVisibility;
-	BehaviorVisibility = Selection.BehaviorVisibility;
+	NeighborhoodRadiusVisibility = Selection.NeighborhoodRadiusVisibility;
+	BehaviorRadiusVisibility = Selection.BehaviorRadiusVisibility;
+	ZonesRadiusVisibility = Selection.ZonesRadiusVisibility;
 	TransformationIndicatorVisibility = Selection.TransformationIndicatorVisibility;
 	TimeRangeSensitivity = Selection.TimeRangeSensitive;
-	ParticleVisibility = Selection.bParticlesVisible;
+	ParticleVisibility = Selection.ParticleVisibility;
 	NoShadow = Selection.NoShadow;
 
 	UpdateUserParametersOnNiagara();
@@ -225,8 +226,9 @@ void ASampleTrajectoryNiagaraActor::UpdateUserParametersOnNiagara()
 	NiagaraComponent->SetVariableFloat(FName("InnerRadius"), ZoneInnerRadius);
 	NiagaraComponent->SetVariableFloat(FName("MiddleRadius"), MiddleRadius);
 	NiagaraComponent->SetVariableInt(FName("VisibleZonesMask"), VisibleZonesMask);
-	NiagaraComponent->SetVariableBool(FName("NeighborhoodVisibility"), NeighborhoodVisibility);
-	NiagaraComponent->SetVariableBool(TEXT("User.BehaviorVisibility"), BehaviorVisibility);
+	NiagaraComponent->SetVariableBool(FName("NeighborhoodRadiusVisibility"), NeighborhoodRadiusVisibility);
+	NiagaraComponent->SetVariableBool(TEXT("User.BehaviorRadiusVisibility"), BehaviorRadiusVisibility);
+	NiagaraComponent->SetVariableBool(TEXT("User.ZonesRadiusVisibility"), ZonesRadiusVisibility);
 	NiagaraComponent->SetVariableBool(TEXT("User.TransformationIndicatorVisibility"), TransformationIndicatorVisibility);
 	NiagaraComponent->SetVariableBool(FName("TimeRangeSensitive"), TimeRangeSensitivity);
 	NiagaraComponent->SetVariableBool(FName("ParticleVisibility"), ParticleVisibility);
@@ -654,8 +656,9 @@ void ASampleTrajectoryNiagaraActor::TransferScenarioToNiagara(ESampleTrajectoryS
 	NiagaraComponent->SetVariableFloat(FName("InnerRadius"), ZoneInnerRadius);
 	NiagaraComponent->SetVariableFloat(FName("MiddleRadius"), MiddleRadius);
 	NiagaraComponent->SetVariableInt(FName("VisibleZonesMask"), VisibleZonesMask);
-	NiagaraComponent->SetVariableBool(FName("NeighborhoodVisibility"), NeighborhoodVisibility);
-	NiagaraComponent->SetVariableBool(TEXT("User.BehaviorVisibility"), BehaviorVisibility);
+	NiagaraComponent->SetVariableBool(FName("NeighborhoodRadiusVisibility"), NeighborhoodRadiusVisibility);
+	NiagaraComponent->SetVariableBool(TEXT("User.BehaviorRadiusVisibility"), BehaviorRadiusVisibility);
+	NiagaraComponent->SetVariableBool(TEXT("User.ZonesRadiusVisibility"), ZonesRadiusVisibility);
 	NiagaraComponent->SetVariableBool(TEXT("User.TransformationIndicatorVisibility"), TransformationIndicatorVisibility);
 	NiagaraComponent->SetVariableFloat(FName("ParticleRadius"), ParticleRadius);
 	NiagaraComponent->SetVariableFloat(TEXT("User.RibbonWidth"), RibbonWidth);

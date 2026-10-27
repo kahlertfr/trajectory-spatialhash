@@ -108,11 +108,15 @@ public:
 
 	/** Whether the neighborhood-radius guide is visible. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visualization")
-	bool NeighborhoodVisibility = false;
+	bool NeighborhoodRadiusVisibility = false;
 
 	/** Whether the behavior-radius guide is visible. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visualization")
-	bool BehaviorVisibility = false;
+	bool BehaviorRadiusVisibility = false;
+
+	/** Whether collision, inner, and middle radius guides are visible. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visualization")
+	bool ZonesRadiusVisibility = false;
 
 	/** Whether the object-view orientation disc and arrow are visible in rotation mode. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visualization")
