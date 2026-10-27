@@ -645,17 +645,21 @@ bool FDisplayedDistanceTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("Ribbon width stored"), Actor->RibbonWidth, 0.125f);
 	TestEqual(TEXT("Ribbon width uploaded"), Actor->NiagaraComponent->GetOverrideParameters().GetParameterValue<float>(
 		FNiagaraVariable(FNiagaraTypeDefinition::GetFloatDef(), TEXT("User.RibbonWidth"))), 0.125f);
-	TestTrue(TEXT("Guide visibility stored on actor"), Actor->ZoneRadiusVisibility);
+	TestTrue(TEXT("Guide visibility stored on actor"), Actor->NeighborhoodVisibility);
 	TestTrue(TEXT("Guide visibility uploaded to Niagara"), Actor->NiagaraComponent->GetOverrideParameters().GetParameterValue<FNiagaraBool>(
-		FNiagaraVariable(FNiagaraTypeDefinition::GetBoolDef(), TEXT("User.ZoneRadiusVisibility"))).GetValue());
-	TestTrue(TEXT("Orientation widgets visible by default on actor"), Actor->WidgetVisibility);
+		FNiagaraVariable(FNiagaraTypeDefinition::GetBoolDef(), TEXT("User.NeighborhoodVisibility"))).GetValue());
+	TestTrue(TEXT("Orientation widgets visible by default on actor"), Actor->TransformationIndicatorVisibility);
 	Actor->UpdateUserParameter(100, 100, ETrajectoryColorEncoding::Time, ETrajectoryDistanceFilter::All,
-		1.f, 1.f, 1.f, 1.f, 2.f, 3.f, 15, false, true, false, true, true, 0.125f, false);
-	TestFalse(TEXT("Widget visibility stored on actor"), Actor->WidgetVisibility);
-	const FNiagaraVariable WidgetParameter(FNiagaraTypeDefinition::GetBoolDef(), TEXT("User.WidgetVisibility"));
+		1.f, 1.f, 1.f, 1.f, 2.f, 3.f, 15, false, true, false, true, true, 0.125f, false, true);
+	TestFalse(TEXT("Widget visibility stored on actor"), Actor->TransformationIndicatorVisibility);
+    TestTrue(TEXT("Behavior guide stored independently"), Actor->BehaviorVisibility);
+    const FNiagaraVariable BehaviorParameter(FNiagaraTypeDefinition::GetBoolDef(), TEXT("User.BehaviorVisibility"));
+    TestTrue(TEXT("Behavior guide uploaded live"), Actor->NiagaraComponent->GetOverrideParameters().GetParameterValue<FNiagaraBool>(BehaviorParameter).GetValue());
+	const FNiagaraVariable WidgetParameter(FNiagaraTypeDefinition::GetBoolDef(), TEXT("User.TransformationIndicatorVisibility"));
 	TestFalse(TEXT("Hidden widgets uploaded during live update"),
 		Actor->NiagaraComponent->GetOverrideParameters().GetParameterValue<FNiagaraBool>(WidgetParameter).GetValue());
 	Actor->UploadPreparedDisplay(NonPeriodic, false);
+    TestTrue(TEXT("Behavior guide retained on reupload"), Actor->NiagaraComponent->GetOverrideParameters().GetParameterValue<FNiagaraBool>(BehaviorParameter).GetValue());
 	TestFalse(TEXT("Initial/progressive display upload preserves hidden widgets"),
 		Actor->NiagaraComponent->GetOverrideParameters().GetParameterValue<FNiagaraBool>(WidgetParameter).GetValue());
 	Actor->UpdateUserParameter(100, 100, ETrajectoryColorEncoding::Time, ETrajectoryDistanceFilter::All,
@@ -1116,7 +1120,7 @@ void ATrajectoryQueryNiagaraActor::SetRibbonWidth(float NewRibbonWidth)
     if (NiagaraComponent) NiagaraComponent->SetVariableFloat(TEXT("User.RibbonWidth"), RibbonWidth);
 }
 
-void ATrajectoryQueryNiagaraActor::UpdateUserParameter(int32 NewTimeStart, int32 NewTimeEnd, ETrajectoryColorEncoding NewColorEncoding, ETrajectoryDistanceFilter NewDistanceFilter, float NewParticleRadius, float NewBehaviorRadius, float NewQueryRadius, float NewCollisionRadius, float NewZoneInnerRadius, float NewMiddleRadius, int32 NewVisibleZonesMask, bool NewSensitivity, bool NewVisibility, bool NewNoShadow, bool NewObjectViewWithRotation, bool NewZoneRadiusVisibility, float NewRibbonWidth, bool NewWidgetVisibility)
+void ATrajectoryQueryNiagaraActor::UpdateUserParameter(int32 NewTimeStart, int32 NewTimeEnd, ETrajectoryColorEncoding NewColorEncoding, ETrajectoryDistanceFilter NewDistanceFilter, float NewParticleRadius, float NewBehaviorRadius, float NewQueryRadius, float NewCollisionRadius, float NewZoneInnerRadius, float NewMiddleRadius, int32 NewVisibleZonesMask, bool NewSensitivity, bool NewVisibility, bool NewNoShadow, bool NewObjectViewWithRotation, bool NewNeighborhoodVisibility, float NewRibbonWidth, bool NewTransformationIndicatorVisibility, bool NewBehaviorVisibility)
 {
 	++VisibleBoundsRevision;
 	VisualizationTimeStart = NewTimeStart;
@@ -1131,8 +1135,9 @@ void ATrajectoryQueryNiagaraActor::UpdateUserParameter(int32 NewTimeStart, int32
 	ZoneInnerRadius = NewZoneInnerRadius;
 	MiddleRadius = NewMiddleRadius;
 	VisibleZonesMask = NewVisibleZonesMask;
-	ZoneRadiusVisibility = NewZoneRadiusVisibility;
-	WidgetVisibility = NewWidgetVisibility;
+	NeighborhoodVisibility = NewNeighborhoodVisibility;
+	BehaviorVisibility = NewBehaviorVisibility;
+	TransformationIndicatorVisibility = NewTransformationIndicatorVisibility;
 	TrajectoryVisibility::Normalize(CollisionRadius, ZoneInnerRadius, MiddleRadius, VisibleZonesMask);
 	TimeRangeSensitivity = NewSensitivity;
 	ParticleVisibility = NewVisibility;
@@ -1159,8 +1164,9 @@ void ATrajectoryQueryNiagaraActor::UpdateUserParameter(int32 NewTimeStart, int32
 	NiagaraComponent->SetVariableFloat(FName("InnerRadius"), ZoneInnerRadius);
 	NiagaraComponent->SetVariableFloat(FName("MiddleRadius"), MiddleRadius);
 	NiagaraComponent->SetVariableInt(FName("VisibleZonesMask"), VisibleZonesMask);
-	NiagaraComponent->SetVariableBool(FName("ZoneRadiusVisibility"), ZoneRadiusVisibility);
-	NiagaraComponent->SetVariableBool(TEXT("User.WidgetVisibility"), WidgetVisibility);
+	NiagaraComponent->SetVariableBool(FName("NeighborhoodVisibility"), NeighborhoodVisibility);
+	NiagaraComponent->SetVariableBool(TEXT("User.BehaviorVisibility"), BehaviorVisibility);
+	NiagaraComponent->SetVariableBool(TEXT("User.TransformationIndicatorVisibility"), TransformationIndicatorVisibility);
 	NiagaraComponent->SetVariableBool(FName("TimeRangeSensitive"), TimeRangeSensitivity);
 	NiagaraComponent->SetVariableBool(FName("ParticleVisibility"), ParticleVisibility);
 	NiagaraComponent->SetVariableBool(FName("NoShadow"), NoShadow);
@@ -1762,8 +1768,9 @@ void ATrajectoryQueryNiagaraActor::UploadPreparedDisplay(const FPreparedTrajecto
 	NiagaraComponent->SetVariableFloat(FName("InnerRadius"), ZoneInnerRadius);
 	NiagaraComponent->SetVariableFloat(FName("MiddleRadius"), MiddleRadius);
 	NiagaraComponent->SetVariableInt(FName("VisibleZonesMask"), VisibleZonesMask);
-	NiagaraComponent->SetVariableBool(FName("ZoneRadiusVisibility"), ZoneRadiusVisibility);
-	NiagaraComponent->SetVariableBool(TEXT("User.WidgetVisibility"), WidgetVisibility);
+	NiagaraComponent->SetVariableBool(FName("NeighborhoodVisibility"), NeighborhoodVisibility);
+	NiagaraComponent->SetVariableBool(TEXT("User.BehaviorVisibility"), BehaviorVisibility);
+	NiagaraComponent->SetVariableBool(TEXT("User.TransformationIndicatorVisibility"), TransformationIndicatorVisibility);
 	NiagaraComponent->SetVariableFloat(FName("ParticleRadius"), ParticleRadius);
 	NiagaraComponent->SetVariableFloat(TEXT("User.RibbonWidth"), RibbonWidth);
 	NiagaraComponent->SetVariableFloat(FName("VelocityMin"), VelocityMin);

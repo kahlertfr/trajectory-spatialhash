@@ -1,3 +1,9 @@
+> Superseded by the independent visibility-control contract in the consuming
+> project's VISIBILITY_CONTROLS.md. WidgetVisibility is now
+> TransformationIndicatorVisibility; ZoneRadiusVisibility is now
+> NeighborhoodVisibility, with separate BehaviorVisibility. Niagara asset
+> migration and Blueprint wiring remain manual for that change.
+
 # Orientation widget visibility
 
 `FUserTrajectorySelection.WidgetVisibility` is a Blueprint-readable/writable bool,

@@ -108,13 +108,17 @@ struct FUserTrajectorySelection
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "User Selection|Visibility", meta = (Bitmask, BitmaskEnum = "/Script/SpatialHashedTrajectory.ETrajectoryVisibilityZone"))
 	int32 VisibleZonesMask = TrajectoryVisibility::AllZones;
 
-	/** Whether zone radius guides are visible. */
+	/** Whether the neighborhood-radius guide is visible. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "User Selection|Visibility")
-	bool ZoneRadiusVisibility = false;
+	bool NeighborhoodVisibility = false;
+
+	/** Whether the behavior-radius guide is visible. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "User Selection|Visibility")
+	bool BehaviorVisibility = false;
 
 	/** Whether the object-view orientation disc and arrow are visible in rotation mode. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "User Selection|Visibility")
-	bool WidgetVisibility = true;
+	bool TransformationIndicatorVisibility = true;
 
 	void NormalizeVisibility()
 	{
