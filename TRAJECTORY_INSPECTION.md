@@ -102,8 +102,11 @@ Both supplied result systems declare:
 | `User.HasTrajectorySelection` | Bool | Enables inspection; false restores normal display |
 | `User.TrajSelectOnly` | Bool | Suppresses nonmatching context samples when inspection is enabled |
 
-Final update modules preserve selected samples' existing encoded RGB and set
-unselected RGB to white, preserving their alpha. Isolation additionally zeros
+Final update modules preserve selected context samples' existing encoded RGB and
+set unselected context RGB to white, preserving their alpha. The focus trajectory
+and its point markers always retain their normal encoded colors, regardless of
+which trajectory is selected or whether isolation is enabled. The reference
+particle also retains its normal appearance. Isolation additionally zeros
 unselected context alpha, ribbon width, sprite size, and mesh scale. The query
 trajectory and query particle remain visible as references when a context
 trajectory is isolated. Existing time, zone,
@@ -272,3 +275,14 @@ and nonuniform component scale. `NiagaraIntegration` exercises actual ribbon
 export, asynchronous readback and confirmation in a synthetic Unreal world,
 including object alignment and transformed components. No headset or real-dataset
 test was performed.
+
+Focus-color adjustment (2026-10-28): removed inspection whitening from the
+focus-only ExportVisibleBounds and ExportQuerySphereBounds modules in the main
+result system, and from ExportVisibleBounds in the query-only system. Active
+call-site audits confirm these modules serve only the focus ribbon/particles.
+Context inspection modules, visibility, bounds and picking are unchanged.
+Validation: both Niagara systems compiled successfully. D3D12 GPU sim-cache
+checks passed for encoded focus RGB/alpha preservation under context highlighting,
+isolation, selecting focus, and clearing. Main-system Time and Velocity modes and
+query-only Time mode were exercised. Main-system context whitening/isolation and
+restoration checks passed. No real-dataset or headset appearance test was performed.
