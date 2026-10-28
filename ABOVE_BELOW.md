@@ -14,8 +14,12 @@ compares `result.y + resultImageY * PeriodicVolumeExtent.y` against the matched
 query's equivalent height. Periodic image bytes are sign-extended. Height >= 0
 uses Above; height < 0 uses Below. RGB changes preserve alpha and all existing
 visibility, filtering, picking and width behavior. The focus keeps its own color.
-The module runs after existing color/visibility operations and preserves their
-alpha. Switching modes recomputes base colors normally on the next update.
+The module runs before ExportInspectedContextBounds in both context emitters.
+Inspection then keeps the selected context encoded, whitens other context, and
+hides nonselected context when isolation is enabled. This order prevents the
+Above/Below module from overwriting inspection white. Alpha and all other
+visibility/width masks are preserved. Switching modes recomputes base colors
+normally on the next update.
 No new dataset fields, query work or sampling arrays are needed.
 
 ## Orientation plane
@@ -90,3 +94,10 @@ D3D12 GPU checks passed for all three plane axes against grabbed volume axes,
 including twist around up, 180-degree rotations about each axis, and a combined
 rotation. Live inner-radius resizing, query-radius independence and a finite
 zero-radius collapse passed. Existing hemisphere color/visibility checks passed.
+
+Inspection ordering fix (2026-10-28): moved ColorEncodingAboveBelow before
+ExportInspectedContextBounds in both context stacks. D3D12 GPU checks passed with
+two context trajectories for selecting either context, selecting focus, isolation
+on/off, and clearing. Selected samples retain the correct magenta/teal RGB, other
+context samples become white or hidden, and focus RGB/alpha remains unchanged.
+Niagara compilation and the Editor build passed. No headset check was performed.
