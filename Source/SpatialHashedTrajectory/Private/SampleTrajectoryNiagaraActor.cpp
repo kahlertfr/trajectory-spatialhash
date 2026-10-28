@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "SampleTrajectoryNiagaraActor.h"
+#include "TrajectoryHemispherePalette.h"
 #include "NiagaraComponent.h"
 #include "NiagaraFunctionLibrary.h"
 #include "NiagaraDataInterfaceArrayFunctionLibrary.h"
@@ -216,6 +217,7 @@ void ASampleTrajectoryNiagaraActor::UpdateUserParametersOnNiagara()
 	NiagaraComponent->SetVariableInt(FName("VisTimeStart"), VisualizationTimeStart);
 	NiagaraComponent->SetVariableInt(FName("VisTimeEnd"), VisualizationTimeEnd);
 	NiagaraComponent->SetVariableInt(FName("ColorEncoding"), static_cast<int32>(ColorEncoding));
+	TrajectoryHemispherePalette::Upload(NiagaraComponent);
 	NiagaraComponent->SetVariableInt(FName("DistanceFilter"), static_cast<int32>(DistanceFilter));
 	NiagaraComponent->SetVariableFloat(FName("ParticleRadius"), ParticleRadius);
 	NiagaraComponent->SetVariableFloat(TEXT("User.RibbonWidth"), RibbonWidth);
@@ -669,6 +671,7 @@ void ASampleTrajectoryNiagaraActor::TransferScenarioToNiagara(ESampleTrajectoryS
 	NiagaraComponent->SetVariableInt(FName("VisTimeStart"), VisualizationTimeStart);
 	NiagaraComponent->SetVariableInt(FName("VisTimeEnd"), VisualizationTimeEnd);
 	NiagaraComponent->SetVariableInt(FName("ColorEncoding"), static_cast<int32>(ColorEncoding));
+	TrajectoryHemispherePalette::Upload(NiagaraComponent);
 	NiagaraComponent->SetVariableInt(FName("DistanceFilter"), static_cast<int32>(DistanceFilter));
 	NiagaraComponent->SetVariableVec3(FName("BoundsMin"), Data.BoundsMin);
 	NiagaraComponent->SetVariableVec3(FName("BoundsMax"), Data.BoundsMax);

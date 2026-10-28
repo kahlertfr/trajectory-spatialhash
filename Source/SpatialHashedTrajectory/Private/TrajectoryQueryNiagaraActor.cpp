@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "TrajectoryQueryNiagaraActor.h"
+#include "TrajectoryHemispherePalette.h"
 #include "ConfirmTrajectorySelectionAsyncAction.h"
 #include "VisibleSampleBoxComponent.h"
 #include "UObject/UnrealType.h"
@@ -1175,6 +1176,7 @@ void ATrajectoryQueryNiagaraActor::UpdateUserParameter(int32 NewTimeStart, int32
 	NiagaraComponent->SetVariableInt(FName("VisTimeStart"), VisualizationTimeStart);
 	NiagaraComponent->SetVariableInt(FName("VisTimeEnd"), VisualizationTimeEnd);
 	NiagaraComponent->SetVariableInt(FName("ColorEncoding"), static_cast<int32>(ColorEncoding));
+	TrajectoryHemispherePalette::Upload(NiagaraComponent);
 	NiagaraComponent->SetVariableInt(FName("DistanceFilter"), static_cast<int32>(DistanceFilter));
 	NiagaraComponent->SetVariableFloat(FName("ParticleRadius"), ParticleRadius);
 	NiagaraComponent->SetVariableFloat(TEXT("User.RibbonWidth"), RibbonWidth);
@@ -1809,6 +1811,7 @@ void ATrajectoryQueryNiagaraActor::UploadPreparedDisplay(const FPreparedTrajecto
 
 	// Color encoding (0 = Timestep, 1 = Velocity)
 	NiagaraComponent->SetVariableInt(FName("ColorEncoding"), static_cast<int32>(ColorEncoding));
+	TrajectoryHemispherePalette::Upload(NiagaraComponent);
 	NiagaraComponent->SetVariableInt(FName("DistanceFilter"), static_cast<int32>(DistanceFilter));
 
 	// Bounding box – use the stored values computed by StoreQueryResults
