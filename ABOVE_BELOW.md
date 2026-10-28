@@ -22,16 +22,19 @@ No new dataset fields, query work or sampling arrays are needed.
 
 The user's existing `ObjectView-OrientationPlan` emitter and `/Game/Meshes/UnitPlane`
 are retained. `UpdateObjectViewOrientationPlane` uses the existing object anchor,
-fit and placement transforms. Its normal is simulation +Y (display +Z), followed
-by the linear grab transform. It does not use movement direction or query rotation.
+fit and placement transforms. Its full mesh basis follows the displayed simulation-volume axes and the linear
+grab transform: mesh X is source +X, mesh Y is source -Z, and mesh Z (normal) is
+source +Y. Quaternion construction retains rotation around the normal, so the
+plane edges stay aligned with the bounding-box axes while grabbing. It does not use movement direction or query rotation.
 The persistent particle is visible only without object-view rotation, while
 `TransformationIndicatorVisibility` is enabled and query positions exist. It is
 independent of focus/zone visibility, color mode and display-time-window changes.
 The original front/back orientation disc remains unchanged.
 
-`CalculateParticleScale.ParticleRadius` reads `User.QueryRadius` in this emitter.
+`CalculateParticleScale.ParticleRadius` reads `User.InnerRadius` in this emitter.
 `SetOrientationPlaneSize` multiplies the rendered radius by two because UnitPlane
-spans [-0.5,+0.5]. Thus its square has side length equal to the query diameter.
+spans [-0.5,+0.5]. Thus its square has side length equal to twice the inner radius. Changing the
+query radius does not resize it; zero inner radius collapses it.
 The plane does not export bounds. Its renderer retains depth testing and visibility
 tag filtering, and disables shadow casting.
 
@@ -71,7 +74,7 @@ The UE 5.6 Editor target and local authoring helper built successfully. Unreal's
 supported asset APIs authored and compiled the Niagara and Blueprint assets.
 D3D12 GPU sim-cache checks passed for actual colors in both views, nontrivial
 query-index mappings, periodic +Y/-Y offsets, on-plane Above, rotation-mode color
-invariance, plane normal/visibility, grab pose/scale, zero inner radius, time-window
+invariance, plane normal/visibility, grab pose/scale, inner-radius sizing, time-window
 stability, original-disc visibility and switching between FrontBack and AboveBelow.
 Preset AboveBelow and existing RoundTrip tests passed; Screenshot.DisplaySettings
 passed with coverage extended through encoding 8. The selector compiled, its
@@ -80,3 +83,10 @@ local authoring and GPU
 validation helpers remain in the ignored parent codex directory.
 
 No headset test or interactive real-dataset appearance check has been performed.
+
+Plane adjustment (2026-10-28): full basis alignment replaces normal-only shortest-arc
+alignment, preserving twist about simulation up. Size now follows InnerRadius.
+D3D12 GPU checks passed for all three plane axes against grabbed volume axes,
+including twist around up, 180-degree rotations about each axis, and a combined
+rotation. Live inner-radius resizing, query-radius independence and a finite
+zero-radius collapse passed. Existing hemisphere color/visibility checks passed.
