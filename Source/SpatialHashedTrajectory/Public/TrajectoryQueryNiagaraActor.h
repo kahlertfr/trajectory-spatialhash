@@ -399,6 +399,9 @@ public:
 	uint64 GetVisibleBoundsRevision() const { return VisibleBoundsRevision; }
 	void ReceiveVisibleBounds(uint64 Revision, const FBox& Path, const FBox& Object);
 
+    /** Minimum context-to-focus distance before display sampling, in source units. */
+    float GetResultDisplayDistanceMinimum() const { return ResultDisplayDistanceMin; }
+
     /** True only after the last request's final upload completed successfully. */
     UFUNCTION(BlueprintPure, Category = "Trajectory Visualization")
     bool IsReadyForPresetCapture() const { return bCompletedQueryForCapture && !bQueryInProgress; }
@@ -484,6 +487,7 @@ private:
 	friend class FQuerySamplingCleanupTest;
 	friend class FObjectViewBoundsTest;
 	friend class FDisplayedDistanceTest;
+    friend class FQueryParticleRadiusLimitTest;
 	friend class FTrajectoryInspectionTest;
 	friend class FTrajectoryRibbonPickingTest;
 	friend class FTrajectoryRibbonPickingIntegrationTest;
