@@ -18,13 +18,14 @@ static const TCHAR *ShaderSource = TEXT(R"(
 RWBuffer<uint> {0}_Buffer;
 uint {0}_SampleCount;
 uint {0}_Enabled;
+uint {0}_VisibleViews;
 void RecordSample_{0}_UEImpureCall(bool Visible,float3 Position,int View,int SampleIndex,int TrajectoryIndex,float Width,out bool Written)
 {
  Written=false;
  if ({0}_Enabled==0 || View<0 || View>1 || SampleIndex<0 || SampleIndex>=(int){0}_SampleCount || TrajectoryIndex<0 || !all(isfinite(Position)) || !isfinite(Width)) return;
  uint Base=(View*{0}_SampleCount+SampleIndex)*8;
  {0}_Buffer[Base]=asuint(Position.x); {0}_Buffer[Base+1]=asuint(Position.y); {0}_Buffer[Base+2]=asuint(Position.z);
- {0}_Buffer[Base+3]=Visible ? 1u : 0u;
+ {0}_Buffer[Base+3]=(Visible && (({0}_VisibleViews & (1u << View)) != 0)) ? 1u : 0u;
  {0}_Buffer[Base+4]=TrajectoryIndex+1;
  {0}_Buffer[Base+5]=asuint(abs(Width)*0.5);
  Written=true;
@@ -34,6 +35,7 @@ BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
 SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<uint>, Buffer)
 SHADER_PARAMETER(uint32, SampleCount)
 SHADER_PARAMETER(uint32, Enabled)
+SHADER_PARAMETER(uint32, VisibleViews)
 END_SHADER_PARAMETER_STRUCT()
 class FReduceSegmentsCS : public FGlobalShader
 {
@@ -65,6 +67,7 @@ struct FRenderData
 	uint32 SampleCount = 0;
 	uint32 TrajectoryCount = 0;
 	bool Enabled = false;
+    uint32 VisibleViews = 3;
 	FVector ProbeWorld = FVector::ZeroVector;
 	FVector3f ProbeRelative = FVector3f::ZeroVector;
 	float Radius = 0;
@@ -219,7 +222,8 @@ bool UNiagaraDataInterfaceRibbonPicking::PerInstanceTick(void *Data, FNiagaraSys
 	     Weak = TWeakObjectPtr<ATrajectoryQueryNiagaraActor>(Actor),
 	     Revision = Actor ? Actor->GetVisibleBoundsRevision() : 0, Session = Enabled ? Session : 0,
 	     Frame = GFrameCounter, Enabled, Samples = Enabled ? Samples : 0,
-	     Count = Actor ? Actor->GetInspectableTrajectoryCount() : 0, Probe, Relative,
+	     VisibleViews = Actor ? (uint32(Actor->IsPathViewVisible()) | (uint32(Actor->IsObjectViewVisible()) << 1)) : 3u,
+         Count = Actor ? Actor->GetInspectableTrajectoryCount() : 0, Probe, Relative,
 	     Radius = Enabled ? Radius : 0, Linear](FRHICommandListImmediate &) {
 		    if (auto *D = P->Instances.Find(ID))
 		    {
@@ -228,6 +232,7 @@ bool UNiagaraDataInterfaceRibbonPicking::PerInstanceTick(void *Data, FNiagaraSys
 			    D->Session = Session;
 			    D->Frame = Frame;
 			    D->Enabled = Enabled;
+                D->VisibleViews = VisibleViews;
 			    D->SampleCount = Samples;
 			    D->TrajectoryCount = Count;
 			    D->ProbeWorld = Probe;
@@ -254,6 +259,7 @@ void UNiagaraDataInterfaceRibbonPicking::SetShaderParameters(
 	}
 	Parameters->SampleCount = D.SampleCount;
 	Parameters->Enabled = D.Enabled ? 1u : 0u;
+    Parameters->VisibleViews = D.VisibleViews;
 	if (!D.Buffer)
 	{
 		auto Desc = FRDGBufferDesc::CreateBufferDesc(sizeof(uint32), FMath::Max(1u, D.SampleCount) * 2 * 8);

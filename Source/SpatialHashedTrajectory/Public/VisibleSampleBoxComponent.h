@@ -9,6 +9,8 @@ class SPATIALHASHEDTRAJECTORY_API UVisibleSampleBoxComponent : public UBoxCompon
 	GENERATED_BODY()
   public:
 	void SetVisibleSampleBounds(const FBox& LocalBounds);
+    /** Independent suppression for study presentation; retains bounds and axes preferences. */
+    void SetPresentationHidden(bool bHidden);
 	/** Fitted collision geometry in component space, including the interaction margin. */
 	FBox GetVisibleSampleLocalBounds() const;
 	/** Place the axes at local -X/-Y/-Z, retaining their orientation and scale. */
@@ -23,7 +25,8 @@ class SPATIALHASHEDTRAJECTORY_API UVisibleSampleBoxComponent : public UBoxCompon
   private:
 	FVector SampleCenter = FVector::ZeroVector;
 	FVector SampleExtent = FVector::ZeroVector;
-	bool bHasSampleBounds = false;
+	bool bPresentationHidden = false;
+    bool bHasSampleBounds = false;
 	bool bHasVisibleSamples = false;
 	TWeakObjectPtr<USceneComponent> CornerAxes;
 	bool bAxesHiddenForEmptyView = false;

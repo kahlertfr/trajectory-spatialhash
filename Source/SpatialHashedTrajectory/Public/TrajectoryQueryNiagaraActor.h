@@ -78,6 +78,15 @@ class SPATIALHASHEDTRAJECTORY_API ATrajectoryQueryNiagaraActor : public AActor
 
 public:
 	ATrajectoryQueryNiagaraActor();
+    /** Independent presentation gates; do not change query/filter/preset settings. */
+    UFUNCTION(BlueprintCallable, Category="Visualization")
+    void SetResultViewVisibility(bool bPathVisible, bool bObjectVisible);
+    void RefreshResultViewPresentation();
+    UFUNCTION(BlueprintPure, Category="Visualization")
+    bool IsPathViewVisible() const { return bPathViewVisible; }
+    UFUNCTION(BlueprintPure, Category="Visualization")
+    bool IsObjectViewVisible() const { return bObjectViewVisible; }
+
 
 	/** Shared by path and object view. Index 0 is the focus; subsequent indices are displayed context trajectories. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Trajectory Inspection")
@@ -481,6 +490,8 @@ protected:
 	bool InitializeManager();
 
 private:
+	bool bPathViewVisible = true;
+	bool bObjectViewVisible = true;
 	FBox ObjectViewBounds{ForceInit};
 	FBox RotatedObjectViewBounds{ForceInit};
 #if WITH_DEV_AUTOMATION_TESTS

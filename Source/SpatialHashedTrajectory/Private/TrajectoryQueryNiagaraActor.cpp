@@ -846,11 +846,48 @@ void ATrajectoryQueryNiagaraActor::BeginPlay()
 		{
 			NiagaraComponent->SetVariableObject(TEXT("User.VisibleBoundsReceiver"), this);
 			NiagaraComponent->SetVariableObject(TEXT("User.RibbonPickingReceiver"), this);
+            SetResultViewVisibility(bPathViewVisible, bObjectViewVisible);
 			NiagaraComponent->Deactivate();
 		}
 	}
 }
 
+void ATrajectoryQueryNiagaraActor::SetResultViewVisibility(bool bPathVisible, bool bObjectVisible)
+{
+    if (bPathViewVisible != bPathVisible || bObjectViewVisible != bObjectVisible)
+    {
+        bPathViewVisible = bPathVisible;
+        bObjectViewVisible = bObjectVisible;
+        // A pending GPU result from a now-hidden view must never commit a selection.
+        ++VisibleBoundsRevision;
+        ++TrajectorySelectorSession;
+
+        PendingRibbonConfirmationFrame = 0;
+        SetRibbonCandidate(INDEX_NONE);
+    }
+    if (NiagaraComponent)
+    {
+        NiagaraComponent->SetVariableBool(TEXT("User.PathViewVisible"), bPathViewVisible);
+        NiagaraComponent->SetVariableBool(TEXT("User.ObjectViewVisible"), bObjectViewVisible);
+    }
+    RefreshResultViewPresentation();
+}
+
+void ATrajectoryQueryNiagaraActor::RefreshResultViewPresentation()
+{
+    const auto Apply = [this](const TCHAR* BoxName, const TCHAR* AxesName, bool bVisible)
+    {
+        const auto* BoxProperty = FindFProperty<FObjectPropertyBase>(GetClass(), BoxName);
+        auto* Box = BoxProperty
+            ? Cast<UVisibleSampleBoxComponent>(BoxProperty->GetObjectPropertyValue_InContainer(this)) : nullptr;
+        if (!Box) return;
+        Box->SetPresentationHidden(!bVisible);
+        if (const auto* AxesProperty = FindFProperty<FObjectPropertyBase>(GetClass(), AxesName))
+            Box->UpdateAxesCorner(Cast<USceneComponent>(AxesProperty->GetObjectPropertyValue_InContainer(this)));
+    };
+    Apply(TEXT("PathVisBox"), TEXT("PathAxes"), bPathViewVisible);
+    Apply(TEXT("RelativeVisBox"), TEXT("RelativeAxes"), bObjectViewVisible);
+}
 void ATrajectoryQueryNiagaraActor::SetRibbonCandidate(int32 Index)
 {
 	CandidateTrajectoryIndex = Index;
@@ -919,7 +956,7 @@ bool ATrajectoryQueryNiagaraActor::GetRibbonPickingState(FVector &Position, floa
 	Radius = bConfirming ? ConfirmedProbeRadius : TrajectorySelectorRadius;
 	Samples = RibbonPickingSampleCount;
 	Session = TrajectorySelectorSession;
-	return bTrajectorySelectorEnabled && GetWorld() && GetInspectableTrajectoryCount() > 0 &&
+	return (bPathViewVisible || bObjectViewVisible) && bTrajectorySelectorEnabled && GetWorld() && GetInspectableTrajectoryCount() > 0 &&
 	       GetWorld()->GetTimeSeconds() - TrajectorySelectorUpdateTime <= TrajectorySelectorTimeout &&
 	       Samples > 0;
 }
@@ -1926,7 +1963,7 @@ void ATrajectoryQueryNiagaraActor::ReceiveVisibleBounds(uint64 Revision, const F
 	Apply(TEXT("RelativeVisBox"), TEXT("RelativeVisOrigin"), TEXT("RelativeAxes"), Object);
 }
 
-#if WITH_DEV_AUTOMATION_TESTS
+#if WITH_DEV_AUTOMATION_TESTS && WITH_EDITOR
 #include "Engine/Engine.h"
 #include "Kismet/GameplayStatics.h"
 #include "NiagaraGpuComputeDispatchInterface.h"
@@ -2095,6 +2132,58 @@ bool FTrajectoryRibbonPickingIntegrationTest::RunTest(const FString &Parameters)
 	Pump(20);
 	TestEqual(TEXT("Object alignment and transformed component remain pickable"),
 	          Actor->SelectedTrajectoryIndex, 1);
+    // Study gates reach live renderer stores and GPU picking without a restart.
+    Component->SetVariableBool(TEXT("User.ConfirmTrajectorySelection"), false);
+    Component->SetEmitterEnable(TEXT("QueryTrajectory"), true);
+    Component->ReinitializeSystem();
+    Actor->ClearTrajectoryInspection();
+    Pump(20);
+    const auto CheckRendererGates = [&](bool PathVisible, bool ObjectVisible)
+    {
+        auto* Instance = Component->GetSystemInstanceController()->GetSystemInstance_Unsafe();
+        int32 Checked = 0;
+        for (const auto& Emitter : Instance->GetEmitters())
+        {
+            const auto& Store = Emitter->GetRendererBoundVariables();
+            for (const TCHAR* Name : {TEXT("User.PathViewVisible"), TEXT("User.ObjectViewVisible")})
+            {
+                const FNiagaraVariable V(FNiagaraTypeDefinition::GetBoolDef(), Name);
+                if (const uint8* Bytes = Store.GetParameterData(V))
+                {
+                    TestEqual(TEXT("Live renderer gate follows independent visibility"),
+                        reinterpret_cast<const FNiagaraBool*>(Bytes)->GetValue(),
+                        FCString::Strcmp(Name, TEXT("User.PathViewVisible")) == 0 ? PathVisible : ObjectVisible);
+                    ++Checked;
+                }
+            }
+        }
+        TestTrue(TEXT("Live emitters contain renderer visibility bindings"), Checked > 0);
+    };
+    Actor->SetResultViewVisibility(false, true);
+    Pump(20);
+    CheckRendererGates(false, true);
+    TestEqual(TEXT("Hidden path cannot win against visible object ribbon"), Actor->CandidateTrajectoryIndex, 1);
+    Actor->SetResultViewVisibility(true, false);
+    Pump(20);
+    CheckRendererGates(true, false);
+    TestEqual(TEXT("Visible path remains pickable while object is hidden"), Actor->CandidateTrajectoryIndex, 0);
+    Actor->SetResultViewVisibility(false, false);
+    Pump(20);
+    CheckRendererGates(false, false);
+    TestEqual(TEXT("Both hidden views clear the picking candidate"), Actor->CandidateTrajectoryIndex, INDEX_NONE);
+    Actor->SetResultViewVisibility(true, true);
+    Pump(20);
+    CheckRendererGates(true, true);
+    TestEqual(TEXT("Showing views restores picking without restarting simulation"), Actor->CandidateTrajectoryIndex, 0);
+    auto* Pending = NewObject<UConfirmTrajectorySelectionAsyncAction>();
+    Pending->Actor = Actor;
+    Pending->Activate();
+    Actor->SetResultViewVisibility(false, true);
+    Pending->CheckRequest(0);
+    TestTrue(TEXT("Visibility change cancels an in-flight confirmation"), Pending->bFinished);
+    Pump(20);
+    TestEqual(TEXT("Stale confirmation cannot select a hidden ribbon"), Actor->SelectedTrajectoryIndex, INDEX_NONE);
+
 	World->DestroyWorld(false);
 	GEngine->DestroyWorldContext(World);
 	return true;

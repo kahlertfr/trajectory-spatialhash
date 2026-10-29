@@ -35,7 +35,7 @@ void UVisibleSampleBoxComponent::SetVisibleSampleBounds(const FBox& LocalBounds)
 	SampleCenter = Center;
 	SampleExtent = Extent;
 	BoxExtent = Extent;
-	SetCollisionEnabled(OriginalCollision);
+	SetCollisionEnabled(bPresentationHidden ? ECollisionEnabled::NoCollision : OriginalCollision);
 	if (Changed)
 	{
 		UpdateBodySetup();
@@ -51,6 +51,19 @@ FBox UVisibleSampleBoxComponent::GetVisibleSampleLocalBounds() const
 	return bHasVisibleSamples ? FBox(SampleCenter - SampleExtent, SampleCenter + SampleExtent) : FBox(ForceInit);
 }
 
+void UVisibleSampleBoxComponent::SetPresentationHidden(bool bHidden)
+{
+    if (bPresentationHidden == bHidden) return;
+    if (!bSavedCollision)
+    {
+        OriginalCollision = GetCollisionEnabled();
+        bSavedCollision = true;
+    }
+    bPresentationHidden = bHidden;
+    SetCollisionEnabled(bHidden || !bHasVisibleSamples
+        ? ECollisionEnabled::NoCollision : OriginalCollision);
+    if (CornerAxes.IsValid()) UpdateAxesCorner(CornerAxes.Get());
+}
 void UVisibleSampleBoxComponent::UpdateAxesCorner(USceneComponent* Axes)
 {
 	if (!Axes || Axes == this || IsAttachedTo(Axes)) return;
@@ -62,7 +75,7 @@ void UVisibleSampleBoxComponent::UpdateAxesCorner(USceneComponent* Axes)
 		bAxesHiddenForEmptyView = false;
 	}
 	const FBox LocalBounds = GetVisibleSampleLocalBounds();
-	if (!LocalBounds.IsValid)
+	if (!LocalBounds.IsValid || bPresentationHidden)
 	{
 		if (!bAxesHiddenForEmptyView)
 		{
