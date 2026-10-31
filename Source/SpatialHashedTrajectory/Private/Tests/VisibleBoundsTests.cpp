@@ -134,6 +134,8 @@ bool FVisibleBoundsAxesTest::RunTest(const FString& Parameters)
 	Box->SetWorldTransform(Grab);
 	TestTrue(TEXT("Axes follow grabbing without waiting for another readback"),
 		Axes->GetComponentLocation().Equals(Grab.TransformPosition(Samples.Min - FVector(0.1))));
+	TestTrue(TEXT("Axes retain original world size while their box is scaled"),
+		Axes->IsUsingAbsoluteScale() && Axes->GetComponentScale().Equals(Scale));
 	const FQuat GrabbedRotation = Axes->GetComponentQuat();
 	const FVector GrabbedScale = Axes->GetComponentScale();
 	Box->SetVisibleSampleBounds(FBox(FVector(-40, 10, 5), FVector(20, 50, 15)));
@@ -184,17 +186,36 @@ bool FVisibleBoundsBlueprintAxesTest::RunTest(const FString& Parameters)
 		auto* Box = Cast<UVisibleSampleBoxComponent>(BoxProperty->GetObjectPropertyValue_InContainer(Actor));
 		auto* Axes = Cast<USceneComponent>(AxesProperty->GetObjectPropertyValue_InContainer(Actor));
 		if (!TestTrue(TEXT("Blueprint provides live box and axes components"), Box && Axes)) continue;
+		// Match normal Blueprint initialization (templates start at zero until setup).
+		Axes->SetRelativeScale3D(FVector(1));
+		const FVector OriginalScale = Axes->GetComponentScale();
+		const FQuat RelativeRotation = Axes->GetRelativeRotation().Quaternion();
 		TestTrue(TEXT("Bounds callback places each Blueprint axes at its own collision corner"),
 			Axes->GetAttachParent() == Box && Axes->GetRelativeLocation().Equals(Box->GetVisibleSampleLocalBounds().Min));
 		const FTransform Grab(FRotator(20, 40, 0), FVector(100, 200, 300), FVector(1.5));
 		Box->SetWorldTransform(Grab);
 		TestTrue(TEXT("Blueprint axes inherit grab placement"),
 			Axes->GetComponentLocation().Equals(Grab.TransformPosition(Box->GetVisibleSampleLocalBounds().Min)));
+		TestTrue(TEXT("Blueprint axes retain original size during a grab"),
+			Axes->GetComponentScale().Equals(OriginalScale));
+		TestTrue(TEXT("Blueprint axes still inherit grab rotation"),
+			Axes->GetComponentQuat().Equals(Grab.GetRotation() * RelativeRotation));
+		// No bounds callback occurs between scale changes: attachment handles this.
+		for (const FVector Scale : { FVector(0.25), FVector(4), FVector(2, 0.5, 3) })
+		{
+			Box->SetWorldScale3D(Scale);
+			TestTrue(TEXT("Repeated uniform and nonuniform scaling preserves axes size"),
+				Axes->GetComponentScale().Equals(OriginalScale));
+			TestTrue(TEXT("Axes remain at the scaled collision corner"), Axes->GetComponentLocation().Equals(
+				Box->GetComponentTransform().TransformPosition(Box->GetVisibleSampleLocalBounds().Min)));
+		}
 		Actor->ReceiveVisibleBounds(Actor->GetVisibleBoundsRevision(), bPath ? FBox(ForceInit) : Path,
 			bPath ? Object : FBox(ForceInit));
 		TestTrue(TEXT("Empty Blueprint view hides its axes"), Axes->bHiddenInGame);
 		Actor->ReceiveVisibleBounds(Actor->GetVisibleBoundsRevision(), Path, Object);
 		TestFalse(TEXT("Returning Blueprint samples show axes"), Axes->bHiddenInGame);
+		TestTrue(TEXT("Refitting and visibility restoration retain axes size"),
+			Axes->GetComponentScale().Equals(OriginalScale));
 	}
 	World->DestroyWorld(false);
 	return true;

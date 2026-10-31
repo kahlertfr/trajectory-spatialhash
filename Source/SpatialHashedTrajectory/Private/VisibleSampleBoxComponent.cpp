@@ -67,6 +67,10 @@ void UVisibleSampleBoxComponent::SetPresentationHidden(bool bHidden)
 void UVisibleSampleBoxComponent::UpdateAxesCorner(USceneComponent* Axes)
 {
 	if (!Axes || Axes == this || IsAttachedTo(Axes)) return;
+	// Keep the authored axes scale in world space. Location and rotation still
+	// inherit the box transform, so its fitted corner follows grabbing/scaling
+	// immediately without enlarging or shrinking the decorative axes themselves.
+	Axes->SetAbsolute(Axes->IsUsingAbsoluteLocation(), Axes->IsUsingAbsoluteRotation(), true);
 	if (CornerAxes.Get() != Axes)
 	{
 		if (bAxesHiddenForEmptyView && CornerAxes.IsValid())

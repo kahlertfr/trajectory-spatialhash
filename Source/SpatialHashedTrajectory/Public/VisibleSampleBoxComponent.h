@@ -13,7 +13,7 @@ class SPATIALHASHEDTRAJECTORY_API UVisibleSampleBoxComponent : public UBoxCompon
     void SetPresentationHidden(bool bHidden);
 	/** Fitted collision geometry in component space, including the interaction margin. */
 	FBox GetVisibleSampleLocalBounds() const;
-	/** Place the axes at local -X/-Y/-Z, retaining their orientation and scale. */
+	/** Place axes at local -X/-Y/-Z; inherit grab position/rotation but keep their own world scale. */
 	void UpdateAxesCorner(USceneComponent* Axes);
 	/** Fit pre-grab Niagara local-space bounds without moving the interaction reference. */
 	void SetVisibleSampleBoundsFromSimulation(const FBox& SimulationBounds,

@@ -99,10 +99,14 @@ is included; using only negative box extent would place the axes incorrectly.
 `GetVisibleSampleLocalBounds` exposes these bounds, returning an invalid box for
 an empty view.
 
-The supplied Blueprint already parents each axes mesh to its box. The corner
-update retains that attachment, rotation, and scale; custom components are attached
-with their world transform preserved before setting the local location. Grabbing
-therefore moves the axes with the box without waiting for another GPU readback.
+The supplied Blueprint already parents each axes component to its box. The corner
+update enables absolute scale, retaining the axes' own configured scale as world
+scale while location and rotation still follow the box. Enlarging, shrinking, or
+nonuniformly scaling either view therefore moves its axes with the fitted corner
+without resizing the axes. This is applied even for empty/hidden views, before
+their first valid bounds arrive. Custom components are attached with their world
+transform preserved before setting the local location. Grabbing moves the axes
+with the box without waiting for another GPU readback.
 The axes temporarily hide for an empty view and restore their previous hidden
 state when samples return. Bounds updates retain the existing asynchronous delay.
 No Blueprint or Niagara asset migration is required.
@@ -113,7 +117,9 @@ moving the axes does not reposition samples or change grab pivots.
 
 The UE 5.6 Editor build and visible-bounds automation tests validate the collision
 minimum, grabbing, refitting, empty-view restoration, and the real Blueprint's
-box/axes callback contract. Interactive headset appearance remains a manual check.
+box/axes callback contract. Axes scale checks cover both views under repeated
+uniform and nonuniform scaling, rotation, and visibility restoration.
+Interactive headset appearance remains a manual check.
 
 ### Earlier collision validation
 
